@@ -1,0 +1,7 @@
+node_modules/
+projects/
+server/config.json
+config.json
+dist/
+.env
+*.log

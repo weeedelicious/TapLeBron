@@ -1,0 +1,13 @@
+{
+  "name": "libtv-canvas",
+  "private": true,
+  "workspaces": ["web", "server"],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
