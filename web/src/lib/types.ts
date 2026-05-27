@@ -48,10 +48,6 @@ export interface ImageParams {
   videoList: NodeRef[]
   audioList: NodeRef[]
   textList: NodeRef[]
-  stylization?: number
-  weirdness?: number
-  diversity?: number
-  pValue?: string
 }
 
 export interface VideoParams {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -13,6 +13,8 @@ import {
   type Viewport,
   BackgroundVariant,
   type Node,
+  getBezierPath,
+  type EdgeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCanvasStore } from '@/store/canvasStore'
@@ -24,8 +26,108 @@ import { ScriptNode } from './nodes/ScriptNode'
 import { VideoMergeNode } from './nodes/VideoMergeNode'
 import { UploadNode } from './nodes/UploadNode'
 import { DirectorStageNode } from './nodes/DirectorStageNode'
+import { assetsApi } from '@/lib/api'
 import type { CanvasNodeData, NodeRef } from '@/lib/types'
 
+// ── Glow edge ────────────────────────────────────────────────────────────────
+function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
+  const [edgePath] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  const filterId = `glow-${id}`
+  return (
+    <g>
+      <defs>
+        <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur" />
+          <feColorMatrix in="blur" type="matrix"
+            values="0 0 0 0 0.39  0 0 0 0 0.71  0 0 0 0 1  0 0 0 0.45 0"
+            result="glow"
+          />
+          <feMerge>
+            <feMergeNode in="glow" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path d={edgePath} fill="none" stroke="rgba(100,180,255,0.25)" strokeWidth={selected ? 10 : 8} filter={`url(#${filterId})`} />
+      <path d={edgePath} fill="none" stroke={selected ? 'rgba(190,225,255,0.95)' : 'rgba(150,205,255,0.8)'} strokeWidth={selected ? 2 : 1.5} />
+    </g>
+  )
+}
+
+const edgeTypes = { glow: GlowEdge, default: GlowEdge }
+
+// ── Connection menu ───────────────────────────────────────────────────────────
+const CONN_ITEMS = [
+  { type: 'text',           icon: '≡',  label: '文本' },
+  { type: 'image',          icon: '🖼', label: '图片',   desc: '海报、分镜、角色设计' },
+  { type: 'video',          icon: '▶',  label: '视频' },
+  { type: 'video_merge',    icon: '✂',  label: '视频合成', badge: 'Beta' },
+  { type: 'director_stage', icon: '◈',  label: '导演台',   badge: 'NEW' },
+  { type: 'audio',          icon: '♪',  label: '音频' },
+  { type: 'script',         icon: '⊞', label: '脚本',    badge: 'Beta' },
+]
+
+interface ConnMenuProps {
+  screenX: number
+  screenY: number
+  onSelect: (type: string) => void
+  onClose: () => void
+}
+
+function ConnectionMenu({ screenX, screenY, onSelect, onClose }: ConnMenuProps) {
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as Element).closest('.conn-menu')) onClose()
+    }
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [onClose])
+
+  return (
+    <div
+      className="conn-menu"
+      style={{
+        position: 'fixed', left: screenX + 14, top: screenY - 10,
+        zIndex: 9999,
+        background: '#16121f',
+        border: '1px solid #2d2248',
+        borderRadius: 12,
+        padding: '4px 0 6px',
+        minWidth: 210,
+        boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+      }}
+    >
+      <div style={{ padding: '6px 14px 8px', fontSize: 11, color: '#6a6085', fontWeight: 600, letterSpacing: '0.03em' }}>
+        引用该节点生成
+      </div>
+      {CONN_ITEMS.map(item => (
+        <button
+          key={item.type}
+          onClick={() => onSelect(item.type)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            width: '100%', padding: '7px 14px',
+            background: 'none', border: 'none', cursor: 'pointer',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+        >
+          <span style={{ fontSize: 15, width: 22, textAlign: 'center', color: '#a090d0' }}>{item.icon}</span>
+          <span style={{ fontSize: 13, color: '#d0c8f0' }}>{item.label}</span>
+          {item.desc && <span style={{ fontSize: 11, color: '#5a5070', marginLeft: 2 }}>{item.desc}</span>}
+          {item.badge && (
+            <span style={{
+              fontSize: 10, color: '#7c5cfc', border: '1px solid #4a3880',
+              borderRadius: 3, padding: '1px 5px', marginLeft: 'auto',
+            }}>{item.badge}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Node types ────────────────────────────────────────────────────────────────
 const nodeTypes = {
   image: ImageNode,
   video: VideoNode,
@@ -40,22 +142,17 @@ const nodeTypes = {
 type FlowNode = Node & { data: CanvasNodeData & { nodeKey: string; projectUuid: string } }
 
 export function Canvas() {
-  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData } = useCanvasStore()
+  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt } = useCanvasStore()
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const [connMenu, setConnMenu] = useState<{ screenX: number; screenY: number; sourceId: string } | null>(null)
+  const connStartRef = useRef<{ nodeId: string; handleType: string } | null>(null)
+  const didConnectRef = useRef(false)
 
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    const updated = applyNodeChanges(changes, nodes as Node[]) as FlowNode[]
-    setNodes(updated)
-  }, [nodes, setNodes])
-
-  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    setEdges(applyEdgeChanges(changes, edges))
-  }, [edges, setEdges])
-
-  const onConnect = useCallback((connection: Connection) => {
-    const { source, target } = connection
-    if (!source || !target) return
-    const sourceNode = nodes.find(n => n.data.nodeKey === source || n.id === source)
-    const targetNode = nodes.find(n => n.data.nodeKey === target || n.id === target)
+  // ── Connection logic (shared between onConnect and menu select) ────────────
+  const applyConnection = useCallback((source: string, target: string) => {
+    const { nodes: ns, edges: es } = useCanvasStore.getState()
+    const sourceNode = ns.find(n => n.id === source || n.data.nodeKey === source)
+    const targetNode = ns.find(n => n.id === target || n.data.nodeKey === target)
     if (!sourceNode || !targetNode) return
 
     const sourceData = sourceNode.data as CanvasNodeData
@@ -68,12 +165,10 @@ export function Canvas() {
       mediaType: sourceData.type === 'video' ? 'video' : sourceData.type === 'audio' ? 'audio' : 'image',
     }
 
-    const targetId = target
-
     if (sourceData.type === 'video' || sourceData.type === 'video_merge') {
       const existing = (targetParams.videoList ?? []) as NodeRef[]
       if (!existing.find(r => r.nodeId === source)) {
-        updateNodeData(targetId, {
+        updateNodeData(target, {
           params: {
             ...targetParams,
             videoList: [...existing, ref],
@@ -84,18 +179,17 @@ export function Canvas() {
       }
     } else if (sourceData.type === 'audio') {
       const existing = (targetParams.audioList ?? []) as NodeRef[]
-      if (!existing.find(r => r.nodeId === source)) {
-        updateNodeData(targetId, { params: { ...targetParams, audioList: [...existing, ref] } })
-      }
+      if (!existing.find(r => r.nodeId === source))
+        updateNodeData(target, { params: { ...targetParams, audioList: [...existing, ref] } })
     } else if (sourceData.type === 'text') {
       const existing = (targetParams.textList ?? []) as NodeRef[]
-      if (!existing.find(r => r.nodeId === source)) {
-        updateNodeData(targetId, { params: { ...targetParams, textList: [...existing, ref] } })
-      }
+      if (!existing.find(r => r.nodeId === source))
+        updateNodeData(target, { params: { ...targetParams, textList: [...existing, ref] } })
     } else {
+      // image / upload → target gets imageList reference
       const existing = (targetParams.imageList ?? []) as NodeRef[]
       if (!existing.find(r => r.nodeId === source)) {
-        updateNodeData(targetId, {
+        updateNodeData(target, {
           params: {
             ...targetParams,
             imageList: [...existing, ref],
@@ -105,8 +199,118 @@ export function Canvas() {
         })
       }
     }
-    setEdges(addEdge({ ...connection, animated: true, style: { stroke: '#7c5cfc' } }, edges))
-  }, [nodes, edges, setEdges, updateNodeData])
+
+    setEdges(addEdge({ id: `e-${source}-${target}`, source, target, type: 'glow' }, es))
+  }, [updateNodeData, setEdges])
+
+  // ── Drag-and-drop local files ──────────────────────────────────────────────
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const onDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    const { projectUuid, viewport: vp } = useCanvasStore.getState()
+    if (!projectUuid) return
+
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/') || f.type.startsWith('video/') || f.type.startsWith('audio/')
+    )
+    if (!files.length) return
+
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const flowX = (e.clientX - rect.left - vp.x) / vp.zoom + i * 30
+      const flowY = (e.clientY - rect.top - vp.y) / vp.zoom + i * 30
+      try {
+        const result = await assetsApi.upload(projectUuid, file)
+        const nodeType = file.type.startsWith('video/') ? 'video'
+          : file.type.startsWith('audio/') ? 'audio'
+          : 'upload'
+        addNodeAt(nodeType, flowX, flowY, { url: [result.url], action: 'image_resource', name: file.name })
+      } catch (err) {
+        console.error('Upload failed', err)
+      }
+    }
+  }, [addNodeAt])
+
+  // ── Paste from clipboard ───────────────────────────────────────────────────
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const { projectUuid, viewport: vp } = useCanvasStore.getState()
+      if (!projectUuid) return
+
+      const items = Array.from(e.clipboardData?.items ?? [])
+      const imageItem = items.find(item => item.type.startsWith('image/'))
+      if (!imageItem) return
+
+      const file = imageItem.getAsFile()
+      if (!file) return
+      e.preventDefault()
+
+      try {
+        const result = await assetsApi.upload(projectUuid, file)
+        const x = (-vp.x + window.innerWidth / 2) / vp.zoom
+        const y = (-vp.y + window.innerHeight / 2) / vp.zoom
+        addNodeAt('upload', x, y, { url: [result.url], action: 'image_resource', name: '粘贴图片' })
+      } catch (err) {
+        console.error('Paste upload failed', err)
+      }
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [addNodeAt])
+
+  // ── React Flow handlers ────────────────────────────────────────────────────
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    const updated = applyNodeChanges(changes, nodes as Node[]) as FlowNode[]
+    setNodes(updated)
+  }, [nodes, setNodes])
+
+  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    setEdges(applyEdgeChanges(changes, edges))
+  }, [edges, setEdges])
+
+  const onConnect = useCallback((connection: Connection) => {
+    didConnectRef.current = true
+    const { source, target } = connection
+    if (!source || !target) return
+    applyConnection(source, target)
+  }, [applyConnection])
+
+  const onConnectStart = useCallback((_e: unknown, { nodeId, handleType }: { nodeId?: string | null; handleType?: string | null }) => {
+    connStartRef.current = { nodeId: nodeId ?? '', handleType: handleType ?? '' }
+    didConnectRef.current = false
+  }, [])
+
+  const onConnectEnd = useCallback((e: MouseEvent | TouchEvent) => {
+    if (didConnectRef.current) return
+    if (connStartRef.current?.handleType !== 'source') return
+
+    const clientX = 'touches' in e ? (e as TouchEvent).changedTouches[0].clientX : (e as MouseEvent).clientX
+    const clientY = 'touches' in e ? (e as TouchEvent).changedTouches[0].clientY : (e as MouseEvent).clientY
+
+    if ((e.target as Element)?.closest('.react-flow__handle')) return
+
+    setConnMenu({ screenX: clientX, screenY: clientY, sourceId: connStartRef.current.nodeId })
+    connStartRef.current = null
+  }, [])
+
+  const handleMenuSelect = useCallback((type: string) => {
+    if (!connMenu) return
+    const { viewport: vp } = useCanvasStore.getState()
+    const rect = canvasRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 }
+    const x = (connMenu.screenX - rect.left - vp.x) / vp.zoom
+    const y = (connMenu.screenY - rect.top - vp.y) / vp.zoom
+    const newNode = addNodeAt(type, x, y)
+    applyConnection(connMenu.sourceId, newNode.id)
+    setConnMenu(null)
+  }, [connMenu, addNodeAt, applyConnection])
 
   const onMoveEnd = useCallback((_: unknown, vp: Viewport) => {
     setViewport(vp)
@@ -119,14 +323,17 @@ export function Canvas() {
   const defaultViewport = useMemo(() => viewport, [])
 
   return (
-    <div className="w-full h-full">
+    <div ref={canvasRef} className="w-full h-full" onDragOver={onDragOver} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes as Node[]}
         edges={edges}
         nodeTypes={nodeTypes as never}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectStart={onConnectStart as never}
+        onConnectEnd={onConnectEnd as never}
         onMoveEnd={onMoveEnd}
         onSelectionChange={onSelectionChange}
         defaultViewport={defaultViewport}
@@ -142,11 +349,17 @@ export function Canvas() {
           nodeColor="#7c5cfc"
           maskColor="rgba(0,0,0,0.6)"
         />
-        <Controls
-          style={{ background: '#1e1e1e', border: '1px solid #2a2a2a' }}
-          showInteractive={false}
-        />
+        <Controls style={{ background: '#1e1e1e', border: '1px solid #2a2a2a' }} showInteractive={false} />
       </ReactFlow>
+
+      {connMenu && (
+        <ConnectionMenu
+          screenX={connMenu.screenX}
+          screenY={connMenu.screenY}
+          onSelect={handleMenuSelect}
+          onClose={() => setConnMenu(null)}
+        />
+      )}
     </div>
   )
 }

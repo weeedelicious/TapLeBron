@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useCanvasStore } from '@/store/canvasStore'
 import { projectsApi } from '@/lib/api'
 
@@ -10,6 +10,13 @@ export function TopNav({ onHome }: Props) {
   const { projectName, projectUuid, isSaving, isDirty } = useCanvasStore()
   const [editing, setEditing] = useState(false)
   const [nameVal, setNameVal] = useState('')
+  const [apiKeyMissing, setApiKeyMissing] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/health').then(r => r.json()).then((d: { apiKeyConfigured: boolean }) => {
+      setApiKeyMissing(!d.apiKeyConfigured)
+    }).catch(() => {})
+  }, [])
 
   const startEdit = () => { setNameVal(projectName); setEditing(true) }
   const commitEdit = async () => {
@@ -53,6 +60,11 @@ export function TopNav({ onHome }: Props) {
         <span className="text-xs" style={{ color: isSaving ? '#7c5cfc' : isDirty ? '#f59e0b' : '#8a8a8a' }}>
           {isSaving ? '保存中…' : isDirty ? '未保存' : '已保存'}
         </span>
+        {apiKeyMissing && (
+          <span className="text-xs px-2 py-0.5 rounded" style={{ background: '#3a2a00', color: '#f59e0b' }}>
+            ⚠ 未配置 Mivo API Key → 编辑 server/config.json
+          </span>
+        )}
       </div>
 
       <div className="text-xs font-bold" style={{ color: '#7c5cfc' }}>LibTV Canvas</div>

@@ -23,20 +23,19 @@ export function defaultImageParams(): ImageParams {
     modeType: 'text2image',
     imageList: [], imageListOrder: [],
     videoList: [], audioList: [], textList: [],
-    stylization: 100, weirdness: 100, diversity: 5
   }
 }
 
 export function defaultVideoParams(): VideoParams {
   return {
     prompt: '',
-    model: 'Seed3D_2_0',
+    model: 'Seedance_1_5_Pro',
     modeType: 'text2video',
     count: 1,
     imageList: [], imageListOrder: [],
     mixedList: [], mixedListOrder: [],
     videoList: [], audioList: [], textList: [],
-    settings: { ratio: '16:9', resolution: '720p', duration: 5, enableSound: 'on' }
+    settings: { ratio: '16:9', resolution: '720P', duration: 5, enableSound: 'on' }
   }
 }
 
@@ -75,18 +74,16 @@ export function makeNodeData(type: string, name: string): CanvasNodeData {
   }
 }
 
-export const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '2:3', '3:2', '4:5', '5:4', '21:9']
 
 export const IMAGE_MODELS = [
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro' },
   { value: 'gemini-3.1-flash-image-preview', label: 'Gemini Flash' },
   { value: 'gpt-image-2', label: 'GPT Image 2' },
-  { value: 'Nanobanana_1K', label: 'Nanobanana 1K' },
-  { value: 'Nanobanana_2K', label: 'Nanobanana 2K' },
 ]
 
 export const VIDEO_MODELS = [
-  { value: 'Seed3D_2_0', label: '即梦 Seed3D 2.0' },
-  { value: 'Seedance_1_0_lite_i2v', label: 'Seedance Lite (图生视频)' },
-  { value: 'Seedance_1_0_pro_t2v', label: 'Seedance Pro (文生视频)' },
+  { value: 'Seedance_2_0', label: 'Seedance 2.0 Pro' },
+  { value: 'Seedance_2_0_Fast', label: 'Seedance 2.0 Fast' },
+  { value: 'Seedance_1_5_Pro', label: 'Seedance 1.5 Pro' },
+  { value: 'Seedance_1_0_Pro', label: 'Seedance 1.0 Pro' },
 ]

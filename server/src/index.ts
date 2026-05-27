@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import path from 'path'
 import fs from 'fs'
-import { PROJECTS_DIR } from './config'
+import { config, PROJECTS_DIR } from './config'
 import projectsRouter from './routes/projects'
 import assetsRouter from './routes/assets'
 import generateRouter from './routes/generate'
@@ -26,6 +26,11 @@ app.use('/assets', (req, res, next) => {
   } else {
     next()
   }
+})
+
+app.get('/api/health', (_req, res) => {
+  const keyOk = !!config.mivoApiKey && !config.mivoApiKey.includes('YOUR_MIVO')
+  res.json({ ok: true, apiKeyConfigured: keyOk })
 })
 
 app.use('/api/projects', projectsRouter)
