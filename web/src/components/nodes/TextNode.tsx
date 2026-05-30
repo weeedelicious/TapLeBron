@@ -3,6 +3,7 @@ import { NodeShell } from './NodeShell'
 import { useCanvasStore } from '@/store/canvasStore'
 import { generateApi } from '@/lib/api'
 import { defaultTextParams } from '@/lib/nodeData'
+import { useImeInput } from '@/lib/useImeInput'
 import type { CanvasNodeData, TextParams } from '@/lib/types'
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 export function TextNode({ id, data, selected }: Props) {
   const { updateNodeData } = useCanvasStore()
   const params = data.params ? (data.params as unknown as TextParams) : defaultTextParams()
+  const contentIme = useImeInput(params.content, val => updateNodeData(id, { params: { content: val } }))
 
   const handleTranslate = useCallback(async () => {
     if (!params.content) return
@@ -31,7 +33,7 @@ export function TextNode({ id, data, selected }: Props) {
           style={{ background: '#141414', border: '1px solid #2a2a2a', color: '#e5e5e5', minHeight: 140 }}
           placeholder="剧本、广告词、品牌文案…"
           value={params.content}
-          onChange={e => updateNodeData(id, { params: { content: e.target.value } })}
+          {...contentIme}
         />
         <div className="flex justify-between items-center">
           <span className="text-xs text-muted">{params.content.length} 字</span>

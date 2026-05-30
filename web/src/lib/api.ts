@@ -56,7 +56,7 @@ export const assetsApi = {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('projectUuid', projectUuid)
-    return http.post<{ url: string; sha1: string; meta: Record<string, unknown> }>('/assets/upload', fd, {
+    return http.post<{ url: string; thumbUrl?: string; sha1: string; meta: Record<string, unknown> }>('/assets/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: e => { if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100)) }
     }).then(r => r.data)

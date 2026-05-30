@@ -4,7 +4,7 @@ import { useCanvasStore } from '@/store/canvasStore'
 import type { CanvasNodeData } from '@/lib/types'
 
 const NODE_ICONS: Record<string, string> = {
-  image: '🖼', video: '🎬', text: '📝', audio: '🎵',
+  image: '🖼', video: '▶', text: '📝', audio: '🎵',
   script: '📋', upload: '📁', video_merge: '🔗', director_stage: '🎭',
 }
 
@@ -21,12 +21,13 @@ interface NodeShellProps {
   nodeKey: string
   data: CanvasNodeData & { nodeKey: string }
   children: React.ReactNode
+  toolbar?: React.ReactNode
   minWidth?: number
   minHeight?: number
   selected?: boolean
 }
 
-export function NodeShell({ nodeKey, data, children, minWidth = 320, minHeight = 200, selected }: NodeShellProps) {
+export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, minHeight = 200, selected }: NodeShellProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { deleteNodes, updateNodeData } = useCanvasStore()
 
@@ -59,6 +60,15 @@ export function NodeShell({ nodeKey, data, children, minWidth = 320, minHeight =
         lineStyle={{ borderColor: '#7c5cfc' }}
       />
 
+      {/* Floating toolbar above the node (injected by child) */}
+      {toolbar && (
+        <div className="absolute" style={{ top: -52, left: 0, right: 0, zIndex: 50, pointerEvents: 'none' }}>
+          <div style={{ pointerEvents: 'all' }}>
+            {toolbar}
+          </div>
+        </div>
+      )}
+
       {/* Floating title above the node */}
       <div
         className="absolute flex items-center gap-1.5 nodrag"
@@ -90,38 +100,49 @@ export function NodeShell({ nodeKey, data, children, minWidth = 320, minHeight =
         </div>
       </div>
 
-      {/* Target handle (left edge) */}
+      {/* Target handle — covers full left edge for easy drop zone */}
       <Handle
         type="target"
         position={Position.Left}
-        style={{ width: 0, height: 0, minWidth: 0, minHeight: 0, background: 'transparent', border: 'none', zIndex: 20 }}
+        style={{
+          width: 24, height: '100%', minWidth: 24,
+          background: 'transparent', border: 'none',
+          borderRadius: 0, left: -12, top: 0,
+          transform: 'none', zIndex: 20,
+        }}
       >
+        {/* Visible "+" icon at center */}
         <div
           className="nodrag"
           style={{
-            position: 'absolute', width: 56, height: 56,
-            left: -28, top: -28,
+            position: 'absolute', width: 28, height: 28,
+            left: -14, top: 'calc(50% - 14px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'all',
+            pointerEvents: 'none',
           }}
         >
           <PlusHandleIcon />
         </div>
       </Handle>
 
-      {/* Source handle (right edge) */}
+      {/* Source handle — covers full right edge */}
       <Handle
         type="source"
         position={Position.Right}
-        style={{ width: 0, height: 0, minWidth: 0, minHeight: 0, background: 'transparent', border: 'none', zIndex: 20 }}
+        style={{
+          width: 24, height: '100%', minWidth: 24,
+          background: 'transparent', border: 'none',
+          borderRadius: 0, right: -12, left: 'auto', top: 0,
+          transform: 'none', zIndex: 20,
+        }}
       >
         <div
           className="nodrag"
           style={{
-            position: 'absolute', width: 56, height: 56,
-            left: -28, top: -28,
+            position: 'absolute', width: 28, height: 28,
+            left: -14, top: 'calc(50% - 14px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'all',
+            pointerEvents: 'none',
           }}
         >
           <PlusHandleIcon />

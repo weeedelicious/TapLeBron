@@ -8,6 +8,8 @@ import { debounce } from '@/lib/debounce'
 
 export type FlowNode = Node & { data: CanvasNodeData & { nodeKey: string; projectUuid: string } }
 
+interface HistorySnapshot { nodes: FlowNode[]; edges: Edge[] }
+
 interface CanvasState {
   projectUuid: string | null
   projectName: string
@@ -17,6 +19,9 @@ interface CanvasState {
   selectedNodeKeys: string[]
   isDirty: boolean
   isSaving: boolean
+  clipboard: { nodes: FlowNode[]; edges: Edge[] } | null
+  history: HistorySnapshot[]
+  historyIndex: number
 
   loadProject: (project: Project) => void
   setProjectUuid: (uuid: string) => void
@@ -32,6 +37,13 @@ interface CanvasState {
   updateNodeSize: (nodeKey: string, w: number, h: number) => void
   persistNodes: () => Promise<void>
   persistViewport: () => Promise<void>
+  groupNodes: (nodeIds: string[]) => void
+  copySelected: () => void
+  pasteClipboard: () => void
+  pushHistory: () => void
+  undo: () => void
+  ungroupNodes: (groupId: string) => void
+  duplicateNodes: (nodeIds: string[]) => void
 }
 
 const debouncedPersistNodes = debounce(async (
@@ -79,6 +91,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeKeys: [],
   isDirty: false,
   isSaving: false,
+  clipboard: null,
+  history: [],
+  historyIndex: -1,
 
   loadProject: (project: Project) => {
     const nodes: FlowNode[] = project.nodeList.map(cn => {
@@ -181,6 +196,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   deleteNodes: (nodeKeys: string[]) => {
+    get().pushHistory()
     const { projectUuid, nodes } = get()
     const updated = nodes.filter(n => !nodeKeys.includes(n.data.nodeKey))
     set({ nodes: updated, isDirty: true })
@@ -228,5 +244,148 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const { projectUuid, viewport } = get()
     if (!projectUuid) return
     await debouncedPersistViewport(projectUuid, viewport)
+  },
+
+  pushHistory: () => {
+    const { nodes, edges, history, historyIndex } = get()
+    const snapshot: HistorySnapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    }
+    // Trim any future history (after undo) and cap at 30 snapshots
+    const newHistory = [...history.slice(0, historyIndex + 1), snapshot].slice(-30)
+    set({ history: newHistory, historyIndex: newHistory.length - 1 })
+  },
+
+  undo: () => {
+    const { history, historyIndex } = get()
+    if (historyIndex <= 0) return
+    const prev = history[historyIndex - 1]
+    // Only restore in-memory state — don't auto-persist on undo to avoid data loss
+    set({ nodes: prev.nodes, edges: prev.edges, historyIndex: historyIndex - 1, isDirty: true })
+  },
+
+  copySelected: () => {
+    const { selectedNodeKeys, nodes, edges } = get()
+    if (selectedNodeKeys.length === 0) return
+    const selectedNodes = nodes.filter(n => selectedNodeKeys.includes(n.id))
+    const selectedEdges = edges.filter(
+      e => selectedNodeKeys.includes(e.source) && selectedNodeKeys.includes(e.target)
+    )
+    set({ clipboard: { nodes: JSON.parse(JSON.stringify(selectedNodes)), edges: JSON.parse(JSON.stringify(selectedEdges)) } })
+  },
+
+  pasteClipboard: () => {
+    const { clipboard, nodes, edges, projectUuid } = get()
+    if (!clipboard || clipboard.nodes.length === 0) return
+
+    const idMap: Record<string, string> = {}
+    const newNodes: FlowNode[] = clipboard.nodes.map(n => {
+      const newId = uuidv4()
+      idMap[n.id] = newId
+      return {
+        ...n,
+        id: newId,
+        position: { x: n.position.x + 40, y: n.position.y + 40 },
+        data: { ...n.data, nodeKey: newId, taskInfo: undefined },
+        selected: false,
+      }
+    })
+    const newEdges: Edge[] = clipboard.edges.map(e => ({
+      ...e,
+      id: `e-${idMap[e.source]}-${idMap[e.target]}`,
+      source: idMap[e.source],
+      target: idMap[e.target],
+    }))
+
+    const updatedNodes = [...nodes, ...newNodes]
+    const updatedEdges = [...edges, ...newEdges]
+    set({ nodes: updatedNodes, edges: updatedEdges, isDirty: true })
+    if (projectUuid) debouncedPersistNodes(projectUuid, updatedNodes, set as (s: Partial<CanvasState>) => void)
+  },
+
+  groupNodes: (nodeIds: string[]) => {
+    get().pushHistory()
+    const { projectUuid, nodes } = get()
+    if (nodeIds.length === 0) return
+    const targets = nodes.filter(n => nodeIds.includes(n.id))
+    if (targets.length === 0) return
+
+    const PAD = 40
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of targets) {
+      const w = n.measured?.width ?? n.data.contentWidth ?? 300
+      const h = n.measured?.height ?? n.data.contentHeight ?? 200
+      minX = Math.min(minX, n.position.x)
+      minY = Math.min(minY, n.position.y)
+      maxX = Math.max(maxX, n.position.x + w)
+      maxY = Math.max(maxY, n.position.y + h)
+    }
+
+    const gx = minX - PAD, gy = minY - PAD
+    const gw = maxX - minX + PAD * 2, gh = maxY - minY + PAD * 2
+    const nodeKey = uuidv4()
+    const name = `分组 ${nodes.filter(n => n.data.type === 'group').length + 1}`
+    const groupNode: FlowNode = {
+      id: nodeKey,
+      type: 'group',
+      position: { x: gx, y: gy },
+      data: {
+        type: 'group', name, url: [], action: 'image_resource',
+        params: { childIds: nodeIds, color: '#1a3a2a' } as unknown as Record<string, unknown>,
+        nodeKey, projectUuid: projectUuid ?? '',
+        contentWidth: gw, contentHeight: gh,
+      },
+      draggable: true, selectable: true,
+      style: { width: gw, height: gh },
+    }
+    // Group node goes first so it renders below children
+    const updated = [groupNode, ...nodes]
+    set({ nodes: updated, isDirty: true })
+    if (projectUuid) debouncedPersistNodes(projectUuid, updated, set as (s: Partial<CanvasState>) => void)
+  },
+
+  ungroupNodes: (groupId: string) => {
+    const { projectUuid, nodes } = get()
+    const updated = nodes.filter(n => n.id !== groupId)
+    set({ nodes: updated, isDirty: true })
+    if (projectUuid) {
+      nodesApi.delete(projectUuid, [groupId]).catch(console.error)
+    }
+  },
+
+  duplicateNodes: (nodeIds: string[]) => {
+    get().pushHistory()
+    const { projectUuid, nodes, edges } = get()
+    const targets = nodes.filter(n => nodeIds.includes(n.id))
+    if (targets.length === 0) return
+
+    const idMap: Record<string, string> = {}
+    const newNodes: FlowNode[] = targets.map(n => {
+      const newId = uuidv4()
+      idMap[n.id] = newId
+      return {
+        ...n,
+        id: newId,
+        position: { x: n.position.x + 40, y: n.position.y + 40 },
+        data: { ...n.data, nodeKey: newId, taskInfo: undefined },
+        selected: false,
+      }
+    })
+
+    // Clone edges between duplicated nodes
+    const newEdges: Edge[] = edges
+      .filter(e => nodeIds.includes(e.source) && nodeIds.includes(e.target))
+      .map(e => ({
+        ...e,
+        id: `e-${idMap[e.source]}-${idMap[e.target]}`,
+        source: idMap[e.source],
+        target: idMap[e.target],
+      }))
+
+    const updatedNodes = [...nodes, ...newNodes]
+    const updatedEdges = [...edges, ...newEdges]
+    set({ nodes: updatedNodes, edges: updatedEdges, isDirty: true })
+    if (projectUuid) debouncedPersistNodes(projectUuid, updatedNodes, set as (s: Partial<CanvasState>) => void)
   },
 }))

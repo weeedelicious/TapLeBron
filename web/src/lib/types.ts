@@ -7,6 +7,7 @@ export type NodeType =
   | 'audio'
   | 'script'
   | 'upload'
+  | 'group'
 
 export interface ResourceMeta {
   kind: 'image' | 'video' | 'audio'

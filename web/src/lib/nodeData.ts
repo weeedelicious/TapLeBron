@@ -1,7 +1,7 @@
 import type { CanvasNodeData, ImageParams, VideoParams, AudioParams, TextParams, ScriptParams } from './types'
 
 export const NODE_TYPE_INT: Record<string, number> = {
-  text: 1, image: 2, video: 3, video_merge: 4, director_stage: 5, audio: 6, script: 7, upload: 8
+  text: 1, image: 2, video: 3, video_merge: 4, director_stage: 5, audio: 6, script: 7, upload: 8, group: 9
 }
 
 export const NODE_INT_TYPE: Record<number, string> = Object.fromEntries(
@@ -11,7 +11,7 @@ export const NODE_INT_TYPE: Record<number, string> = Object.fromEntries(
 export const NODE_LABELS: Record<string, string> = {
   text: '文本节点', image: '图片节点', video: '视频节点',
   video_merge: '视频合成', director_stage: '导演台', audio: '音频节点',
-  script: '脚本节点', upload: '上传资源'
+  script: '脚本节点', upload: '上传资源', group: '分组'
 }
 
 export function defaultImageParams(): ImageParams {
@@ -29,7 +29,7 @@ export function defaultImageParams(): ImageParams {
 export function defaultVideoParams(): VideoParams {
   return {
     prompt: '',
-    model: 'Seedance_1_5_Pro',
+    model: 'Seedance_2_0',
     modeType: 'text2video',
     count: 1,
     imageList: [], imageListOrder: [],
@@ -69,6 +69,9 @@ export function makeNodeData(type: string, name: string): CanvasNodeData {
       return { type: 'director_stage', name, url: [], action: 'director_stage' }
     case 'upload':
       return { type: 'upload', name, url: [], action: 'image_resource' }
+    case 'group':
+      return { type: 'group', name, url: [], action: 'image_resource',
+        params: { childIds: [], color: '#1a3a2a' } as unknown as Record<string, unknown> }
     default:
       return { type: 'upload', name, url: [], action: 'image_resource' }
   }
@@ -82,8 +85,6 @@ export const IMAGE_MODELS = [
 ]
 
 export const VIDEO_MODELS = [
-  { value: 'Seedance_2_0', label: 'Seedance 2.0 Pro' },
+  { value: 'Seedance_2_0', label: 'Seedance 2.0' },
   { value: 'Seedance_2_0_Fast', label: 'Seedance 2.0 Fast' },
-  { value: 'Seedance_1_5_Pro', label: 'Seedance 1.5 Pro' },
-  { value: 'Seedance_1_0_Pro', label: 'Seedance 1.0 Pro' },
 ]

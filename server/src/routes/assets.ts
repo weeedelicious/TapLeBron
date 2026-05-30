@@ -2,15 +2,30 @@ import { Router } from 'express'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
+import sharp from 'sharp'
 import { PROJECTS_DIR } from '../config'
 import { getAssetsDir } from '../services/storage'
 import { sha1File } from '../services/hash'
 
 const router = Router()
-
 const upload = multer({ dest: path.join(PROJECTS_DIR, '_tmp') })
 
-router.post('/upload', upload.single('file'), (req, res) => {
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff'])
+const THUMB_MAX_W = 1200  // max display width in canvas nodes
+
+async function generateThumb(src: string, dest: string): Promise<boolean> {
+  try {
+    await sharp(src)
+      .resize({ width: THUMB_MAX_W, withoutEnlargement: true })
+      .webp({ quality: 85 })
+      .toFile(dest)
+    return true
+  } catch {
+    return false
+  }
+}
+
+router.post('/upload', upload.single('file'), async (req, res) => {
   const { projectUuid } = req.body
   if (!req.file || !projectUuid) return res.status(400).json({ error: 'missing file or projectUuid' })
 
@@ -26,18 +41,31 @@ router.post('/upload', upload.single('file'), (req, res) => {
   }
 
   const url = `/assets/${projectUuid}/${sha1}${ext}`
-  res.json({ url, sha1, meta: { mimeType: req.file.mimetype, byteSize: req.file.size } })
+
+  // Generate thumbnail for images
+  let thumbUrl = url
+  if (IMAGE_EXTS.has(ext.toLowerCase())) {
+    const thumbDest = path.join(assetsDir, `${sha1}_thumb.webp`)
+    if (!fs.existsSync(thumbDest)) {
+      await generateThumb(dest, thumbDest)
+    }
+    if (fs.existsSync(thumbDest)) {
+      thumbUrl = `/assets/${projectUuid}/${sha1}_thumb.webp`
+    }
+  }
+
+  res.json({ url, thumbUrl, sha1, meta: { mimeType: req.file.mimetype, byteSize: req.file.size } })
 })
 
 router.get('/:projectUuid', (req, res) => {
   const dir = path.join(PROJECTS_DIR, req.params.projectUuid, 'assets')
   if (!fs.existsSync(dir)) return res.json([])
-  const files = fs.readdirSync(dir).map(f => ({
-    url: `/assets/${req.params.projectUuid}/${f}`,
-    name: f,
-    mimeType: '',
-    sha1: f.split('.')[0],
-  }))
+  const files = fs.readdirSync(dir)
+    .filter(f => !f.endsWith('_thumb.webp'))
+    .map(f => ({
+      url: `/assets/${req.params.projectUuid}/${f}`,
+      name: f, mimeType: '', sha1: f.split('.')[0],
+    }))
   res.json(files)
 })
 
@@ -47,7 +75,7 @@ router.get('/', (_req, res) => {
   for (const uuid of fs.readdirSync(PROJECTS_DIR)) {
     const dir = path.join(PROJECTS_DIR, uuid, 'assets')
     if (!fs.existsSync(dir)) continue
-    for (const f of fs.readdirSync(dir)) {
+    for (const f of fs.readdirSync(dir).filter(f => !f.endsWith('_thumb.webp'))) {
       results.push({ url: `/assets/${uuid}/${f}`, name: f, mimeType: '', sha1: f.split('.')[0], projectUuid: uuid })
     }
   }

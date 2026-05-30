@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
-  MiniMap,
   Controls,
   applyNodeChanges,
   applyEdgeChanges,
@@ -12,6 +11,7 @@ import {
   addEdge,
   type Viewport,
   BackgroundVariant,
+  SelectionMode,
   type Node,
   getBezierPath,
   type EdgeProps,
@@ -26,20 +26,34 @@ import { ScriptNode } from './nodes/ScriptNode'
 import { VideoMergeNode } from './nodes/VideoMergeNode'
 import { UploadNode } from './nodes/UploadNode'
 import { DirectorStageNode } from './nodes/DirectorStageNode'
+import { GroupNode } from './nodes/GroupNode'
+import { MultiSelectToolbar } from './MultiSelectToolbar'
 import { assetsApi } from '@/lib/api'
 import type { CanvasNodeData, NodeRef } from '@/lib/types'
 
 // ── Glow edge ────────────────────────────────────────────────────────────────
+const FLOW_STYLE = `
+@keyframes flow {
+  from { stroke-dashoffset: 200; }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes flowGlow {
+  from { stroke-dashoffset: 200; }
+  to   { stroke-dashoffset: 0; }
+}
+`
+
 function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
   const [edgePath] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
   const filterId = `glow-${id}`
   return (
     <g>
       <defs>
+        <style>{FLOW_STYLE}</style>
         <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur" />
+          <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
           <feColorMatrix in="blur" type="matrix"
-            values="0 0 0 0 0.39  0 0 0 0 0.71  0 0 0 0 1  0 0 0 0.45 0"
+            values="0 0 0 0 0.39  0 0 0 0 0.71  0 0 0 0 1  0 0 0 0.6 0"
             result="glow"
           />
           <feMerge>
@@ -48,8 +62,30 @@ function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
           </feMerge>
         </filter>
       </defs>
-      <path d={edgePath} fill="none" stroke="rgba(100,180,255,0.25)" strokeWidth={selected ? 10 : 8} filter={`url(#${filterId})`} />
-      <path d={edgePath} fill="none" stroke={selected ? 'rgba(190,225,255,0.95)' : 'rgba(150,205,255,0.8)'} strokeWidth={selected ? 2 : 1.5} />
+
+      {/* Static base track */}
+      <path d={edgePath} fill="none"
+        stroke="rgba(80,140,255,0.12)"
+        strokeWidth={selected ? 3 : 2}
+      />
+
+      {/* Flowing glow layer */}
+      <path d={edgePath} fill="none"
+        stroke="rgba(100,180,255,0.35)"
+        strokeWidth={selected ? 10 : 7}
+        strokeDasharray="60 140"
+        filter={`url(#${filterId})`}
+        style={{ animation: 'flowGlow 1.8s linear infinite' }}
+      />
+
+      {/* Flowing bright line */}
+      <path d={edgePath} fill="none"
+        stroke={selected ? 'rgba(210,230,255,0.98)' : 'rgba(160,210,255,0.9)'}
+        strokeWidth={selected ? 2 : 1.5}
+        strokeDasharray="60 140"
+        strokeLinecap="round"
+        style={{ animation: 'flow 1.8s linear infinite' }}
+      />
     </g>
   )
 }
@@ -137,12 +173,13 @@ const nodeTypes = {
   video_merge: VideoMergeNode,
   upload: UploadNode,
   director_stage: DirectorStageNode,
+  group: GroupNode,
 }
 
 type FlowNode = Node & { data: CanvasNodeData & { nodeKey: string; projectUuid: string } }
 
 export function Canvas() {
-  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt } = useCanvasStore()
+  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt, selectedNodeKeys, copySelected, pasteClipboard, undo } = useCanvasStore()
   const canvasRef = useRef<HTMLDivElement>(null)
   const [connMenu, setConnMenu] = useState<{ screenX: number; screenY: number; sourceId: string } | null>(null)
   const connStartRef = useRef<{ nodeId: string; handleType: string } | null>(null)
@@ -205,11 +242,13 @@ export function Canvas() {
 
   // ── Drag-and-drop local files ──────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
   }, [])
 
   const onDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     const { projectUuid, viewport: vp } = useCanvasStore.getState()
     if (!projectUuid) return
@@ -266,9 +305,51 @@ export function Canvas() {
     return () => window.removeEventListener('paste', handlePaste)
   }, [addNodeAt])
 
+  // ── Ctrl+C / Ctrl+V / Ctrl+Z ──────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName
+      // Skip when typing in inputs / textareas / contenteditable
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.target as HTMLElement)?.isContentEditable) return
+
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+
+      if (e.key === 'c') { copySelected(); e.preventDefault() }
+      else if (e.key === 'v') { pasteClipboard(); e.preventDefault() }
+      else if (e.key === 'z' && !e.shiftKey) { undo(); e.preventDefault() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [copySelected, pasteClipboard, undo])
+
   // ── React Flow handlers ────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    const updated = applyNodeChanges(changes, nodes as Node[]) as FlowNode[]
+    // When a group node is dragged, also move its children
+    const extraChanges: NodeChange[] = []
+    for (const change of changes) {
+      if (change.type === 'position' && change.position) {
+        const node = nodes.find(n => n.id === change.id)
+        if (node?.type === 'group') {
+          const dx = change.position.x - node.position.x
+          const dy = change.position.y - node.position.y
+          if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+            const childIds = ((node.data.params as Record<string, unknown>)?.childIds as string[]) ?? []
+            for (const childId of childIds) {
+              const child = nodes.find(n => n.id === childId)
+              if (child) {
+                extraChanges.push({
+                  type: 'position', id: childId, dragging: change.dragging,
+                  position: { x: child.position.x + dx, y: child.position.y + dy },
+                })
+              }
+            }
+          }
+        }
+      }
+    }
+    const updated = applyNodeChanges([...changes, ...extraChanges], nodes as Node[]) as FlowNode[]
     setNodes(updated)
   }, [nodes, setNodes])
 
@@ -340,17 +421,19 @@ export function Canvas() {
         minZoom={0.05}
         maxZoom={4}
         deleteKeyCode="Delete"
+        connectionRadius={60}
         fitView={nodes.length === 0}
         colorMode="dark"
+        selectionOnDrag={true}
+        panOnDrag={[1, 2]}
+        panOnScroll={true}
+        selectionMode={SelectionMode.Partial}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#2a2a2a" />
-        <MiniMap
-          style={{ background: '#141414', border: '1px solid #2a2a2a' }}
-          nodeColor="#7c5cfc"
-          maskColor="rgba(0,0,0,0.6)"
-        />
         <Controls style={{ background: '#1e1e1e', border: '1px solid #2a2a2a' }} showInteractive={false} />
       </ReactFlow>
+
+      <MultiSelectToolbar selectedIds={selectedNodeKeys} />
 
       {connMenu && (
         <ConnectionMenu
