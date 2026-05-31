@@ -29,8 +29,8 @@ export function TextNode({ id, data, selected }: Props) {
     <NodeShell nodeKey={id} data={data} selected={selected} minWidth={320} minHeight={200}>
       <div className="p-3 flex flex-col gap-2 h-full">
         <textarea
-          className="flex-1 w-full rounded p-2 text-xs resize-none nodrag"
-          style={{ background: '#141414', border: '1px solid #2a2a2a', color: '#e5e5e5', minHeight: 140 }}
+          className="flex-1 w-full rounded p-3 resize-none nodrag"
+          style={{ background: '#141414', border: '1px solid #2a2a2a', color: '#e5e5e5', minHeight: 140, fontSize: 14, lineHeight: 1.7 }}
           placeholder="剧本、广告词、品牌文案…"
           value={params.content}
           {...contentIme}

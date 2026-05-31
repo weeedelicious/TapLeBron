@@ -23,7 +23,7 @@ export function LeftSidebar() {
 
   const btnStyle = (active: boolean): React.CSSProperties => ({
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12,
+    padding: '9px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 14,
     color: active ? '#e5e5e5' : '#8a8a8a',
     background: active ? '#2a2a2a' : 'transparent',
     border: 'none', width: '100%', textAlign: 'left',
@@ -33,7 +33,7 @@ export function LeftSidebar() {
   return (
     <div style={{ display: 'flex', height: '100%', position: 'absolute', left: 0, top: 0, zIndex: 10, pointerEvents: 'none' }}>
       <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, background: '#1e1e1e', borderRight: '1px solid #2a2a2a', pointerEvents: 'all', width: 120 }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, background: '#1e1e1e', borderRight: '1px solid #2a2a2a', pointerEvents: 'all', width: 136 }}
       >
         <button style={btnStyle(panel === 'add')} onClick={() => toggle('add')}>
           <span>＋</span> 添加节点
@@ -66,8 +66,8 @@ export function LeftSidebar() {
 function AssetsPanel() {
   return (
     <div style={{ padding: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#e5e5e5', marginBottom: 12 }}>我的素材</div>
-      <div style={{ fontSize: 12, color: '#8a8a8a' }}>暂无素材。上传节点中的文件会自动收录。</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: '#e5e5e5', marginBottom: 12 }}>我的素材</div>
+      <div style={{ fontSize: 13, color: '#8a8a8a' }}>暂无素材。上传节点中的文件会自动收录。</div>
     </div>
   )
 }

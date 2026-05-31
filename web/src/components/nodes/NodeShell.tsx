@@ -74,8 +74,8 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, mi
         className="absolute flex items-center gap-1.5 nodrag"
         style={{ top: -28, left: 0, height: 24, zIndex: 20 }}
       >
-        <span style={{ fontSize: 13 }}>{NODE_ICONS[data.type] ?? '📄'}</span>
-        <span className="text-xs truncate" style={{ color: '#b0a8d8', maxWidth: 200 }}>{data.name}</span>
+        <span style={{ fontSize: 14 }}>{NODE_ICONS[data.type] ?? '📄'}</span>
+        <span style={{ fontSize: 13, color: '#b0a8d8', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data.name}</span>
         <div className="relative">
           <button
             style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', color: '#6a6080', fontSize: 16, lineHeight: 1 }}
@@ -87,7 +87,7 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, mi
               style={{ top: 24, minWidth: 96, background: '#1a1428', border: '1px solid #3a2860' }}
             >
               <button
-                className="block w-full text-left px-3 py-1 text-xs hover:bg-white/5"
+                className="block w-full text-left px-3 py-1.5 text-sm hover:bg-white/5"
                 style={{ color: '#c0b8e0' }}
                 onClick={handleRename}
               >重命名</button>

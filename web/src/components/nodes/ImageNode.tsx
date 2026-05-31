@@ -327,7 +327,7 @@ export function ImageNode({ id, data, selected }: Props) {
           className="w-full text-xs resize-none nodrag"
           style={{
             background: 'transparent', border: 'none', color: '#d0c8f0',
-            minHeight: 80, outline: 'none', lineHeight: 1.6,
+            minHeight: 80, outline: 'none', lineHeight: 1.7, fontSize: 14,
           }}
           placeholder="描述你想要生成的画面内容，按/呼出指令，@引用素材"
           value={params.prompt}

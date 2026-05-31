@@ -127,6 +127,7 @@ router.post('/video', async (req, res) => {
       ratio: (settings.ratio as string) ?? '16:9',
       duration: Number(settings.duration ?? 5),
       resolution: (settings.resolution as string) ?? '720P',
+      enableSound: (settings.enableSound as string) ?? 'on',
       images: resolvedImages.filter(Boolean),
     }
     const jobId = await mivo.submitGenVideo(genParams)

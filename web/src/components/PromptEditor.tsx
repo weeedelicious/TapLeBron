@@ -227,9 +227,9 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
           suppressContentEditableWarning
           style={{
             outline: 'none',
-            minHeight: 72,
-            lineHeight: 1.6,
-            fontSize: 12,
+            minHeight: 80,
+            lineHeight: 1.7,
+            fontSize: 14,
             color: '#d0c8f0',
             wordBreak: 'break-word',
             ...style,
@@ -268,7 +268,7 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
           <div style={{
             position: 'absolute', top: 0, left: 0,
             pointerEvents: 'none', userSelect: 'none',
-            color: '#4a4060', fontSize: 12, lineHeight: 1.6,
+            color: '#4a4060', fontSize: 14, lineHeight: 1.7,
           }}>
             {placeholder ?? '描述你想要生成的画面内容，@引用素材'}
           </div>

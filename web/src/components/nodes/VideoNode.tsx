@@ -69,6 +69,21 @@ export function VideoNode({ id, data, selected }: Props) {
   const [atMenu, setAtMenu] = useState(false)
   const [previewChipUrl, setPreviewChipUrl] = useState<string | null>(null)
   const [chips, setChips] = useState<ChipRef[]>([])
+  const [collapsed, setCollapsed] = useState(true)
+  const nodeContainerRef = useRef<HTMLDivElement>(null)
+
+  // Auto-collapse when clicking outside the node
+  useEffect(() => {
+    if (collapsed) return
+    const handler = (e: MouseEvent) => {
+      if (!nodeContainerRef.current?.contains(e.target as Node)) {
+        setCollapsed(true)
+        setShowSettings(false)
+      }
+    }
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [collapsed])
 
   const params = getParams(data)
   const mode: VideoMode = (params.modeType as VideoMode) ?? 't2v'
@@ -147,27 +162,59 @@ export function VideoNode({ id, data, selected }: Props) {
   const isLoading = !!data.taskInfo?.loading
 
   return (
-    <>
-    <NodeShell nodeKey={id} data={data} selected={selected} minWidth={420} minHeight={380}>
-      {/* Video preview */}
-      <div className="relative" style={{ background: '#0d0b18', minHeight: 196 }}>
+    <div ref={nodeContainerRef} style={{ display: 'contents' }}>
+    <NodeShell nodeKey={id} data={data} selected={selected}
+      minWidth={collapsed ? 260 : 420}
+      minHeight={collapsed ? 160 : 380}
+    >
+      {/* Video preview — click to expand when collapsed */}
+      <div
+        className="relative"
+        style={{
+          background: '#0d0b18',
+          minHeight: collapsed ? 160 : 196,
+          cursor: collapsed ? 'pointer' : 'default',
+        }}
+        onClick={collapsed ? () => setCollapsed(false) : undefined}
+      >
         {videoUrl ? (
           <video
             ref={videoRef}
             src={videoUrl}
             className="w-full"
-            style={{ maxHeight: 280, display: 'block' }}
-            controls
+            style={{ maxHeight: collapsed ? 220 : 280, display: 'block' }}
+            controls={!collapsed}
             playsInline
+            onClick={e => { if (collapsed) { e.stopPropagation(); setCollapsed(false) } }}
           />
         ) : (
-          <div className="flex items-center justify-center" style={{ height: 196 }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" opacity={0.15}>
+          <div className="flex flex-col items-center justify-center gap-2"
+            style={{ height: collapsed ? 160 : 196 }}
+          >
+            <svg width="36" height="36" viewBox="0 0 40 40" fill="none" opacity={0.15}>
               <polygon points="14,10 32,20 14,30" fill="#fff" />
             </svg>
+            {collapsed && (
+              <span style={{ fontSize: 12, color: '#4a4060' }}>点击展开</span>
+            )}
+          </div>
+        )}
+
+        {/* Small expand indicator when collapsed */}
+        {collapsed && (
+          <div style={{
+            position: 'absolute', bottom: 8, right: 8,
+            background: 'rgba(13,11,24,0.7)', border: '1px solid #312550',
+            borderRadius: 4, color: '#6a5a8a', fontSize: 11,
+            padding: '2px 6px', pointerEvents: 'none',
+          }}>
+            点击展开
           </div>
         )}
       </div>
+
+      {/* Panel — only visible when expanded */}
+      {!collapsed && <>
 
       {/* Mode tabs + expand */}
       <div className="flex items-center nodrag" style={{ borderBottom: '1px solid #2a2040' }}>
@@ -175,7 +222,7 @@ export function VideoNode({ id, data, selected }: Props) {
           {MODES.map(m => (
             <button
               key={m.key}
-              className="text-xs px-2.5 py-1.5 whitespace-nowrap nodrag"
+              className="text-sm px-3 py-2 whitespace-nowrap nodrag"
               style={{
                 background: 'none',
                 color: mode === m.key ? '#c4b5fd' : '#5a5070',
@@ -211,7 +258,7 @@ export function VideoNode({ id, data, selected }: Props) {
             }}
           >
             <span style={{ fontSize: 14, lineHeight: 1, color: '#8a7aaa' }}>{btn.icon}</span>
-            <span style={{ fontSize: 9, color: '#6a5a8a' }}>{btn.label}</span>
+            <span style={{ fontSize: 11, color: '#8a7aaa' }}>{btn.label}</span>
           </button>
         ))}
 
@@ -254,19 +301,33 @@ export function VideoNode({ id, data, selected }: Props) {
         ))}
       </div>
 
-      {/* Prompt — PromptEditor (inline chips after text) */}
-      <div className="px-3 pt-2 pb-2 nodrag" style={{ position: 'relative' }}>
-        <PromptEditor
-          ref={editorRef}
-          value={params.prompt}
-          chips={chips}
-          onValueChange={val => setParam('prompt', val as never)}
-          onChipsChange={setChips}
-          onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
-          onEscape={() => setAtMenu(false)}
-          placeholder="描述你想要生成的画面内容，@引用素材"
-          orderMap={Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName]))}
-        />
+      {/* Prompt — PromptEditor with scrollable area */}
+      <div className="px-3 pt-2 pb-1 nodrag" style={{ position: 'relative' }}>
+        {/* Scrollable wrapper with styled scrollbar */}
+        <div
+          className="nodrag"
+          style={{
+            maxHeight: 200,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            paddingRight: 4,
+            scrollbarWidth: 'thin',
+            scrollbarColor: '#312550 transparent',
+          }}
+        >
+          <PromptEditor
+            ref={editorRef}
+            value={params.prompt}
+            chips={chips}
+            onValueChange={val => setParam('prompt', val as never)}
+            onChipsChange={setChips}
+            onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
+            onEscape={() => setAtMenu(false)}
+            placeholder="描述你想要生成的画面内容，@引用素材"
+            orderMap={Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName]))}
+            style={{ fontSize: 14, lineHeight: 1.7, minHeight: 80 }}
+          />
+        </div>
 
         {/* @ dropdown */}
         {atMenu && connectedImages.length > 0 && (
@@ -390,7 +451,7 @@ export function VideoNode({ id, data, selected }: Props) {
       <div className="flex items-center gap-1.5 px-3 py-2 nodrag">
         {/* Model selector */}
         <select
-          className="text-xs rounded px-1.5 py-1 nodrag"
+          className="text-sm rounded px-2 py-1 nodrag"
           style={{
             background: '#1e1830', border: '1px solid #312550',
             color: '#c4b5fd', maxWidth: 136, flex: '0 0 auto',
@@ -466,6 +527,8 @@ export function VideoNode({ id, data, selected }: Props) {
         </button>
       </div>
       </div>{/* end bottom bar wrapper */}
+
+      </>}{/* end collapsed panel */}
     </NodeShell>
 
     {/* Hover zoom Portal — outside overflow-hidden */}
@@ -490,6 +553,6 @@ export function VideoNode({ id, data, selected }: Props) {
     )}
 
     {previewChipUrl && <ImagePreview url={previewChipUrl} onClose={() => setPreviewChipUrl(null)} />}
-    </>
+    </div>
   )
 }

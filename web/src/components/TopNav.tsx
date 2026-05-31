@@ -34,7 +34,7 @@ export function TopNav({ onHome }: Props) {
     >
       <div className="flex items-center gap-3">
         <button
-          className="text-xs text-muted hover:text-fg transition-colors"
+          className="text-sm text-muted hover:text-fg transition-colors"
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
           onClick={onHome}
         >← 项目</button>
@@ -57,7 +57,7 @@ export function TopNav({ onHome }: Props) {
           >{projectName}</button>
         )}
 
-        <span className="text-xs" style={{ color: isSaving ? '#7c5cfc' : isDirty ? '#f59e0b' : '#8a8a8a' }}>
+        <span className="text-sm" style={{ color: isSaving ? '#7c5cfc' : isDirty ? '#f59e0b' : '#8a8a8a' }}>
           {isSaving ? '保存中…' : isDirty ? '未保存' : '已保存'}
         </span>
         {apiKeyMissing && (
@@ -67,7 +67,7 @@ export function TopNav({ onHome }: Props) {
         )}
       </div>
 
-      <div className="text-xs font-bold" style={{ color: '#7c5cfc' }}>LibTV Canvas</div>
+      <div className="text-sm font-bold" style={{ color: '#7c5cfc' }}>sate TV</div>
     </div>
   )
 }

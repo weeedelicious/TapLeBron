@@ -134,6 +134,7 @@ export interface GenVideoParams {
   ratio?: string
   duration?: number
   resolution?: string
+  enableSound?: string  // 'on' | 'off'
   // images[0] → firstFrame, images[1] → lastFrame
   images?: string[]
 }
@@ -151,6 +152,7 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
     videoRatio: ratio,
     duration,
     resolution,
+    genAudio: params.enableSound !== 'off',
   }
   if (params.images?.[0]) payload.firstFrame = params.images[0]
   if (params.images?.[1]) payload.lastFrame = params.images[1]
