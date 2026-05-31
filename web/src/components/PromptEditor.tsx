@@ -160,6 +160,8 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
     useImperativeHandle(ref, () => ({ insertChip }), [insertChip])
 
     // When orderMap changes, update chip display names in DOM
+    // Use stable serialized key to avoid running on every render
+    const orderMapKey = orderMap ? JSON.stringify(orderMap) : ''
     useEffect(() => {
       const el = divRef.current
       if (!el || !orderMap) return
@@ -168,13 +170,12 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
         if (!nodeId || !(nodeId in orderMap)) return
         const newName = orderMap[nodeId]
         const short = newName.length > 6 ? newName.slice(0, 6) + '…' : newName
-        // Update data-name attribute
         chip.dataset.name = newName
-        // Update the visible text span (second child: img, nameSpan, delSpan)
         const nameSpan = chip.children[1] as HTMLElement | undefined
-        if (nameSpan) nameSpan.textContent = short
+        if (nameSpan && nameSpan.textContent !== short) nameSpan.textContent = short
       })
-    }) // runs after every render where orderMap might have changed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orderMapKey])
 
     // Initialize DOM content on mount only
     useEffect(() => {

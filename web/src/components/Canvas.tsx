@@ -32,57 +32,43 @@ import { assetsApi } from '@/lib/api'
 import type { CanvasNodeData, NodeRef } from '@/lib/types'
 
 // ── Glow edge ────────────────────────────────────────────────────────────────
-const FLOW_STYLE = `
-@keyframes flow {
-  from { stroke-dashoffset: 200; }
-  to   { stroke-dashoffset: 0; }
-}
-@keyframes flowGlow {
-  from { stroke-dashoffset: 200; }
-  to   { stroke-dashoffset: 0; }
-}
-`
+// Shared SVG defs injected ONCE into the page — not per edge
+// Eliminates N × (feGaussianBlur filter + style block) overhead
+const SHARED_DEFS_ID = '__glow-edge-defs__'
 
-function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
+function ensureSharedDefs() {
+  if (document.getElementById(SHARED_DEFS_ID)) return
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.id = SHARED_DEFS_ID
+  svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;'
+  svg.innerHTML = `
+    <defs>
+      <style>
+        @keyframes flow { from { stroke-dashoffset: 200 } to { stroke-dashoffset: 0 } }
+      </style>
+    </defs>
+  `
+  document.body.appendChild(svg)
+}
+
+// Call once at module load
+if (typeof document !== 'undefined') ensureSharedDefs()
+
+function GlowEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
   const [edgePath] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
-  const filterId = `glow-${id}`
   return (
     <g>
-      <defs>
-        <style>{FLOW_STYLE}</style>
-        <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
-          <feColorMatrix in="blur" type="matrix"
-            values="0 0 0 0 0.39  0 0 0 0 0.71  0 0 0 0 1  0 0 0 0.6 0"
-            result="glow"
-          />
-          <feMerge>
-            <feMergeNode in="glow" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
       {/* Static base track */}
       <path d={edgePath} fill="none"
-        stroke="rgba(80,140,255,0.12)"
+        stroke="rgba(80,140,255,0.10)"
         strokeWidth={selected ? 3 : 2}
       />
 
-      {/* Flowing glow layer */}
+      {/* Flowing bright line — simple animated dash, no blur filter per edge */}
       <path d={edgePath} fill="none"
-        stroke="rgba(100,180,255,0.35)"
-        strokeWidth={selected ? 10 : 7}
-        strokeDasharray="60 140"
-        filter={`url(#${filterId})`}
-        style={{ animation: 'flowGlow 1.8s linear infinite' }}
-      />
-
-      {/* Flowing bright line */}
-      <path d={edgePath} fill="none"
-        stroke={selected ? 'rgba(210,230,255,0.98)' : 'rgba(160,210,255,0.9)'}
-        strokeWidth={selected ? 2 : 1.5}
-        strokeDasharray="60 140"
+        stroke={selected ? 'rgba(180,210,255,0.95)' : 'rgba(130,190,255,0.75)'}
+        strokeWidth={selected ? 2.5 : 1.8}
+        strokeDasharray="50 150"
         strokeLinecap="round"
         style={{ animation: 'flow 1.8s linear infinite' }}
       />
@@ -181,6 +167,8 @@ type FlowNode = Node & { data: CanvasNodeData & { nodeKey: string; projectUuid: 
 export function Canvas() {
   const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt, selectedNodeKeys, copySelected, pasteClipboard, undo } = useCanvasStore()
   const canvasRef = useRef<HTMLDivElement>(null)
+  // O(1) node lookup map — avoids Array.find on every drag frame
+  const nodeMapRef = useRef<Map<string, FlowNode>>(new Map())
   const [connMenu, setConnMenu] = useState<{ screenX: number; screenY: number; sourceId: string } | null>(null)
   const connStartRef = useRef<{ nodeId: string; handleType: string } | null>(null)
   const didConnectRef = useRef(false)
@@ -326,18 +314,19 @@ export function Canvas() {
 
   // ── React Flow handlers ────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    // When a group node is dragged, also move its children
+    // Use O(1) Map lookup instead of O(n) Array.find per drag frame
+    const map = nodeMapRef.current
     const extraChanges: NodeChange[] = []
     for (const change of changes) {
       if (change.type === 'position' && change.position) {
-        const node = nodes.find(n => n.id === change.id)
+        const node = map.get(change.id)
         if (node?.type === 'group') {
           const dx = change.position.x - node.position.x
           const dy = change.position.y - node.position.y
           if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
             const childIds = ((node.data.params as Record<string, unknown>)?.childIds as string[]) ?? []
             for (const childId of childIds) {
-              const child = nodes.find(n => n.id === childId)
+              const child = map.get(childId)
               if (child) {
                 extraChanges.push({
                   type: 'position', id: childId, dragging: change.dragging,
@@ -350,6 +339,8 @@ export function Canvas() {
       }
     }
     const updated = applyNodeChanges([...changes, ...extraChanges], nodes as Node[]) as FlowNode[]
+    // Keep map in sync
+    nodeMapRef.current = new Map(updated.map(n => [n.id, n]))
     setNodes(updated)
   }, [nodes, setNodes])
 
@@ -421,7 +412,7 @@ export function Canvas() {
         minZoom={0.05}
         maxZoom={4}
         deleteKeyCode="Delete"
-        connectionRadius={60}
+        connectionRadius={30}
         fitView={nodes.length === 0}
         colorMode="dark"
         selectionOnDrag={true}

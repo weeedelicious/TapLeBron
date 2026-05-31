@@ -153,6 +153,8 @@ export function UploadNode({ id, data, selected }: Props) {
                   src={mainDisplayUrl} alt=""
                   className="w-full block"
                   draggable={false}
+                  loading="lazy"
+                  decoding="async"
                   style={{ objectFit: 'contain', maxHeight: 280, display: 'block', cursor: 'pointer' }}
                   onLoad={e => {
                     const img = e.currentTarget

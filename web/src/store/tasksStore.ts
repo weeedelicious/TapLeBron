@@ -44,22 +44,24 @@ export const useTasksStore = create<TasksState>((set, get) => ({
     const entry = tasks[jobId]
     if (!entry) return
 
+    let errorCount = 0
+    const MAX_ERRORS = 5
+    const MAX_ATTEMPTS = 200
+
+    let attempts = 0
     const interval = setInterval(async () => {
+      attempts++
       const current = get().tasks[jobId]
-      if (!current) {
-        // Task was cancelled, stop polling
+      if (!current || attempts > MAX_ATTEMPTS) {
         clearInterval(interval)
         delete intervals[jobId]
+        if (attempts > MAX_ATTEMPTS) get().removeTask(jobId)
         return
       }
       try {
         const res = await generateApi.poll(jobId)
-        // Re-check after await — task may have been cancelled while request was in flight
-        if (!get().tasks[jobId]) {
-          clearInterval(interval)
-          delete intervals[jobId]
-          return
-        }
+        errorCount = 0  // reset on success
+        if (!get().tasks[jobId]) { clearInterval(interval); delete intervals[jobId]; return }
         set(s => ({
           tasks: { ...s.tasks, [jobId]: { ...s.tasks[jobId], status: res.status, progressPercent: res.progressPercent } }
         }))
@@ -83,7 +85,17 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           get().removeTask(jobId)
         }
       } catch (e) {
+        errorCount++
         console.error('poll error', e)
+        // Stop polling after too many consecutive errors (server down / task expired)
+        if (errorCount >= MAX_ERRORS) {
+          useCanvasStore.getState().updateNodeData(current.nodeKey, {
+            taskInfo: { taskId: jobId, loading: false, status: 3, progressPercent: 0, error: '轮询超时，请重试' }
+          })
+          clearInterval(interval)
+          delete intervals[jobId]
+          get().removeTask(jobId)
+        }
       }
     }, 3000)
 

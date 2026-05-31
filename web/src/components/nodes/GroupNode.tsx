@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { NodeResizer } from '@xyflow/react'
+import { NodeResizer, useNodeId, useStore as useRFStore } from '@xyflow/react'
 import { useCanvasStore } from '@/store/canvasStore'
 import { useTasksStore } from '@/store/tasksStore'
 import { generateApi } from '@/lib/api'
@@ -36,7 +36,6 @@ export function GroupNode({ id, data, selected }: Props) {
   const { addTask, startPolling } = useTasksStore()
   const [showColorPicker, setShowColorPicker] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null)
 
   const params = (data.params ?? {}) as { childIds?: string[]; color?: string }
   const childIds: string[] = params.childIds ?? []
@@ -49,19 +48,14 @@ export function GroupNode({ id, data, selected }: Props) {
     return n && n.type !== 'group'
   }).length
 
-  // Track toolbar position from node DOM rect
-  useEffect(() => {
-    if (!selected) { setToolbarPos(null); return }
-    const update = () => {
-      const el = containerRef.current
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      setToolbarPos({ x: rect.left + rect.width / 2, y: rect.top })
-    }
-    update()
-    const id_ = setInterval(update, 100)
-    return () => clearInterval(id_)
-  }, [selected])
+  // Compute toolbar position from node DOM rect on demand (no setInterval)
+  const getToolbarPos = () => {
+    const el = containerRef.current
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, y: rect.top }
+  }
+  const toolbarPos = selected ? getToolbarPos() : null
 
   const handleColorChange = useCallback((newColor: string) => {
     updateNodeData(id, {

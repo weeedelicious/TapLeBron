@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { NodeShell } from './NodeShell'
 import { ImagePreview } from '@/components/ImagePreview'
@@ -95,13 +95,19 @@ export function VideoNode({ id, data, selected }: Props) {
   const duration = params.settings.duration ?? 5
   const sound = params.settings.enableSound ?? 'on'
 
-  // Auto-sync: resolve live URLs + assign order-based names ("图片1", "图片2")
-  const connectedRefs = (params.imageList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? []
-  const connectedImages = connectedRefs.map((ref, i) => {
-    const srcNode = nodes.find(n => n.id === ref.nodeId)
-    const liveUrl = (srcNode?.data as CanvasNodeData)?.url?.[0] ?? ref.url
-    return { ...ref, url: liveUrl, orderName: `图片${i + 1}` }
-  }).filter(r => r.url)
+  // Auto-sync: resolve live URLs + assign order-based names — memoized to avoid nodes.find per render
+  const connectedRefs = useMemo(
+    () => (params.imageList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? [],
+    [params.imageList]
+  )
+  const connectedImages = useMemo(() =>
+    connectedRefs.map((ref, i) => {
+      const srcNode = nodes.find(n => n.id === ref.nodeId)
+      const liveUrl = (srcNode?.data as CanvasNodeData)?.url?.[0] ?? ref.url
+      return { ...ref, url: liveUrl, orderName: `图片${i + 1}` }
+    }).filter(r => r.url),
+    [connectedRefs, nodes]
+  )
 
   const setParam = useCallback(<K extends keyof VideoParams>(key: K, val: VideoParams[K]) => {
     updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
@@ -324,7 +330,7 @@ export function VideoNode({ id, data, selected }: Props) {
             onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
             onEscape={() => setAtMenu(false)}
             placeholder="描述你想要生成的画面内容，@引用素材"
-            orderMap={Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName]))}
+            orderMap={useMemo(() => Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName])), [connectedImages])}
             style={{ fontSize: 14, lineHeight: 1.7, minHeight: 80 }}
           />
         </div>
