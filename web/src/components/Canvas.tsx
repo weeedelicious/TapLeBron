@@ -31,48 +31,14 @@ import { MultiSelectToolbar } from './MultiSelectToolbar'
 import { assetsApi } from '@/lib/api'
 import type { CanvasNodeData, NodeRef } from '@/lib/types'
 
-// ── Glow edge ────────────────────────────────────────────────────────────────
-// Shared SVG defs injected ONCE into the page — not per edge
-// Eliminates N × (feGaussianBlur filter + style block) overhead
-const SHARED_DEFS_ID = '__glow-edge-defs__'
-
-function ensureSharedDefs() {
-  if (document.getElementById(SHARED_DEFS_ID)) return
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.id = SHARED_DEFS_ID
-  svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;'
-  svg.innerHTML = `
-    <defs>
-      <style>
-        @keyframes flow { from { stroke-dashoffset: 200 } to { stroke-dashoffset: 0 } }
-      </style>
-    </defs>
-  `
-  document.body.appendChild(svg)
-}
-
-// Call once at module load
-if (typeof document !== 'undefined') ensureSharedDefs()
-
+// ── Static edge — zero animation overhead ────────────────────────────────────
 function GlowEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
   const [edgePath] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
   return (
-    <g>
-      {/* Static base track */}
-      <path d={edgePath} fill="none"
-        stroke="rgba(80,140,255,0.10)"
-        strokeWidth={selected ? 3 : 2}
-      />
-
-      {/* Flowing bright line — simple animated dash, no blur filter per edge */}
-      <path d={edgePath} fill="none"
-        stroke={selected ? 'rgba(180,210,255,0.95)' : 'rgba(130,190,255,0.75)'}
-        strokeWidth={selected ? 2.5 : 1.8}
-        strokeDasharray="50 150"
-        strokeLinecap="round"
-        style={{ animation: 'flow 1.8s linear infinite' }}
-      />
-    </g>
+    <path d={edgePath} fill="none"
+      stroke={selected ? 'rgba(180,210,255,0.9)' : 'rgba(100,160,255,0.55)'}
+      strokeWidth={selected ? 2 : 1.5}
+    />
   )
 }
 

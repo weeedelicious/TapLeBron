@@ -109,6 +109,12 @@ export function VideoNode({ id, data, selected }: Props) {
     [connectedRefs, nodes]
   )
 
+  // orderMap must be declared here at component body level — NOT inline in JSX (hooks rule)
+  const orderMap = useMemo(
+    () => Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName])),
+    [connectedImages]
+  )
+
   const setParam = useCallback(<K extends keyof VideoParams>(key: K, val: VideoParams[K]) => {
     updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
   }, [id, params, updateNodeData])
@@ -330,7 +336,7 @@ export function VideoNode({ id, data, selected }: Props) {
             onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
             onEscape={() => setAtMenu(false)}
             placeholder="描述你想要生成的画面内容，@引用素材"
-            orderMap={useMemo(() => Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName])), [connectedImages])}
+            orderMap={orderMap}
             style={{ fontSize: 14, lineHeight: 1.7, minHeight: 80 }}
           />
         </div>
