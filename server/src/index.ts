@@ -7,6 +7,7 @@ import projectsRouter from './routes/projects'
 import assetsRouter from './routes/assets'
 import generateRouter from './routes/generate'
 import toolboxRouter from './routes/toolbox'
+import backupRouter from './routes/backup'
 
 const app = express()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001
@@ -38,6 +39,7 @@ app.use('/api/assets', assetsRouter)
 app.use('/api/generate', generateRouter)
 app.use('/api/tasks', generateRouter)  // poll endpoint is on generateRouter
 app.use('/api/toolbox', toolboxRouter)
+app.use('/api/backup', backupRouter)
 
 // Ensure projects dir exists
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true })

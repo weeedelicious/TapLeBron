@@ -104,6 +104,32 @@ export function ProjectList({ onOpen }: Props) {
     setMenu({ uuid, x: rect.left, y: rect.bottom + 4 })
   }
 
+  // ── Backup / Restore ──────────────────────────────────────────────────────
+  const importRef = useRef<HTMLInputElement>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  const handleExport = () => {
+    // Direct navigation to backend port — bypasses Vite proxy (which truncates large files)
+    // Content-Disposition: attachment header triggers browser download automatically
+    window.location.href = 'http://localhost:3001/api/backup/export'
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setSyncing(true)
+    try {
+      const fd = new FormData()
+      fd.append('backup', file)
+      const res = await fetch('/api/backup/import', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      alert(data.message)
+      load()
+    } catch (e) { alert('导入失败：' + String(e)) }
+    finally { setSyncing(false); e.target.value = '' }
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#0e0e0e', color: '#e5e5e5', userSelect: 'none' }}>
 
@@ -134,6 +160,46 @@ export function ProjectList({ onOpen }: Props) {
           <span style={{ fontSize: 16, lineHeight: 1 }}>＋</span>
           <span>新建项目</span>
         </button>
+
+        {/* Export / Import */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: '#1e1830', border: '1px solid #312550',
+              borderRadius: 8, padding: '7px 12px',
+              color: '#8a7aaa', fontSize: 13, cursor: syncing ? 'wait' : 'pointer',
+              opacity: syncing ? 0.6 : 1,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#251e38')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1e1830')}
+            onClick={handleExport}
+            disabled={syncing}
+            title="导出所有工程为 zip 备份包"
+          >
+            <span>⬇</span><span>导出备份</span>
+          </button>
+
+          <button
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: '#1e1830', border: '1px solid #312550',
+              borderRadius: 8, padding: '7px 12px',
+              color: '#8a7aaa', fontSize: 13, cursor: syncing ? 'wait' : 'pointer',
+              opacity: syncing ? 0.6 : 1,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#251e38')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1e1830')}
+            onClick={() => importRef.current?.click()}
+            disabled={syncing}
+            title="从备份包恢复工程"
+          >
+            <span>⬆</span><span>导入恢复</span>
+          </button>
+        </div>
+
+        {/* Hidden inputs */}
+        <input ref={importRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={handleImport} />
       </div>
 
       {/* Grid */}
