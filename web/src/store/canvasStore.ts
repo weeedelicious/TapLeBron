@@ -99,11 +99,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const nodes: FlowNode[] = project.nodeList.map(cn => {
       let data: CanvasNodeData
       try { data = JSON.parse(cn.data) } catch { data = { type: 'upload', name: cn.name, url: [], action: 'image_resource' } }
+      // Cap image/video node widths so they don't stretch across canvas
+      const MAX_W: Partial<Record<string, number>> = { image: 520, video: 520 }
+      const storedW = Number(cn.measured?.width ?? 520)
+      const cappedW = MAX_W[data.type] ? Math.min(storedW, MAX_W[data.type]!) : storedW
       return {
         id: cn.nodeKey,
         type: data.type,
         position: { x: Number(cn.position.positionX), y: Number(cn.position.positionY) },
         data: { ...data, nodeKey: cn.nodeKey, projectUuid: cn.projectUuid },
+        width: cappedW || undefined,
         draggable: true,
         selectable: true,
       }

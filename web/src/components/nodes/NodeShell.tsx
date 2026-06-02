@@ -23,11 +23,12 @@ interface NodeShellProps {
   children: React.ReactNode
   toolbar?: React.ReactNode
   minWidth?: number
+  maxWidth?: number
   minHeight?: number
   selected?: boolean
 }
 
-export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, minHeight = 200, selected }: NodeShellProps) {
+export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, maxWidth, minHeight = 200, selected }: NodeShellProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { deleteNodes, updateNodeData } = useCanvasStore()
 
@@ -49,13 +50,14 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, mi
   return (
     <div
       className="relative flex flex-col"
-      style={{ minWidth, minHeight }}
+      style={{ minWidth, minHeight, ...(maxWidth ? { maxWidth, width: maxWidth } : {}) }}
       onClick={() => menuOpen && setMenuOpen(false)}
     >
       <NodeResizer
         isVisible={selected}
         minWidth={minWidth}
         minHeight={minHeight}
+        maxWidth={maxWidth}
         handleStyle={{ background: '#7c5cfc', border: 'none', borderRadius: 2 }}
         lineStyle={{ borderColor: '#7c5cfc' }}
       />
@@ -158,22 +160,6 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, mi
         }}
       >
         <div className="flex-1 min-h-0">{children}</div>
-
-        {/* Progress overlay */}
-        {isLoading && (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center"
-            style={{ background: 'rgba(15,10,30,0.82)', zIndex: 30 }}
-          >
-            <div className="w-3/4 h-1 rounded mb-2" style={{ background: '#2d2040' }}>
-              <div
-                className="h-full rounded"
-                style={{ width: `${progress}%`, background: '#7c5cfc', transition: 'width 0.4s' }}
-              />
-            </div>
-            <span className="text-xs" style={{ color: '#9d8ff0' }}>生成中 {progress}%</span>
-          </div>
-        )}
 
         {/* Error overlay */}
         {hasError && (

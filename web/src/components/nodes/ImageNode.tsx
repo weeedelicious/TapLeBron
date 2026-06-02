@@ -79,18 +79,18 @@ function RatioIcon({ w, h, active }: { w: number; h: number; active: boolean }) 
 }
 
 // ── @ Mention dropdown ────────────────────────────────────────────────────────
-function AtMentionDropdown({ pos, currentNodeId, onSelect, onClose }: {
+function AtMentionDropdown({ pos, connectedNodeIds, onSelect, onClose }: {
   pos: { x: number; y: number }
-  currentNodeId: string
+  connectedNodeIds: Set<string>
   onSelect: (chip: ChipRef) => void
   onClose: () => void
 }) {
   const { nodes } = useCanvasStore()
   const ref = useRef<HTMLDivElement>(null)
 
+  // Only show nodes that are edge-connected into this node (imageList refs)
   const candidates = nodes.filter(n =>
-    n.id !== currentNodeId &&
-    (n.data.type === 'image' || n.data.type === 'upload') &&
+    connectedNodeIds.has(n.id) &&
     Array.isArray(n.data.url) && (n.data.url as string[]).length > 0
   )
 
@@ -260,13 +260,36 @@ export function ImageNode({ id, data, selected }: Props) {
   ) : undefined
 
   return (
-    <NodeShell nodeKey={id} data={data} selected={selected} toolbar={toolbar} minWidth={360} minHeight={200}>
+    <NodeShell nodeKey={id} data={data} selected={selected} toolbar={toolbar} minWidth={360} maxWidth={520} minHeight={200}>
 
       {/* ── Image preview ── */}
       {hasImage ? (
         !expanded ? (
           /* ── Collapsed: single main image ── */
           <div className="relative group" style={{ background: '#0d0b18' }}>
+            {/* Loading overlay — only covers the image area */}
+            {isLoading && (
+              <div style={{
+                position: 'absolute', inset: 0, zIndex: 10,
+                backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+                background: 'rgba(13,10,26,0.5)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <div className="nodrag flex items-center gap-2 px-4 py-2 rounded-full"
+                  style={{ background: 'rgba(20,15,40,0.92)', border: '1px solid #312550' }}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                    <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
+                    <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+                  </svg>
+                  <span style={{ fontSize: 12, color: '#c4b5fd', whiteSpace: 'nowrap' }}>
+                    生成中 {data.taskInfo?.progressPercent ?? 0}%
+                  </span>
+                  <button className="nodrag" onClick={() => {}} style={{
+                    fontSize: 11, color: '#8a7aaa', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  }}>取消</button>
+                </div>
+              </div>
+            )}
             <img
               ref={imgRef}
               src={urls[0]} alt=""
@@ -352,193 +375,199 @@ export function ImageNode({ id, data, selected }: Props) {
           </div>
         )
       ) : (
-        <div className="flex items-center justify-center" style={{ minHeight: 180, background: '#0d0b18' }}>
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" opacity={0.12}>
-            <rect x="3" y="7" width="34" height="26" rx="3" stroke="#c4b5fd" strokeWidth="2" />
-            <circle cx="14" cy="18" r="3.5" stroke="#c4b5fd" strokeWidth="2" />
-            <path d="M3 28l10-8 8 8 6-5 10 9" stroke="#c4b5fd" strokeWidth="2" strokeLinejoin="round" />
-          </svg>
+        <div className="relative flex items-center justify-center" style={{ minHeight: 180, background: '#0d0b18' }}>
+          {isLoading ? (
+            <div className="nodrag flex items-center gap-2 px-4 py-2 rounded-full"
+              style={{ background: 'rgba(20,15,40,0.92)', border: '1px solid #312550' }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
+                <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+              </svg>
+              <span style={{ fontSize: 12, color: '#c4b5fd', whiteSpace: 'nowrap' }}>
+                生成中 {data.taskInfo?.progressPercent ?? 0}%
+              </span>
+            </div>
+          ) : (
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" opacity={0.12}>
+              <rect x="3" y="7" width="34" height="26" rx="3" stroke="#c4b5fd" strokeWidth="2" />
+              <circle cx="14" cy="18" r="3.5" stroke="#c4b5fd" strokeWidth="2" />
+              <path d="M3 28l10-8 8 8 6-5 10 9" stroke="#c4b5fd" strokeWidth="2" strokeLinejoin="round" />
+            </svg>
+          )}
         </div>
       )}
 
-      {/* ── Sub-toolbar: 风格 标记 聚焦 + connected images ── */}
-      <div className="flex items-center gap-1.5 px-3 py-2 nodrag" style={{ borderBottom: '1px solid #2a2040' }}>
-        {SUB_TOOLS.map(btn => (
-          <button key={btn.key}
-            className="flex flex-col items-center justify-center gap-0.5 rounded nodrag"
-            style={{ background: '#1e1830', border: '1px solid #312550', cursor: 'pointer', width: 46, height: 44 }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#251e38')}
-            onMouseLeave={e => (e.currentTarget.style.background = '#1e1830')}
-          >
-            <span style={{ fontSize: 14, lineHeight: 1, color: '#8a7aaa' }}>{btn.icon}</span>
-            <span style={{ fontSize: 9, color: '#6a5a8a' }}>{btn.label}</span>
-          </button>
-        ))}
-
-        {/* Connected image thumbnails */}
-        {connectedImages.length > 0 && (
-          <div className="relative rounded overflow-hidden nodrag"
-            style={{ width: 44, height: 44, border: '1px solid #312550', flexShrink: 0 }}>
-            <img src={connectedImages[0].url} alt=""
-              draggable={false}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            <div style={{
-              position: 'absolute', top: 2, right: 2, width: 15, height: 15,
-              background: '#7c5cfc', borderRadius: '50%', fontSize: 9,
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
-            }}>{connectedImages.length}</div>
-          </div>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {/* Expand button */}
-        <button className="nodrag"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5a5070', fontSize: 13 }}
-          title="展开"
-        >⤢</button>
-      </div>
-
-      {/* ── Prompt ── */}
-      <div ref={promptWrapRef} className="px-3 pt-2 pb-1 nodrag">
-        <PromptEditor
-          ref={promptEditorRef}
-          value={params.prompt}
-          chips={chips}
-          onValueChange={val => setParam('prompt', val)}
-          onChipsChange={handleChipsChange}
-          onAtKey={handleAtKey}
-          onEscape={() => setShowAtMenu(false)}
-          placeholder="描述你想要生成的画面内容，@引用素材"
-        />
-        {showAtMenu && (
-          <AtMentionDropdown
-            pos={atMenuPos}
-            currentNodeId={id}
-            onSelect={handleSelectMention}
-            onClose={() => setShowAtMenu(false)}
-          />
-        )}
-      </div>
-
-      {/* ── Settings panel ── */}
-      {showSettings && (
-        <div className="mx-3 mb-2 p-3 rounded nodrag" style={{ background: '#16112a', border: '1px solid #2a2040' }}>
-          <div className="text-xs mb-1.5" style={{ color: '#5a5070' }}>分辨率</div>
-          <div className="flex gap-1.5 mb-3">
-            {RESOLUTIONS.map(r => (
-              <button key={r} className="flex-1 text-xs py-0.5 rounded nodrag"
-                style={{
-                  background: resolution === r ? '#7c5cfc' : '#1e1830',
-                  color: resolution === r ? '#fff' : '#8a7aaa',
-                  border: resolution === r ? 'none' : '1px solid #312550', cursor: 'pointer',
-                }}
-                onClick={() => { setSettings('resolution', r); setShowSettings(false) }}
-              >{r}</button>
+      {/* ── Controls card (LibLib TV style) ── */}
+      <div className="nodrag" style={{ padding: '0 10px 10px' }}>
+        <div style={{
+          background: '#16121f', borderRadius: 12,
+          border: '1px solid #221a35', overflow: 'hidden',
+        }}>
+          {/* Sub-toolbar row */}
+          <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-2">
+            {SUB_TOOLS.map(btn => (
+              <button key={btn.key}
+                className="flex flex-col items-center justify-center gap-0.5 rounded-lg nodrag"
+                style={{ background: '#1e1830', border: '1px solid #2a2040', cursor: 'pointer', width: 48, height: 46 }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#251e38')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#1e1830')}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1, color: '#8a7aaa' }}>{btn.icon}</span>
+                <span style={{ fontSize: 10, color: '#6a5a8a' }}>{btn.label}</span>
+              </button>
             ))}
+            {connectedImages.map((ref, i) => (
+              <div key={i} className="relative rounded-lg overflow-hidden nodrag"
+                style={{ width: 48, height: 46, border: '1px solid #2a2040', flexShrink: 0 }}>
+                <img src={ref.url} alt="" draggable={false}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                {i === 0 && connectedImages.length > 1 && (
+                  <div style={{
+                    position: 'absolute', top: 2, right: 2, width: 15, height: 15,
+                    background: '#7c5cfc', borderRadius: '50%', fontSize: 9,
+                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
+                  }}>{connectedImages.length}</div>
+                )}
+              </div>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button className="nodrag" onClick={() => setPreviewUrl(urls[0] ?? null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5a5070', fontSize: 14, padding: 4 }}
+              title="全屏">⤢</button>
           </div>
-          <div className="text-xs mb-1.5" style={{ color: '#5a5070' }}>比例</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
-            {RATIOS.map(r => {
-              const active = ratio === r.value
-              return (
-                <button key={r.value}
-                  className="nodrag flex flex-col items-center justify-end gap-1 py-2 rounded"
-                  style={{
-                    background: active ? 'rgba(124,92,252,0.15)' : '#1e1830',
-                    border: active ? '1px solid #7c5cfc' : '1px solid #312550',
-                    cursor: 'pointer', color: active ? '#c4b5fd' : '#6a5a8a',
-                    fontSize: 10, minHeight: 52,
-                  }}
-                  onClick={() => { setSettings('ratio', r.value); setShowSettings(false) }}
-                >
-                  <RatioIcon w={r.w} h={r.h} active={active} />
-                  <span>{r.label}</span>
-                </button>
-              )
-            })}
+
+          {/* Prompt */}
+          <div ref={promptWrapRef} style={{ padding: '0 14px 10px' }}>
+            <PromptEditor
+              ref={promptEditorRef}
+              value={params.prompt}
+              chips={chips}
+              onValueChange={val => setParam('prompt', val)}
+              onChipsChange={handleChipsChange}
+              onAtKey={handleAtKey}
+              onEscape={() => setShowAtMenu(false)}
+              placeholder="描述你想要生成的画面内容，@引用素材"
+              style={{ fontSize: 15, lineHeight: 1.65, color: '#e0d8f8', minHeight: 72 }}
+            />
+            {showAtMenu && (
+              <AtMentionDropdown
+                pos={atMenuPos}
+                connectedNodeIds={new Set(connectedImages.map(r => r.nodeId))}
+                onSelect={handleSelectMention}
+                onClose={() => setShowAtMenu(false)}
+              />
+            )}
+          </div>
+
+          {/* Ratio / Resolution panel */}
+          {showSettings && (
+            <div style={{ padding: '0 14px 12px' }}>
+              <div style={{ fontSize: 11, color: '#4a4060', marginBottom: 6 }}>分辨率</div>
+              <div className="flex gap-1.5 mb-3">
+                {RESOLUTIONS.map(r => (
+                  <button key={r} className="flex-1 rounded-lg nodrag"
+                    style={{
+                      fontSize: 13, padding: '4px 0',
+                      background: resolution === r ? '#7c5cfc' : '#1e1830',
+                      color: resolution === r ? '#fff' : '#8a7aaa',
+                      border: resolution === r ? 'none' : '1px solid #2a2040', cursor: 'pointer',
+                    }}
+                    onClick={() => { setSettings('resolution', r); setShowSettings(false) }}
+                  >{r}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#4a4060', marginBottom: 6 }}>比例</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 5 }}>
+                {RATIOS.map(r => {
+                  const active = ratio === r.value
+                  return (
+                    <button key={r.value}
+                      className="nodrag flex flex-col items-center justify-end gap-1 py-2 rounded-lg"
+                      style={{
+                        background: active ? 'rgba(124,92,252,0.15)' : '#1e1830',
+                        border: active ? '1px solid #7c5cfc' : '1px solid #2a2040',
+                        cursor: 'pointer', color: active ? '#c4b5fd' : '#6a5a8a',
+                        fontSize: 11, minHeight: 52,
+                      }}
+                      onClick={() => { setSettings('ratio', r.value); setShowSettings(false) }}
+                    >
+                      <RatioIcon w={r.w} h={r.h} active={active} />
+                      <span>{r.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {(genError || data.taskInfo?.status === 3) && (
+            <div style={{ margin: '0 14px 8px', padding: '6px 10px', borderRadius: 8, background: '#2a1020', color: '#f87171', fontSize: 13 }}>
+              {genError ?? data.taskInfo?.error ?? '生成失败'}
+            </div>
+          )}
+
+          {/* Bottom bar — LibLib TV style */}
+          <div className="flex items-center nodrag" style={{
+            borderTop: '1px solid #1e1a2e', padding: '8px 12px', gap: 4,
+          }}>
+            {/* Model selector */}
+            <select className="nodrag" value={params.model} onChange={e => setParam('model', e.target.value)}
+              style={{
+                flex: '1 1 0', minWidth: 0, background: 'none', border: 'none',
+                color: '#c4b5fd', fontSize: 13, cursor: 'pointer', outline: 'none',
+                fontWeight: 500,
+              }}
+            >
+              {IMAGE_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+
+            <div style={{ width: 1, height: 16, background: '#2a2040', flexShrink: 0 }} />
+
+            {/* Ratio · Res */}
+            <button className="nodrag flex items-center gap-1" onClick={() => setShowSettings(v => !v)}
+              style={{ background: 'none', border: 'none', color: '#8a7aaa', fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap', padding: '0 4px' }}>
+              <span style={{ fontSize: 10, opacity: 0.6 }}>□</span>
+              <span>{ratio === 'auto' ? '自适应' : ratio} · {resolution}</span>
+              <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span>
+            </button>
+
+            <div style={{ width: 1, height: 16, background: '#2a2040', flexShrink: 0 }} />
+
+            {/* Translate */}
+            <button className="nodrag" onClick={handleTranslate}
+              style={{ background: 'none', border: 'none', color: '#8a7aaa', fontSize: 13, cursor: 'pointer', padding: '0 4px' }}
+              title="翻译提示词">文A</button>
+
+            {/* Count */}
+            <select className="nodrag" value={params.count} onChange={e => setParam('count', Number(e.target.value))}
+              style={{ background: 'none', border: 'none', color: '#8a7aaa', fontSize: 13, cursor: 'pointer', outline: 'none' }}>
+              {[1, 2, 4].map(n => <option key={n} value={n}>{n}张</option>)}
+            </select>
+
+            {/* Generate button */}
+            <button className="nodrag flex items-center justify-center rounded-full"
+              style={{
+                width: 34, height: 34, flexShrink: 0, marginLeft: 2,
+                background: isLoading ? '#251e38' : '#fff',
+                border: isLoading ? '1px solid #312550' : 'none',
+                cursor: isLoading ? 'default' : 'pointer',
+                color: isLoading ? '#7c5cfc' : '#1a1030',
+                fontSize: 18, fontWeight: 700, transition: 'background 0.2s',
+              }}
+              onClick={handleGenerate} disabled={isLoading}
+              title={isLoading ? `生成中 ${data.taskInfo?.progressPercent ?? 0}%` : '生成'}
+            >
+              {isLoading
+                ? <svg width="14" height="14" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                    <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
+                    <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+                  </svg>
+                : <span>↑</span>
+              }
+            </button>
           </div>
         </div>
-      )}
-
-      {/* ── Error ── */}
-      {(genError || data.taskInfo?.status === 3) && (
-        <div className="mx-3 mb-1 px-2 py-1 rounded text-xs nodrag"
-          style={{ background: '#2a1020', color: '#f87171' }}>
-          {genError ?? data.taskInfo?.error ?? '生成失败'}
-        </div>
-      )}
-
-      {/* ── Bottom bar ── */}
-      <div className="flex items-center gap-1.5 px-3 py-2 nodrag" style={{ borderTop: '1px solid #2a2040' }}>
-        {/* Model */}
-        <select
-          className="text-xs rounded px-1.5 py-1 nodrag"
-          style={{ background: '#1e1830', border: '1px solid #312550', color: '#c4b5fd', flex: '1 1 0', minWidth: 0 }}
-          value={params.model}
-          onChange={e => setParam('model', e.target.value)}
-        >
-          {IMAGE_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-
-        {/* Ratio · Res pill */}
-        <button
-          className="flex items-center gap-1 text-xs px-2 py-1 rounded nodrag"
-          style={{ background: '#1e1830', border: '1px solid #312550', color: '#8a7aaa', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          onClick={() => setShowSettings(v => !v)}
-        >
-          <span>{ratio === 'auto' ? '自适应' : ratio}</span>
-          <span style={{ opacity: 0.3 }}>·</span>
-          <span>{resolution}</span>
-          <span style={{ fontSize: 9, opacity: 0.5, marginLeft: 1 }}>▾</span>
-        </button>
-
-        {/* Camera mode */}
-        <button
-          className="flex items-center gap-1 text-xs px-2 py-1 rounded nodrag"
-          style={{ background: '#1e1830', border: '1px solid #312550', color: '#8a7aaa', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          title="摄像机模式"
-        >
-          <span style={{ fontSize: 11 }}>🎞</span>
-          <span>摄像机</span>
-        </button>
-
-        {/* Translate */}
-        <button
-          className="text-xs px-1.5 py-1 rounded nodrag"
-          style={{ background: '#1e1830', border: '1px solid #312550', color: '#8a7aaa', cursor: 'pointer', fontWeight: 500 }}
-          onClick={handleTranslate}
-          title="翻译提示词"
-        >文A</button>
-
-        {/* Count */}
-        <select
-          className="text-xs rounded px-1.5 py-1 nodrag"
-          style={{ background: '#1e1830', border: '1px solid #312550', color: '#8a7aaa' }}
-          value={params.count}
-          onChange={e => setParam('count', Number(e.target.value))}
-        >
-          {[1, 2, 4].map(n => <option key={n} value={n}>{n}张</option>)}
-        </select>
-
-        {/* Generate */}
-        <button
-          className="flex items-center justify-center rounded-full nodrag"
-          style={{
-            width: 32, height: 32, flexShrink: 0,
-            background: isLoading ? '#312550' : '#7c5cfc',
-            border: 'none', cursor: isLoading ? 'default' : 'pointer', color: '#fff',
-            transition: 'background 0.2s',
-          }}
-          onClick={handleGenerate}
-          disabled={isLoading}
-          title={isLoading ? `生成中 ${data.taskInfo?.progressPercent ?? 0}%` : '生成'}
-        >
-          {isLoading
-            ? <span style={{ fontSize: 9 }}>{data.taskInfo?.progressPercent ?? 0}%</span>
-            : <span style={{ fontSize: 16 }}>↑</span>
-          }
-        </button>
       </div>
 
       {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
