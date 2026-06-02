@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { useUpdateNodeInternals } from '@xyflow/react'
+import { useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
 import { NodeShell } from './NodeShell'
 import { ImagePreview } from '@/components/ImagePreview'
 import { PromptEditor } from '@/components/PromptEditor'
@@ -150,16 +150,30 @@ export function ImageNode({ id, data, selected }: Props) {
   const promptEditorRef = useRef<{ insertChip: (ref: ChipRef) => void }>(null)
   const promptWrapRef = useRef<HTMLDivElement>(null)
   const nodeContainerRef = useRef<HTMLDivElement>(null)
+  const dividerRef = useRef<HTMLDivElement>(null)      // bottom edge of image area
+  const controlsPortalRef = useRef<HTMLDivElement>(null)
   const updateNodeInternals = useUpdateNodeInternals()
+
+  // viewport + node absolute position — drive portal re-positioning
+  const { zoom, x: vpX, y: vpY } = useViewport()
+  const nodeAbsPos = useStore(s => (s.nodeLookup as Map<string, { internals?: { positionAbsolute?: { x: number; y: number } } }>)?.get(id)?.internals?.positionAbsolute)
+  const [portalRect, setPortalRect] = useState<DOMRect | null>(null)
+
+  useEffect(() => {
+    setPortalRect(dividerRef.current?.getBoundingClientRect() ?? null)
+  }, [collapsed, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
 
   // Force React Flow to re-measure handles after collapse/expand
   useEffect(() => { updateNodeInternals(id) }, [collapsed, id, updateNodeInternals])
 
-  // Auto-collapse on outside click
+  // Auto-collapse on outside click (checks both node and portal)
   useEffect(() => {
     if (collapsed) return
     const handler = (e: MouseEvent) => {
-      if (!nodeContainerRef.current?.contains(e.target as Node)) {
+      if (
+        !nodeContainerRef.current?.contains(e.target as Node) &&
+        !controlsPortalRef.current?.contains(e.target as Node)
+      ) {
         setCollapsed(true)
         setShowAtMenu(false)
       }
@@ -280,6 +294,7 @@ export function ImageNode({ id, data, selected }: Props) {
   ) : undefined
 
   return (
+    <>
     <div ref={nodeContainerRef} style={{ display: 'contents' }}>
     <NodeShell nodeKey={id} data={data} selected={selected} toolbar={toolbar}
       minWidth={collapsed ? 220 : 360} maxWidth={520} minHeight={collapsed ? 140 : 200}>
@@ -435,8 +450,26 @@ export function ImageNode({ id, data, selected }: Props) {
         </div>
       )}
 
-      {/* ── Controls card (LibLib TV style) — hidden when collapsed ── */}
-      {!collapsed && <div className="nodrag" style={{ padding: '0 10px 10px' }}>
+      {/* Divider ref — marks the bottom edge of the image area for portal positioning */}
+      <div ref={dividerRef} style={{ height: 0 }} />
+    </NodeShell>
+    </div>
+
+      {/* ── Controls card — rendered as a portal so it stays fixed-size at any canvas zoom ── */}
+      {!collapsed && portalRect && createPortal(
+        <div ref={controlsPortalRef} className="nodrag" style={{
+          position: 'fixed',
+          top: portalRect.bottom,
+          left: portalRect.left,
+          width: portalRect.width,
+          zIndex: 1000,
+          background: '#1a1625',
+          borderRadius: '0 0 10px 10px',
+          border: '1px solid #2d2040',
+          borderTop: 'none',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+        <div style={{ padding: '0 10px 10px' }}>
         <div style={{
           background: '#16121f', borderRadius: 12,
           border: '1px solid #221a35', overflow: 'hidden',
@@ -610,10 +643,12 @@ export function ImageNode({ id, data, selected }: Props) {
             </button>
           </div>
         </div>
-      </div>}
+        </div>
+        </div>,
+        document.body
+      )}
 
       {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
-    </NodeShell>
-    </div>
+    </>
   )
 }
