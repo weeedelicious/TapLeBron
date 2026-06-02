@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react'
+import { useCallback, useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
 import { NodeShell } from './NodeShell'
@@ -159,7 +159,9 @@ export function ImageNode({ id, data, selected }: Props) {
   const nodeAbsPos = useStore(s => (s.nodeLookup as Map<string, { internals?: { positionAbsolute?: { x: number; y: number } } }>)?.get(id)?.internals?.positionAbsolute)
   const [portalRect, setPortalRect] = useState<DOMRect | null>(null)
 
-  useEffect(() => {
+  // useLayoutEffect: runs after DOM commit, before paint — gives correct getBoundingClientRect()
+  useLayoutEffect(() => {
+    if (collapsed) { setPortalRect(null); return }
     setPortalRect(dividerRef.current?.getBoundingClientRect() ?? null)
   }, [collapsed, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
 

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
+import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
 import { NodeShell } from './NodeShell'
@@ -80,7 +80,8 @@ export function VideoNode({ id, data, selected }: Props) {
   const nodeAbsPos = useStore(s => (s.nodeLookup as Map<string, { internals?: { positionAbsolute?: { x: number; y: number } } }>)?.get(id)?.internals?.positionAbsolute)
   const [portalRect, setPortalRect] = useState<DOMRect | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (collapsed) { setPortalRect(null); return }
     setPortalRect(dividerRef.current?.getBoundingClientRect() ?? null)
   }, [collapsed, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
 
