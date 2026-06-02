@@ -525,23 +525,30 @@ export function VideoNode({ id, data, selected }: Props) {
 
         {/* Generate button */}
         <button
-          className="flex items-center justify-center rounded-full nodrag"
+          className="flex items-center justify-center nodrag"
           style={{
-            width: 32, height: 32,
-            background: isLoading ? '#312550' : '#7c5cfc',
+            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+            background: isLoading ? '#1e1830' : '#ffffff',
             border: 'none',
             cursor: isLoading ? 'default' : 'pointer',
-            color: '#fff',
-            flexShrink: 0,
-            transition: 'background 0.2s',
+            color: isLoading ? '#7c5cfc' : '#111',
+            boxShadow: isLoading ? 'none' : '0 2px 8px rgba(0,0,0,0.25)',
+            transition: 'all 0.15s',
           }}
+          onMouseEnter={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0' }}
+          onMouseLeave={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
           onClick={handleGenerate}
           disabled={isLoading}
           title={isLoading ? `生成中 ${data.taskInfo?.progressPercent ?? 0}%` : '生成'}
         >
           {isLoading
-            ? <span style={{ fontSize: 9 }}>{data.taskInfo?.progressPercent ?? 0}%</span>
-            : <span style={{ fontSize: 16, lineHeight: 1 }}>↑</span>
+            ? <svg width="15" height="15" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
+                <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+              </svg>
+            : <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 13V3M8 3L4 7M8 3l4 4" stroke="#111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
           }
         </button>
       </div>

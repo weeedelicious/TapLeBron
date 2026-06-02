@@ -583,24 +583,29 @@ export function ImageNode({ id, data, selected }: Props) {
             </select>
 
             {/* Generate button */}
-            <button className="nodrag flex items-center justify-center rounded-full"
+            <button className="nodrag flex items-center justify-center"
               style={{
-                width: 34, height: 34, flexShrink: 0, marginLeft: 2,
-                background: isLoading ? '#251e38' : '#fff',
-                border: isLoading ? '1px solid #312550' : 'none',
+                width: 36, height: 36, flexShrink: 0, marginLeft: 4, borderRadius: 10,
+                background: isLoading ? '#1e1830' : '#ffffff',
+                border: 'none',
                 cursor: isLoading ? 'default' : 'pointer',
-                color: isLoading ? '#7c5cfc' : '#1a1030',
-                fontSize: 18, fontWeight: 700, transition: 'background 0.2s',
+                color: isLoading ? '#7c5cfc' : '#111',
+                boxShadow: isLoading ? 'none' : '0 2px 8px rgba(0,0,0,0.25)',
+                transition: 'all 0.15s',
               }}
+              onMouseEnter={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0' }}
+              onMouseLeave={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
               onClick={handleGenerate} disabled={isLoading}
               title={isLoading ? `生成中 ${data.taskInfo?.progressPercent ?? 0}%` : '生成'}
             >
               {isLoading
-                ? <svg width="14" height="14" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                ? <svg width="15" height="15" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
                     <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
                     <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
                   </svg>
-                : <span>↑</span>
+                : <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 13V3M8 3L4 7M8 3l4 4" stroke="#111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
               }
             </button>
           </div>
