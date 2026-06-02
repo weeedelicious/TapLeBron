@@ -15,6 +15,7 @@ import {
   type Node,
   getBezierPath,
   type EdgeProps,
+  EdgeLabelRenderer,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCanvasStore } from '@/store/canvasStore'
@@ -31,14 +32,59 @@ import { MultiSelectToolbar } from './MultiSelectToolbar'
 import { assetsApi } from '@/lib/api'
 import type { CanvasNodeData, NodeRef } from '@/lib/types'
 
-// ── Static edge — zero animation overhead ────────────────────────────────────
-function GlowEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
-  const [edgePath] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+// ── Glow edge with wide hit area + delete button on select ───────────────────
+function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  const deleteEdge = () => {
+    const { edges, nodes, setEdges, updateNodeData, pushHistory } = useCanvasStore.getState()
+    pushHistory()
+    const edge = edges.find(e => e.id === id)
+    if (edge) {
+      const target = nodes.find(n => n.id === edge.target)
+      if (target) {
+        const params = (target.data.params ?? {}) as Record<string, unknown>
+        const updated: Record<string, unknown> = {}
+        let changed = false
+        for (const listKey of ['imageList', 'videoList', 'audioList', 'textList']) {
+          const list = (params[listKey] ?? []) as Array<{ nodeId: string }>
+          const filtered = list.filter(r => r.nodeId !== edge.source)
+          if (filtered.length !== list.length) { updated[listKey] = filtered; changed = true }
+        }
+        if (changed) updateNodeData(target.id, { params: { ...params, ...updated } as never })
+      }
+    }
+    setEdges(edges.filter(e => e.id !== id))
+  }
   return (
-    <path d={edgePath} fill="none"
-      stroke={selected ? 'rgba(180,210,255,0.9)' : 'rgba(100,160,255,0.55)'}
-      strokeWidth={selected ? 2 : 1.5}
-    />
+    <>
+      <path d={edgePath} fill="none" stroke="transparent" strokeWidth={20} />
+      <path d={edgePath} fill="none"
+        stroke={selected ? 'rgba(180,210,255,0.9)' : 'rgba(100,160,255,0.55)'}
+        strokeWidth={selected ? 2 : 1.5}
+      />
+      {selected && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'all',
+            }}
+            className="nodrag nopan"
+          >
+            <button
+              onClick={deleteEdge}
+              style={{
+                width: 20, height: 20, borderRadius: '50%',
+                background: '#1a1530', border: '1px solid #f87171',
+                color: '#f87171', fontSize: 12, lineHeight: 1,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >×</button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   )
 }
 
@@ -131,7 +177,7 @@ const nodeTypes = {
 type FlowNode = Node & { data: CanvasNodeData & { nodeKey: string; projectUuid: string } }
 
 export function Canvas() {
-  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt, selectedNodeKeys, copySelected, pasteClipboard, undo } = useCanvasStore()
+  const { nodes, edges, viewport, setNodes, setEdges, setViewport, setSelected, updateNodeData, addNodeAt, selectedNodeKeys, copySelected, pasteClipboard, undo, pushHistory } = useCanvasStore()
   const canvasRef = useRef<HTMLDivElement>(null)
   // O(1) node lookup map — avoids Array.find on every drag frame
   const nodeMapRef = useRef<Map<string, FlowNode>>(new Map())
@@ -280,6 +326,7 @@ export function Canvas() {
 
   // ── React Flow handlers ────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
+    if (changes.some(c => c.type === 'remove')) pushHistory()
     // Use O(1) Map lookup instead of O(n) Array.find per drag frame
     const map = nodeMapRef.current
     const extraChanges: NodeChange[] = []
@@ -308,11 +355,30 @@ export function Canvas() {
     // Keep map in sync
     nodeMapRef.current = new Map(updated.map(n => [n.id, n]))
     setNodes(updated)
-  }, [nodes, setNodes])
+  }, [nodes, setNodes, pushHistory])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    const removes = changes.filter(c => c.type === 'remove')
+    if (removes.length > 0) {
+      pushHistory()
+      removes.forEach(c => {
+        const edge = edges.find(e => e.id === (c as { id: string }).id)
+        if (!edge) return
+        const target = nodes.find(n => n.id === edge.target)
+        if (!target) return
+        const params = (target.data.params ?? {}) as Record<string, unknown>
+        const updated: Record<string, unknown> = {}
+        let changed = false
+        for (const listKey of ['imageList', 'videoList', 'audioList', 'textList']) {
+          const list = (params[listKey] ?? []) as Array<{ nodeId: string }>
+          const filtered = list.filter(r => r.nodeId !== edge.source)
+          if (filtered.length !== list.length) { updated[listKey] = filtered; changed = true }
+        }
+        if (changed) updateNodeData(target.id, { params: { ...params, ...updated } as never })
+      })
+    }
     setEdges(applyEdgeChanges(changes, edges))
-  }, [edges, setEdges])
+  }, [edges, nodes, setEdges, pushHistory, updateNodeData])
 
   const onConnect = useCallback((connection: Connection) => {
     didConnectRef.current = true

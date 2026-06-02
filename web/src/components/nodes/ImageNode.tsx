@@ -1,7 +1,9 @@
-import { useCallback, useState, useRef } from 'react'
-import { useImeInput } from '@/lib/useImeInput'
+import { useCallback, useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { NodeShell } from './NodeShell'
 import { ImagePreview } from '@/components/ImagePreview'
+import { PromptEditor } from '@/components/PromptEditor'
+import type { ChipRef } from '@/components/PromptEditor'
 import { useCanvasStore } from '@/store/canvasStore'
 import { useTasksStore } from '@/store/tasksStore'
 import { generateApi } from '@/lib/api'
@@ -76,6 +78,62 @@ function RatioIcon({ w, h, active }: { w: number; h: number; active: boolean }) 
   )
 }
 
+// ── @ Mention dropdown ────────────────────────────────────────────────────────
+function AtMentionDropdown({ pos, currentNodeId, onSelect, onClose }: {
+  pos: { x: number; y: number }
+  currentNodeId: string
+  onSelect: (chip: ChipRef) => void
+  onClose: () => void
+}) {
+  const { nodes } = useCanvasStore()
+  const ref = useRef<HTMLDivElement>(null)
+
+  const candidates = nodes.filter(n =>
+    n.id !== currentNodeId &&
+    (n.data.type === 'image' || n.data.type === 'upload') &&
+    Array.isArray(n.data.url) && (n.data.url as string[]).length > 0
+  )
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [onClose])
+
+  if (candidates.length === 0) return null
+
+  return createPortal(
+    <div ref={ref} className="nodrag" style={{
+      position: 'fixed', left: pos.x, top: pos.y, zIndex: 99999,
+      background: '#16121f', border: '1px solid #2d2248', borderRadius: 10,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.7)', padding: '6px 0',
+      minWidth: 220, maxHeight: 300, overflowY: 'auto',
+    }}>
+      <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#5a5070' }}>@引用图片节点</div>
+      {candidates.map(n => {
+        const url = (n.data.url as string[])[0]
+        return (
+          <button key={n.id} className="nodrag" onClick={() => onSelect({ nodeId: n.id, url, name: n.data.name as string })}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+              padding: '6px 12px', background: 'none', border: 'none',
+              cursor: 'pointer', textAlign: 'left', color: '#d0c8f0',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(124,92,252,0.12)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+          >
+            <img src={url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.data.name as string}</span>
+          </button>
+        )
+      })}
+    </div>,
+    document.body
+  )
+}
+
 export function ImageNode({ id, data, selected }: Props) {
   const { updateNodeData } = useCanvasStore()
   const { addTask, startPolling } = useTasksStore()
@@ -84,7 +142,11 @@ export function ImageNode({ id, data, selected }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [showAtMenu, setShowAtMenu] = useState(false)
+  const [atMenuPos, setAtMenuPos] = useState({ x: 0, y: 0 })
   const imgRef = useRef<HTMLImageElement>(null)
+  const promptEditorRef = useRef<{ insertChip: (ref: ChipRef) => void }>(null)
+  const promptWrapRef = useRef<HTMLDivElement>(null)
 
   const setMainImage = useCallback((index: number) => {
     if (index === 0) { setExpanded(false); return }
@@ -101,12 +163,28 @@ export function ImageNode({ id, data, selected }: Props) {
   const ratio = params.settings.ratio ?? '16:9'
   const resolution = params.settings.resolution ?? '1K'
   const connectedImages = (params.imageList as NodeRef[] | undefined)?.filter(r => r.url) ?? []
+  const chips = (params.promptChips ?? []) as ChipRef[]
 
   const setParam = useCallback(<K extends keyof ImageParams>(key: K, val: ImageParams[K]) => {
     updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
   }, [id, params, updateNodeData])
 
-  const promptIme = useImeInput(params.prompt, val => setParam('prompt', val))
+  const handleChipsChange = useCallback((newChips: ChipRef[]) => {
+    setParam('promptChips', newChips as never)
+  }, [setParam])
+
+  const handleAtKey = useCallback(() => {
+    if (promptWrapRef.current) {
+      const rect = promptWrapRef.current.getBoundingClientRect()
+      setAtMenuPos({ x: rect.left, y: rect.bottom + 4 })
+    }
+    setShowAtMenu(true)
+  }, [])
+
+  const handleSelectMention = useCallback((chip: ChipRef) => {
+    promptEditorRef.current?.insertChip(chip)
+    setShowAtMenu(false)
+  }, [])
 
   const setSettings = useCallback((key: string, val: string) => {
     setParam('settings', { ...params.settings, [key]: val })
@@ -322,18 +400,25 @@ export function ImageNode({ id, data, selected }: Props) {
       </div>
 
       {/* ── Prompt ── */}
-      <div className="px-3 pt-2 pb-1 nodrag">
-        <textarea
-          className="w-full text-xs resize-none nodrag"
-          style={{
-            background: 'transparent', border: 'none', color: '#d0c8f0',
-            minHeight: 80, outline: 'none', lineHeight: 1.7, fontSize: 14,
-          }}
-          placeholder="描述你想要生成的画面内容，按/呼出指令，@引用素材"
+      <div ref={promptWrapRef} className="px-3 pt-2 pb-1 nodrag">
+        <PromptEditor
+          ref={promptEditorRef}
           value={params.prompt}
-          {...promptIme}
-          rows={3}
+          chips={chips}
+          onValueChange={val => setParam('prompt', val)}
+          onChipsChange={handleChipsChange}
+          onAtKey={handleAtKey}
+          onEscape={() => setShowAtMenu(false)}
+          placeholder="描述你想要生成的画面内容，@引用素材"
         />
+        {showAtMenu && (
+          <AtMentionDropdown
+            pos={atMenuPos}
+            currentNodeId={id}
+            onSelect={handleSelectMention}
+            onClose={() => setShowAtMenu(false)}
+          />
+        )}
       </div>
 
       {/* ── Settings panel ── */}

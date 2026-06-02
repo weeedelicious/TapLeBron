@@ -4,7 +4,24 @@ import * as storage from '../services/storage'
 const router = Router()
 
 router.get('/', (_req, res) => {
-  res.json(storage.readIndex())
+  const index = storage.readIndex()
+  // Auto-populate cover for projects that don't have one yet
+  const enriched = index.map(entry => {
+    if (entry.coverUrl) return entry
+    const project = storage.readProject(entry.uuid)
+    if (!project) return entry
+    for (const node of project.nodeList) {
+      try {
+        const data = JSON.parse(node.data)
+        if (Array.isArray(data.url) && data.url.length > 0 &&
+            (data.type === 'image' || data.type === 'upload')) {
+          return { ...entry, coverUrl: data.url[0] }
+        }
+      } catch { /* ignore */ }
+    }
+    return entry
+  })
+  res.json(enriched)
 })
 
 router.post('/', (req, res) => {
@@ -27,6 +44,13 @@ router.patch('/:uuid', (req, res) => {
 
 router.delete('/:uuid', (req, res) => {
   storage.deleteProject(req.params.uuid)
+  res.json({ ok: true })
+})
+
+router.patch('/:uuid/cover', (req, res) => {
+  const { coverUrl } = req.body
+  if (!coverUrl) return res.status(400).json({ error: 'coverUrl required' })
+  storage.setCoverUrl(req.params.uuid, coverUrl)
   res.json({ ok: true })
 })
 

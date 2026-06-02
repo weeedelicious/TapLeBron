@@ -88,9 +88,12 @@ router.post('/image', async (req, res) => {
     const { projectUuid, params } = req.body as { projectUuid: string; nodeKey: string; params: Record<string, unknown> }
     const settings = (params.settings as Record<string, unknown>) ?? {}
     const imageList = (params.imageList as Array<{ url: string }> | undefined) ?? []
+    const promptChips = (params.promptChips as Array<{ url: string }> | undefined) ?? []
+    // Combine edge-connected images + @-mention chips, deduplicated by URL
+    const allRefUrls = [...new Set([...imageList, ...promptChips].map(i => i.url).filter(Boolean))]
 
     const resolvedImages = await Promise.all(
-      imageList.filter(i => i.url).map(i => resolveToMivoRef(i.url, projectUuid))
+      allRefUrls.map(url => resolveToMivoRef(url, projectUuid))
     )
     const genParams: mivo.GenImageParams = {
       prompt: (params.prompt as string) ?? '',

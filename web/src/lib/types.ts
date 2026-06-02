@@ -44,6 +44,7 @@ export interface ImageParams {
     aperture?: string
   }
   modeType: 'text2image' | 'image2image'
+  promptChips?: { nodeId: string; url: string; name: string }[]
   imageList: NodeRef[]
   imageListOrder: string[]
   videoList: NodeRef[]

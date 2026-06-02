@@ -65,8 +65,31 @@ export function saveNodes(uuid: string, nodes: CanvasNode[]) {
   if (!project) return
   project.nodeList = nodes
   project.projectMeta.updatedAtMs = Date.now()
+  // Auto-pick cover from first image/upload node unless user set one manually
+  if (!project.projectMeta.coverManual) {
+    for (const node of nodes) {
+      try {
+        const data = JSON.parse(node.data)
+        if (Array.isArray(data.url) && data.url.length > 0 &&
+            (data.type === 'image' || data.type === 'upload')) {
+          project.projectMeta.coverUrl = data.url[0]
+          break
+        }
+      } catch { /* ignore malformed node data */ }
+    }
+  }
   atomicWrite(projectFile(uuid), JSON.stringify(project, null, 2))
   upsertIndex(uuid, project.projectMeta, nodes.length)
+}
+
+export function setCoverUrl(uuid: string, coverUrl: string) {
+  const project = readProject(uuid)
+  if (!project) return
+  project.projectMeta.coverUrl = coverUrl
+  project.projectMeta.coverManual = true
+  project.projectMeta.updatedAtMs = Date.now()
+  atomicWrite(projectFile(uuid), JSON.stringify(project, null, 2))
+  upsertIndex(uuid, project.projectMeta, project.nodeList.length)
 }
 
 export function deleteNodes(uuid: string, nodeKeys: string[]) {

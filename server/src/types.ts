@@ -21,6 +21,7 @@ export interface ProjectMeta {
   uuid: string
   name: string
   coverUrl?: string
+  coverManual?: boolean  // true = user set manually, don't auto-overwrite
   visibility?: number
   ownerId?: number
   createdAtMs: number

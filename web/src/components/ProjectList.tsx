@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { projectsApi } from '@/lib/api'
+import { projectsApi, assetsApi } from '@/lib/api'
 import type { ProjectIndex } from '@/lib/types'
 
 interface Props {
@@ -80,22 +80,20 @@ export function ProjectList({ onOpen }: Props) {
   const handleCoverFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !pendingCoverUuid) return
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      const dataUrl = ev.target?.result as string
-      await projectsApi.rename(pendingCoverUuid, projects.find(x => x.uuid === pendingCoverUuid)?.name ?? '')
-      // Store cover as dataUrl via a small hack: patch project name to trigger save, then update cover
-      // Since API supports coverUrl field in index, we patch via rename+cover
+    e.target.value = ''
+    try {
+      const { url } = await assetsApi.upload(pendingCoverUuid, file)
       await fetch(`/api/projects/${pendingCoverUuid}/cover`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ coverUrl: dataUrl }),
+        body: JSON.stringify({ coverUrl: url }),
       })
-      setPendingCoverUuid(null)
       load()
+    } catch (err) {
+      alert('封面上传失败：' + String(err))
+    } finally {
+      setPendingCoverUuid(null)
     }
-    reader.readAsDataURL(file)
-    e.target.value = ''
   }
 
   const openMenu = (uuid: string, e: React.MouseEvent) => {
