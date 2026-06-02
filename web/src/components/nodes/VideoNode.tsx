@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useUpdateNodeInternals } from '@xyflow/react'
 import { NodeShell } from './NodeShell'
 import { ImagePreview } from '@/components/ImagePreview'
 import { PromptEditor } from '@/components/PromptEditor'
@@ -71,6 +72,12 @@ export function VideoNode({ id, data, selected }: Props) {
   const [chips, setChips] = useState<ChipRef[]>([])
   const [collapsed, setCollapsed] = useState(true)
   const nodeContainerRef = useRef<HTMLDivElement>(null)
+  const updateNodeInternals = useUpdateNodeInternals()
+
+  // Force React Flow to re-measure handles after collapse/expand
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [collapsed, id, updateNodeInternals])
 
   // Auto-collapse when clicking outside the node
   useEffect(() => {

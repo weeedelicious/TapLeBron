@@ -1,5 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useUpdateNodeInternals } from '@xyflow/react'
 import { NodeShell } from './NodeShell'
 import { ImagePreview } from '@/components/ImagePreview'
 import { PromptEditor } from '@/components/PromptEditor'
@@ -142,11 +143,30 @@ export function ImageNode({ id, data, selected }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [showAtMenu, setShowAtMenu] = useState(false)
   const [atMenuPos, setAtMenuPos] = useState({ x: 0, y: 0 })
   const imgRef = useRef<HTMLImageElement>(null)
   const promptEditorRef = useRef<{ insertChip: (ref: ChipRef) => void }>(null)
   const promptWrapRef = useRef<HTMLDivElement>(null)
+  const nodeContainerRef = useRef<HTMLDivElement>(null)
+  const updateNodeInternals = useUpdateNodeInternals()
+
+  // Force React Flow to re-measure handles after collapse/expand
+  useEffect(() => { updateNodeInternals(id) }, [collapsed, id, updateNodeInternals])
+
+  // Auto-collapse on outside click
+  useEffect(() => {
+    if (collapsed) return
+    const handler = (e: MouseEvent) => {
+      if (!nodeContainerRef.current?.contains(e.target as Node)) {
+        setCollapsed(true)
+        setShowAtMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [collapsed])
 
   const setMainImage = useCallback((index: number) => {
     if (index === 0) { setExpanded(false); return }
@@ -260,13 +280,31 @@ export function ImageNode({ id, data, selected }: Props) {
   ) : undefined
 
   return (
-    <NodeShell nodeKey={id} data={data} selected={selected} toolbar={toolbar} minWidth={360} maxWidth={520} minHeight={200}>
+    <div ref={nodeContainerRef} style={{ display: 'contents' }}>
+    <NodeShell nodeKey={id} data={data} selected={selected} toolbar={toolbar}
+      minWidth={collapsed ? 220 : 360} maxWidth={520} minHeight={collapsed ? 140 : 200}>
 
       {/* ── Image preview ── */}
       {hasImage ? (
         !expanded ? (
           /* ── Collapsed: single main image ── */
-          <div className="relative group" style={{ background: '#0d0b18' }}>
+          <div className="relative group"
+            style={{ background: '#0d0b18', cursor: collapsed ? 'pointer' : 'default' }}
+            onClick={collapsed ? () => setCollapsed(false) : undefined}
+          >
+            {/* Collapsed overlay: "点击展开" */}
+            {collapsed && !isLoading && (
+              <div style={{
+                position: 'absolute', inset: 0, zIndex: 8,
+                display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+                padding: 8, pointerEvents: 'none',
+              }}>
+                <span style={{
+                  fontSize: 11, color: '#c4b5fd', background: 'rgba(13,10,26,0.75)',
+                  borderRadius: 4, padding: '2px 7px',
+                }}>点击展开</span>
+              </div>
+            )}
             {/* Loading overlay — only covers the image area */}
             {isLoading && (
               <div style={{
@@ -397,8 +435,8 @@ export function ImageNode({ id, data, selected }: Props) {
         </div>
       )}
 
-      {/* ── Controls card (LibLib TV style) ── */}
-      <div className="nodrag" style={{ padding: '0 10px 10px' }}>
+      {/* ── Controls card (LibLib TV style) — hidden when collapsed ── */}
+      {!collapsed && <div className="nodrag" style={{ padding: '0 10px 10px' }}>
         <div style={{
           background: '#16121f', borderRadius: 12,
           border: '1px solid #221a35', overflow: 'hidden',
@@ -421,13 +459,12 @@ export function ImageNode({ id, data, selected }: Props) {
                 style={{ width: 48, height: 46, border: '1px solid #2a2040', flexShrink: 0 }}>
                 <img src={ref.url} alt="" draggable={false}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                {i === 0 && connectedImages.length > 1 && (
-                  <div style={{
-                    position: 'absolute', top: 2, right: 2, width: 15, height: 15,
-                    background: '#7c5cfc', borderRadius: '50%', fontSize: 9,
-                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
-                  }}>{connectedImages.length}</div>
-                )}
+                {/* "图片N" label at bottom */}
+                <div style={{
+                  position: 'absolute', bottom: 0, left: 0, right: 0,
+                  background: 'rgba(13,10,26,0.72)', fontSize: 9,
+                  color: '#c4b5fd', textAlign: 'center', padding: '1px 0',
+                }}>图片{i + 1}</div>
               </div>
             ))}
             <div style={{ flex: 1 }} />
@@ -568,9 +605,10 @@ export function ImageNode({ id, data, selected }: Props) {
             </button>
           </div>
         </div>
-      </div>
+      </div>}
 
       {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
     </NodeShell>
+    </div>
   )
 }
