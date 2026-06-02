@@ -256,7 +256,7 @@ export function VideoNode({ id, data, selected }: Props) {
         position: 'fixed',
         top: portalRect.bottom,
         left: portalRect.left,
-        width: portalRect.width,
+        width: portalRect.width / zoom,  // fixed natural width regardless of canvas zoom
         zIndex: 1000,
         background: '#1a1625',
         borderRadius: '0 0 10px 10px',
