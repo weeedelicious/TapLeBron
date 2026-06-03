@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 import * as mivo from '../services/mivo'
+import * as llm from '../services/llm'
 import { PROJECTS_DIR } from '../config'
 
 const router = Router()
@@ -177,6 +178,109 @@ router.post('/translate', async (req, res) => {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     res.status(500).json({ error: msg })
+  }
+})
+
+// ── LLM text generation — streaming SSE ──────────────────────────────────────
+interface NodeRefInput { nodeId: string; url: string; content?: string; mediaType?: string }
+
+function localUrlToBase64(url: string, projectUuid: string): string | null {
+  try {
+    const filename = path.basename(url)
+    const localPath = path.join(PROJECTS_DIR, projectUuid, 'assets', filename)
+    if (!fs.existsSync(localPath)) return null
+    const buf = fs.readFileSync(localPath)
+    const ext = path.extname(filename).slice(1).toLowerCase()
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+               : ext === 'png' ? 'image/png'
+               : ext === 'webp' ? 'image/webp'
+               : ext === 'gif' ? 'image/gif'
+               : 'image/png'
+    return `data:${mime};base64,${buf.toString('base64')}`
+  } catch { return null }
+}
+
+function resolveImageUrl(url: string, projectUuid: string): string | null {
+  if (!url) return null
+  if (url.startsWith('http')) return url
+  if (url.startsWith('/assets/')) return localUrlToBase64(url, projectUuid)
+  return null
+}
+
+router.post('/llm', async (req, res) => {
+  try {
+    const { projectUuid, params } = req.body as {
+      projectUuid: string
+      nodeKey: string
+      params: {
+        prompt: string
+        model: string
+        imageList?: NodeRefInput[]
+        videoList?: NodeRefInput[]
+        textList?: NodeRefInput[]
+      }
+    }
+
+    const { prompt, model, imageList = [], videoList = [], textList = [] } = params
+
+    // Build image content items from connected image nodes
+    const imageItems: llm.ContentItem[] = imageList
+      .filter(r => r.url)
+      .flatMap(r => {
+        const resolved = resolveImageUrl(r.url, projectUuid)
+        return resolved ? [{ type: 'image_url' as const, image_url: { url: resolved } }] : []
+      })
+
+    // Video nodes: use poster / first URL as image reference if available
+    const videoImageItems: llm.ContentItem[] = videoList
+      .filter(r => r.url)
+      .flatMap(r => {
+        const resolved = resolveImageUrl(r.url, projectUuid)
+        return resolved ? [{ type: 'image_url' as const, image_url: { url: resolved } }] : []
+      })
+
+    // Text node references — prepend as context
+    const textContext = textList
+      .filter(r => r.content)
+      .map((r, i) => `[引用文本${i + 1}]：${r.content}`)
+      .join('\n')
+
+    const messages: llm.ChatMessage[] = [
+      { role: 'system', content: '你是创意助手，请根据用户的指令和提供的参考素材生成文字内容。' },
+    ]
+
+    const userContent: llm.ContentItem[] = []
+    if (textContext) userContent.push({ type: 'text', text: textContext + '\n' })
+    userContent.push(...imageItems, ...videoImageItems)
+    userContent.push({ type: 'text', text: prompt || '请根据上面的素材生成内容' })
+
+    messages.push({ role: 'user', content: userContent })
+
+    // Set up SSE streaming response
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders()
+
+    const abortController = new AbortController()
+    // res 'close' fires when client disconnects (req 'close' fires when body is consumed — too early)
+    res.on('close', () => abortController.abort())
+
+    try {
+      for await (const delta of llm.chatStream(messages, model, abortController.signal)) {
+        res.write(`data: ${JSON.stringify({ delta })}\n\n`)
+      }
+    } catch (e: unknown) {
+      if ((e as { name?: string }).name !== 'AbortError') {
+        const msg = e instanceof Error ? e.message : String(e)
+        res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
+      }
+    }
+    res.write('data: [DONE]\n\n')
+    res.end()
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!res.headersSent) res.status(500).json({ error: msg })
   }
 })
 

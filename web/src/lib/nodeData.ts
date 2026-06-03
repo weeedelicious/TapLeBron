@@ -44,8 +44,18 @@ export function defaultAudioParams(): AudioParams {
 }
 
 export function defaultTextParams(): TextParams {
-  return { content: '' }
+  return {
+    content: '',
+    model: 'gpt-5.5',
+    prompt: '',
+    imageList: [], videoList: [], textList: [],
+  }
 }
+
+export const TEXT_MODELS = [
+  { value: 'gpt-5.5',         label: 'GPT-5.5' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+]
 
 export function defaultScriptParams(): ScriptParams {
   return { description: '', rows: [] }

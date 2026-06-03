@@ -2,6 +2,8 @@
   "mivoBaseUrl": "https://aigc.xindong.com",
   "mivoApiKey": "YOUR_MIVO_API_KEY_HERE",
   "mivoUserId": "YOUR_USER_ID",
+  "llmBaseUrl": "https://llm-proxy.tapsvc.com",
+  "llmApiKey": "YOUR_LLM_API_KEY_HERE",
   "port": 3001,
   "projectsDir": "../projects"
 }

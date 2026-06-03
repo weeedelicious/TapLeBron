@@ -5,6 +5,8 @@ interface Config {
   mivoBaseUrl: string
   mivoApiKey: string
   mivoUserId?: string
+  llmBaseUrl?: string
+  llmApiKey?: string
   port: number
   projectsDir: string
 }

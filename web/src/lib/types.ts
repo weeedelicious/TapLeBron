@@ -82,7 +82,12 @@ export interface AudioParams {
 }
 
 export interface TextParams {
-  content: string
+  content: string   // generated / edited output text
+  model: string
+  prompt: string    // user instruction
+  imageList: NodeRef[]
+  videoList: NodeRef[]
+  textList: NodeRef[]
 }
 
 export interface ScriptRow {
