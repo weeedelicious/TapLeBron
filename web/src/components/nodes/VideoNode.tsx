@@ -137,8 +137,10 @@ export function VideoNode({ id, data, selected }: Props) {
   )
 
   const setParam = useCallback(<K extends keyof VideoParams>(key: K, val: VideoParams[K]) => {
-    updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
-  }, [id, params, updateNodeData])
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    updateNodeData(id, { params: { ...currentParams, [key]: val } as unknown as Record<string, unknown> })
+  }, [id, updateNodeData]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Remove connected image + disconnect edge
   const removeConnectedImage = useCallback((nodeId: string) => {

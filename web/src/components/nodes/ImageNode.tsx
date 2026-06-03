@@ -202,8 +202,11 @@ export function ImageNode({ id, data, selected }: Props) {
   const chips = (params.promptChips ?? []) as ChipRef[]
 
   const setParam = useCallback(<K extends keyof ImageParams>(key: K, val: ImageParams[K]) => {
-    updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
-  }, [id, params, updateNodeData])
+    // Read fresh params from store to avoid stale closure overwriting concurrent setParam calls
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    updateNodeData(id, { params: { ...currentParams, [key]: val } as unknown as Record<string, unknown> })
+  }, [id, updateNodeData]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleChipsChange = useCallback((newChips: ChipRef[]) => {
     setParam('promptChips', newChips as never)
@@ -510,6 +513,10 @@ export function ImageNode({ id, data, selected }: Props) {
 
           {/* Prompt */}
           <div ref={promptWrapRef} style={{ padding: '0 14px 10px' }}>
+            <div className="nodrag" style={{
+              maxHeight: 200, overflowY: 'auto', overflowX: 'hidden',
+              paddingRight: 4, scrollbarWidth: 'thin', scrollbarColor: '#312550 transparent',
+            }}>
             <PromptEditor
               ref={promptEditorRef}
               value={params.prompt}
@@ -521,6 +528,7 @@ export function ImageNode({ id, data, selected }: Props) {
               placeholder="描述你想要生成的画面内容，@引用素材"
               style={{ fontSize: 15, lineHeight: 1.65, color: '#e0d8f8', minHeight: 72 }}
             />
+            </div>{/* end scroll wrapper */}
             {showAtMenu && (
               <AtMentionDropdown
                 pos={atMenuPos}
