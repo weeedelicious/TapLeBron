@@ -4,7 +4,7 @@ import fs from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 import * as mivo from '../services/mivo'
 import * as llm from '../services/llm'
-import { PROJECTS_DIR } from '../config'
+import { config, PROJECTS_DIR } from '../config'
 
 const router = Router()
 
@@ -184,27 +184,32 @@ router.post('/translate', async (req, res) => {
 // ── LLM text generation — streaming SSE ──────────────────────────────────────
 interface NodeRefInput { nodeId: string; url: string; content?: string; mediaType?: string }
 
-function localUrlToBase64(url: string, projectUuid: string): string | null {
-  try {
-    const filename = path.basename(url)
-    const localPath = path.join(PROJECTS_DIR, projectUuid, 'assets', filename)
-    if (!fs.existsSync(localPath)) return null
-    const buf = fs.readFileSync(localPath)
-    const ext = path.extname(filename).slice(1).toLowerCase()
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-               : ext === 'png' ? 'image/png'
-               : ext === 'webp' ? 'image/webp'
-               : ext === 'gif' ? 'image/gif'
-               : 'image/png'
-    return `data:${mime};base64,${buf.toString('base64')}`
-  } catch { return null }
-}
-
-function resolveImageUrl(url: string, projectUuid: string): string | null {
+// Mivo CDN requires auth so we can't pass CDN URLs to external LLM proxy.
+// Always compress & inline as base64 — avoids auth issues entirely.
+async function resolveImageUrlForLLM(url: string, projectUuid: string): Promise<string | null> {
   if (!url) return null
-  if (url.startsWith('http')) return url
-  if (url.startsWith('/assets/')) return localUrlToBase64(url, projectUuid)
-  return null
+  if (!url.startsWith('/assets/')) return null  // only handle local assets
+
+  const filename = path.basename(url)
+  const localPath = path.join(PROJECTS_DIR, projectUuid, 'assets', filename)
+  if (!fs.existsSync(localPath)) return null
+
+  try {
+    // Compress to max 1024px JPEG — keeps payload small enough for LLM API
+    const sharp = (await import('sharp')).default
+    const buf = await sharp(localPath)
+      .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer()
+    return `data:image/jpeg;base64,${buf.toString('base64')}`
+  } catch {
+    // sharp not available — raw base64 but skip if > 1.5 MB to avoid 400 on size
+    const buf = fs.readFileSync(localPath)
+    if (buf.length > 1.5 * 1024 * 1024) return null
+    const ext = path.extname(filename).slice(1).toLowerCase()
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
+    return `data:${mime};base64,${buf.toString('base64')}`
+  }
 }
 
 router.post('/llm', async (req, res) => {
@@ -224,20 +229,14 @@ router.post('/llm', async (req, res) => {
     const { prompt, model, imageList = [], videoList = [], textList = [] } = params
 
     // Build image content items from connected image nodes
-    const imageItems: llm.ContentItem[] = imageList
-      .filter(r => r.url)
-      .flatMap(r => {
-        const resolved = resolveImageUrl(r.url, projectUuid)
-        return resolved ? [{ type: 'image_url' as const, image_url: { url: resolved } }] : []
-      })
+    const imageUrls = await Promise.all(imageList.filter(r => r.url).map(r => resolveImageUrlForLLM(r.url, projectUuid)))
+    const imageItems: llm.ContentItem[] = imageUrls
+      .flatMap(u => u ? [{ type: 'image_url' as const, image_url: { url: u } }] : [])
 
-    // Video nodes: use poster / first URL as image reference if available
-    const videoImageItems: llm.ContentItem[] = videoList
-      .filter(r => r.url)
-      .flatMap(r => {
-        const resolved = resolveImageUrl(r.url, projectUuid)
-        return resolved ? [{ type: 'image_url' as const, image_url: { url: resolved } }] : []
-      })
+    // Video nodes: use first URL as image reference
+    const videoUrls = await Promise.all(videoList.filter(r => r.url).map(r => resolveImageUrlForLLM(r.url, projectUuid)))
+    const videoImageItems: llm.ContentItem[] = videoUrls
+      .flatMap(u => u ? [{ type: 'image_url' as const, image_url: { url: u } }] : [])
 
     // Text node references — prepend as context
     const textContext = textList

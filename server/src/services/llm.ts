@@ -62,12 +62,30 @@ export async function* chatStream(
   }
   if (!model.startsWith('gpt-5')) payload.temperature = 0.7
 
-  const res = await axios.post(`${BASE_URL}/v1/chat/completions`, payload, {
-    headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
-    responseType: 'stream',
-    timeout: 300_000,
-    signal,
-  })
+  // Catch auth/model errors with readable body before streaming
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let res: any
+  try {
+    res = await axios.post(`${BASE_URL}/v1/chat/completions`, payload, {
+      headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+      responseType: 'stream',
+      timeout: 300_000,
+      signal,
+    })
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e) && e.response) {
+      // Read the error response body (it's a stream)
+      const chunks: Buffer[] = []
+      try {
+        for await (const chunk of e.response.data as NodeJS.ReadableStream) chunks.push(chunk as Buffer)
+      } catch {}
+      const body = Buffer.concat(chunks).toString('utf-8')
+      let detail = body
+      try { detail = JSON.parse(body)?.error?.message ?? JSON.parse(body)?.message ?? body } catch {}
+      throw new Error(`LLM API ${e.response.status}: ${detail.slice(0, 300)}`)
+    }
+    throw e
+  }
 
   let buf = ''
   for await (const chunk of res.data) {
