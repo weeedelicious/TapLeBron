@@ -135,7 +135,7 @@ export interface GenVideoParams {
   duration?: number
   resolution?: string
   enableSound?: string  // 'on' | 'off'
-  // images[0] → firstFrame, images[1] → lastFrame
+  modeType?: string     // 't2v' | 'i2v' | 'keyframe' | 'omni' | 'img_ref'
   images?: string[]
 }
 
@@ -147,15 +147,46 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
   const resolution = rawResolution.toUpperCase()
   const duration = Number(params.duration ?? 5)
 
+  const hasAudio = params.enableSound !== 'off'
+  const mode = params.modeType ?? 't2v'
+
   const payload: Record<string, unknown> = {
     prompt: params.prompt,
     videoRatio: ratio,
     duration,
     resolution,
-    genAudio: params.enableSound !== 'off',
+    // Send both field names for compatibility with different ARK/Mivo versions
+    generate_audio: hasAudio,
+    genAudio: hasAudio,
   }
-  if (params.images?.[0]) payload.firstFrame = params.images[0]
-  if (params.images?.[1]) payload.lastFrame = params.images[1]
+
+  if (mode === 'keyframe') {
+    // 首尾帧：首帧 + 尾帧
+    if (params.images?.[0]) payload.firstFrame = params.images[0]
+    if (params.images?.[1]) payload.lastFrame  = params.images[1]
+
+  } else if (mode === 'i2v') {
+    // 图生视频：仅首帧
+    if (params.images?.[0]) payload.firstFrame = params.images[0]
+
+  } else if (mode === 'omni' || mode === 'img_ref') {
+    // 全能参考 / 图片参考：使用 ARK content 数组 + reference_image role
+    // Mivo 透传 payload 给底层 ARK Seedance，这与直连 ARK API 的格式一致
+    const contentItems: Record<string, unknown>[] = [
+      { type: 'text', text: params.prompt },
+    ]
+    for (const imgId of (params.images ?? [])) {
+      contentItems.push({
+        type: 'image_url',
+        image_url: { url: `${BASE_URL}/api/v1/file/image/${imgId}` },
+        role: 'reference_image',
+      })
+    }
+    payload.content = contentItems
+    delete payload.prompt  // prompt 已在 content[0] 中
+
+  }
+  // t2v: prompt only — no image fields
 
   try {
     return await createMessage(payload, 'video', 'video', 'ARK', model, 'generate_video')

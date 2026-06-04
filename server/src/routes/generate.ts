@@ -128,6 +128,7 @@ router.post('/video', async (req, res) => {
     const genParams: mivo.GenVideoParams = {
       prompt: (params.prompt as string) ?? '',
       model: params.model as string | undefined,
+      modeType: (params.modeType as string) ?? 't2v',
       ratio: (settings.ratio as string) ?? '16:9',
       duration: Number(settings.duration ?? 5),
       resolution: (settings.resolution as string) ?? '720P',
