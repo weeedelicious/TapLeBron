@@ -4,6 +4,7 @@ import fs from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 import * as mivo from '../services/mivo'
 import * as llm from '../services/llm'
+import * as seedance from '../services/seedance'
 import { config, PROJECTS_DIR } from '../config'
 
 const router = Router()
@@ -63,13 +64,18 @@ async function downloadToAssets(mivoUrls: string[], projectUuid: string): Promis
   return localUrls
 }
 
-async function pollAndStore(jobId: string, internalId: string, projectUuid: string) {
+async function pollAndStore(
+  jobId: string,
+  internalId: string,
+  projectUuid: string,
+  pollFn: (id: string) => Promise<{ status: number; progressPercent: number; urls?: string[]; error?: string }> = mivo.pollResult,
+) {
   let attempts = 0
   const interval = setInterval(async () => {
     attempts++
     if (attempts > 200) { clearInterval(interval); return }
     try {
-      const res = await mivo.pollResult(jobId)
+      const res = await pollFn(jobId)
       if (res.status === 2 && res.urls?.length) {
         clearInterval(interval)
         const localUrls = await downloadToAssets(res.urls, projectUuid)
@@ -123,25 +129,12 @@ router.post('/video', async (req, res) => {
     const imageList = (params.imageList as Array<{ url: string }> | undefined) ?? []
     const mode = (params.modeType as string) ?? 't2v'
 
-    let resolvedImages: string[]
+    // All modes: use base64 data URIs — direct Seedance API can't access Mivo CDN (auth required)
+    const base64Images = await Promise.all(
+      imageList.filter(i => i.url).map(i => resolveImageUrlForLLM(i.url, projectUuid))
+    )
 
-    if (mode === 'omni' || mode === 'img_ref') {
-      // omni/img_ref: ARK content array needs accessible URLs.
-      // Mivo CDN requires auth so ARK can't fetch it.
-      // Use sharp-compressed base64 data URIs — same approach as LLM vision.
-      const base64s = await Promise.all(
-        imageList.filter(i => i.url).map(i => resolveImageUrlForLLM(i.url, projectUuid))
-      )
-      resolvedImages = base64s.filter(Boolean) as string[]
-    } else {
-      // i2v / keyframe / t2v: use Mivo file IDs for firstFrame/lastFrame
-      const mivoIds = await Promise.all(
-        imageList.filter(i => i.url).map(i => resolveToMivoRef(i.url, projectUuid))
-      )
-      resolvedImages = mivoIds.filter(Boolean)
-    }
-
-    const genParams: mivo.GenVideoParams = {
+    const genParams: seedance.SeedanceVideoParams = {
       prompt: (params.prompt as string) ?? '',
       model: params.model as string | undefined,
       modeType: mode,
@@ -149,12 +142,12 @@ router.post('/video', async (req, res) => {
       duration: Number(settings.duration ?? 5),
       resolution: (settings.resolution as string) ?? '720P',
       enableSound: (settings.enableSound as string) ?? 'on',
-      images: resolvedImages,
+      images: base64Images.filter(Boolean) as string[],
     }
-    const jobId = await mivo.submitGenVideo(genParams)
+    const taskId = await seedance.submitSeedanceVideo(genParams)
     const internalId = uuidv4()
     tasks[internalId] = { status: 1, progressPercent: 0 }
-    pollAndStore(jobId, internalId, projectUuid)
+    pollAndStore(taskId, internalId, projectUuid, seedance.pollSeedanceResult)
     res.json({ jobId: internalId })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
