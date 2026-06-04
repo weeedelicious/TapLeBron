@@ -155,7 +155,7 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
     videoRatio: ratio,
     duration,
     resolution,
-    // Send both field names for compatibility with different ARK/Mivo versions
+    // ARK Seedance native field; genAudio kept as alias
     generate_audio: hasAudio,
     genAudio: hasAudio,
   }
@@ -170,12 +170,16 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
     if (params.images?.[0]) payload.firstFrame = params.images[0]
 
   } else if (mode === 'omni' || mode === 'img_ref') {
-    // 全能参考 / 图片参考：Mivo 不支持 reference_image role，退回 firstFrame 方案
-    // 效果类似图生视频（单首帧驱动），不同于首尾帧（两帧书签式）
-    if (params.images?.[0]) payload.firstFrame = params.images[0]
-
+    // 全能参考 / 图片参考：尝试传 images 数组（类比图片生成的多图参考）
+    // 同时也传 firstFrame，确保至少有一张图生效
+    if (params.images?.length) {
+      payload.images = params.images          // 全部参考图 ID 数组
+      payload.firstFrame = params.images[0]   // 首张也设为首帧（兜底）
+    }
   }
   // t2v: prompt only — no image fields
+
+  console.log('[video payload]', JSON.stringify({ mode, payload }))
 
   try {
     return await createMessage(payload, 'video', 'video', 'ARK', model, 'generate_video')
