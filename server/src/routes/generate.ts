@@ -121,19 +121,35 @@ router.post('/video', async (req, res) => {
     const { projectUuid, params } = req.body as { projectUuid: string; nodeKey: string; params: Record<string, unknown> }
     const settings = (params.settings as Record<string, unknown>) ?? {}
     const imageList = (params.imageList as Array<{ url: string }> | undefined) ?? []
+    const mode = (params.modeType as string) ?? 't2v'
 
-    const resolvedImages = await Promise.all(
-      imageList.filter(i => i.url).map(i => resolveToMivoRef(i.url, projectUuid))
-    )
+    let resolvedImages: string[]
+
+    if (mode === 'omni' || mode === 'img_ref') {
+      // omni/img_ref: ARK content array needs accessible URLs.
+      // Mivo CDN requires auth so ARK can't fetch it.
+      // Use sharp-compressed base64 data URIs — same approach as LLM vision.
+      const base64s = await Promise.all(
+        imageList.filter(i => i.url).map(i => resolveImageUrlForLLM(i.url, projectUuid))
+      )
+      resolvedImages = base64s.filter(Boolean) as string[]
+    } else {
+      // i2v / keyframe / t2v: use Mivo file IDs for firstFrame/lastFrame
+      const mivoIds = await Promise.all(
+        imageList.filter(i => i.url).map(i => resolveToMivoRef(i.url, projectUuid))
+      )
+      resolvedImages = mivoIds.filter(Boolean)
+    }
+
     const genParams: mivo.GenVideoParams = {
       prompt: (params.prompt as string) ?? '',
       model: params.model as string | undefined,
-      modeType: (params.modeType as string) ?? 't2v',
+      modeType: mode,
       ratio: (settings.ratio as string) ?? '16:9',
       duration: Number(settings.duration ?? 5),
       resolution: (settings.resolution as string) ?? '720P',
       enableSound: (settings.enableSound as string) ?? 'on',
-      images: resolvedImages.filter(Boolean),
+      images: resolvedImages,
     }
     const jobId = await mivo.submitGenVideo(genParams)
     const internalId = uuidv4()

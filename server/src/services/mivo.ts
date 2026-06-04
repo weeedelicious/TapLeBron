@@ -177,10 +177,12 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
       const contentItems: Record<string, unknown>[] = [
         { type: 'text', text: params.prompt },
       ]
-      for (const imgId of params.images) {
+      for (const imgUrl of params.images) {
+        // imgUrl is a base64 data URI (resolved upstream for omni mode)
+        // ARK vision accepts base64 data URIs — avoids Mivo CDN auth issues
         contentItems.push({
           type: 'image_url',
-          image_url: { url: `${BASE_URL}/api/v1/file/image/${imgId}` },
+          image_url: { url: imgUrl },
           role: 'reference_image',
         })
       }
