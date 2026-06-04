@@ -534,8 +534,10 @@ export function ImageNode({ id, data, selected }: Props) {
               ref={promptEditorRef}
               value={params.prompt}
               chips={chips}
+              htmlSnapshot={params.promptHtml}
               onValueChange={val => setParam('prompt', val)}
               onChipsChange={handleChipsChange}
+              onHtmlChange={html => setParam('promptHtml', html as never)}
               onAtKey={handleAtKey}
               onEscape={() => setShowAtMenu(false)}
               placeholder="描述你想要生成的画面内容，@引用素材"

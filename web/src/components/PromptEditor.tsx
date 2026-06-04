@@ -19,6 +19,10 @@ interface Props {
   onEscape: () => void
   placeholder?: string
   style?: React.CSSProperties
+  /** Stored innerHTML snapshot — restores chip positions exactly on remount */
+  htmlSnapshot?: string
+  /** Called after every edit with the current innerHTML */
+  onHtmlChange?: (html: string) => void
   /** nodeId → display name，当黄框顺序变化时传入新映射，自动更新 chip 显示名 */
   orderMap?: Record<string, string>
 }
@@ -76,24 +80,25 @@ function extractContent(el: HTMLElement): { text: string; chips: ChipRef[] } {
 }
 
 export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, Props>(
-  ({ value, chips, onValueChange, onChipsChange, onAtKey, onEscape, placeholder, style, orderMap }, ref) => {
+  ({ value, chips, onValueChange, onChipsChange, onAtKey, onEscape, placeholder, style, htmlSnapshot, onHtmlChange, orderMap }, ref) => {
     const divRef = useRef<HTMLDivElement>(null)
     const composingRef = useRef(false)
     const initializedRef = useRef(false)
 
     // Always-fresh callback refs — eliminates stale closure issues
-    const cbRef = useRef({ onValueChange, onChipsChange, onAtKey, onEscape })
+    const cbRef = useRef({ onValueChange, onChipsChange, onAtKey, onEscape, onHtmlChange })
     useEffect(() => {
-      cbRef.current = { onValueChange, onChipsChange, onAtKey, onEscape }
+      cbRef.current = { onValueChange, onChipsChange, onAtKey, onEscape, onHtmlChange }
     })
 
-    // Sync DOM → state
+    // Sync DOM → state (also snapshot innerHTML to preserve chip positions)
     const syncOut = useCallback(() => {
       const el = divRef.current
       if (!el) return
       const { text, chips: newChips } = extractContent(el)
       cbRef.current.onValueChange(text)
       cbRef.current.onChipsChange(newChips)
+      cbRef.current.onHtmlChange?.(el.innerHTML)
     }, [])
 
     // Insert chip at current cursor position
@@ -177,21 +182,25 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orderMapKey])
 
-    // Initialize DOM content on mount only (restore text + chips)
+    // Initialize DOM content on mount only
     useEffect(() => {
       const el = divRef.current
       if (!el || initializedRef.current) return
       initializedRef.current = true
-      el.innerHTML = ''
-      if (value) el.appendChild(document.createTextNode(value))
-      // Append chips after text (positions are approximated — exact placement would require storing HTML)
-      for (const chip of chips) {
-        const tmp = document.createElement('span')
-        tmp.innerHTML = buildChipHtml(chip)
-        const chipNode = tmp.firstChild
-        if (chipNode) {
-          el.appendChild(chipNode)
-          el.appendChild(document.createTextNode('​')) // ZWS
+      if (htmlSnapshot) {
+        // Restore exact HTML snapshot — preserves chip positions perfectly
+        el.innerHTML = htmlSnapshot
+      } else if (value || chips.length > 0) {
+        el.innerHTML = ''
+        if (value) el.appendChild(document.createTextNode(value))
+        for (const chip of chips) {
+          const tmp = document.createElement('span')
+          tmp.innerHTML = buildChipHtml(chip)
+          const chipNode = tmp.firstChild
+          if (chipNode) {
+            el.appendChild(chipNode)
+            el.appendChild(document.createTextNode('​'))
+          }
         }
       }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps

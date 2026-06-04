@@ -45,6 +45,7 @@ export interface ImageParams {
   }
   modeType: 'text2image' | 'image2image'
   promptChips?: { nodeId: string; url: string; name: string }[]
+  promptHtml?: string
   imageList: NodeRef[]
   imageListOrder: string[]
   videoList: NodeRef[]
@@ -71,6 +72,7 @@ export interface VideoParams {
     enableSound: 'on' | 'off'
   }
   promptChips?: { nodeId: string; url: string; name: string }[]
+  promptHtml?: string
   advancedSettings?: Record<string, unknown>
 }
 

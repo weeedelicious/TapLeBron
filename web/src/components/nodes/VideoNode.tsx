@@ -372,8 +372,10 @@ export function VideoNode({ id, data, selected }: Props) {
             ref={editorRef}
             value={params.prompt}
             chips={chips}
+            htmlSnapshot={params.promptHtml}
             onValueChange={val => setParam('prompt', val as never)}
             onChipsChange={newChips => setParam('promptChips', newChips as never)}
+            onHtmlChange={html => setParam('promptHtml', html as never)}
             onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
             onEscape={() => setAtMenu(false)}
             placeholder="描述你想要生成的画面内容，@引用素材"
