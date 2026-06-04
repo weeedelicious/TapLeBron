@@ -170,20 +170,9 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
     if (params.images?.[0]) payload.firstFrame = params.images[0]
 
   } else if (mode === 'omni' || mode === 'img_ref') {
-    // 全能参考 / 图片参考：使用 ARK content 数组 + reference_image role
-    // Mivo 透传 payload 给底层 ARK Seedance，这与直连 ARK API 的格式一致
-    const contentItems: Record<string, unknown>[] = [
-      { type: 'text', text: params.prompt },
-    ]
-    for (const imgId of (params.images ?? [])) {
-      contentItems.push({
-        type: 'image_url',
-        image_url: { url: `${BASE_URL}/api/v1/file/image/${imgId}` },
-        role: 'reference_image',
-      })
-    }
-    payload.content = contentItems
-    delete payload.prompt  // prompt 已在 content[0] 中
+    // 全能参考 / 图片参考：Mivo 不支持 reference_image role，退回 firstFrame 方案
+    // 效果类似图生视频（单首帧驱动），不同于首尾帧（两帧书签式）
+    if (params.images?.[0]) payload.firstFrame = params.images[0]
 
   }
   // t2v: prompt only — no image fields
