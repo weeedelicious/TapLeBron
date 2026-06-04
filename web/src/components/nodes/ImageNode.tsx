@@ -433,7 +433,11 @@ export function ImageNode({ id, data, selected }: Props) {
           </div>
         )
       ) : (
-        <div className="relative flex items-center justify-center" style={{ minHeight: 180, background: '#0d0b18' }}>
+        <div
+          className="relative flex items-center justify-center"
+          style={{ minHeight: 180, background: '#0d0b18', cursor: collapsed ? 'pointer' : 'default' }}
+          onClick={collapsed ? () => setCollapsed(false) : undefined}
+        >
           {isLoading ? (
             <div className="nodrag flex items-center gap-2 px-4 py-2 rounded-full"
               style={{ background: 'rgba(20,15,40,0.92)', border: '1px solid #312550' }}>
@@ -451,6 +455,15 @@ export function ImageNode({ id, data, selected }: Props) {
               <circle cx="14" cy="18" r="3.5" stroke="#c4b5fd" strokeWidth="2" />
               <path d="M3 28l10-8 8 8 6-5 10 9" stroke="#c4b5fd" strokeWidth="2" strokeLinejoin="round" />
             </svg>
+          )}
+          {collapsed && !isLoading && (
+            <div style={{
+              position: 'absolute', bottom: 8, right: 8, pointerEvents: 'none',
+            }}>
+              <span style={{ fontSize: 11, color: '#c4b5fd', background: 'rgba(13,10,26,0.75)', borderRadius: 4, padding: '2px 7px' }}>
+                点击展开
+              </span>
+            </div>
           )}
         </div>
       )}
