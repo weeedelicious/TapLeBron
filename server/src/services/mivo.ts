@@ -170,11 +170,24 @@ export async function submitGenVideo(params: GenVideoParams): Promise<string> {
     if (params.images?.[0]) payload.firstFrame = params.images[0]
 
   } else if (mode === 'omni' || mode === 'img_ref') {
-    // 全能参考 / 图片参考：尝试传 images 数组（类比图片生成的多图参考）
-    // 同时也传 firstFrame，确保至少有一张图生效
+    // 全能参考 / 图片参考：用 ARK content 数组 + role:reference_image
+    // 错误验证：content 数组不能和 firstFrame/lastFrame 同时传，所以这里只用 content
+    // prompt 必须保留（Mivo 层校验）；content[0].text 也带 prompt 供 ARK 使用
     if (params.images?.length) {
-      payload.images = params.images          // 全部参考图 ID 数组
-      payload.firstFrame = params.images[0]   // 首张也设为首帧（兜底）
+      const contentItems: Record<string, unknown>[] = [
+        { type: 'text', text: params.prompt },
+      ]
+      for (const imgId of params.images) {
+        contentItems.push({
+          type: 'image_url',
+          image_url: { url: `${BASE_URL}/api/v1/file/image/${imgId}` },
+          role: 'reference_image',
+        })
+      }
+      payload.content = contentItems
+      // ⚠️ 不设置 firstFrame/lastFrame — 混合会 400
+    } else {
+      // 无图：降级为文生视频
     }
   }
   // t2v: prompt only — no image fields
