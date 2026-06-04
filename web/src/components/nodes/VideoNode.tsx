@@ -9,7 +9,7 @@ import { useCanvasStore } from '@/store/canvasStore'
 import { useTasksStore } from '@/store/tasksStore'
 import { generateApi } from '@/lib/api'
 import { defaultVideoParams, VIDEO_MODELS } from '@/lib/nodeData'
-import type { CanvasNodeData, VideoParams, NodeRef } from '@/lib/types'
+import type { CanvasNodeData, VideoParams, NodeRef, VideoHistoryItem } from '@/lib/types'
 
 interface Props {
   id: string
@@ -69,6 +69,7 @@ export function VideoNode({ id, data, selected }: Props) {
   const [hoverThumb, setHoverThumb] = useState<{ url: string; name: string; rect: DOMRect } | null>(null)
   const [atMenu, setAtMenu] = useState(false)
   const [previewChipUrl, setPreviewChipUrl] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   const [collapsed, setCollapsed] = useState(true)
   const nodeContainerRef = useRef<HTMLDivElement>(null)
   const dividerRef = useRef<HTMLDivElement>(null)
@@ -110,6 +111,7 @@ export function VideoNode({ id, data, selected }: Props) {
   const urls = data.url ?? []
   const videoUrl = urls[0]
   const chips = (params.promptChips ?? []) as ChipRef[]
+  const history = (params.history ?? []) as VideoHistoryItem[]
 
   const ratio = params.settings.ratio ?? '16:9'
   const resolution = params.settings.resolution ?? '720P'
@@ -296,7 +298,7 @@ export function VideoNode({ id, data, selected }: Props) {
         >⤢</button>
       </div>
 
-      {/* Sub-toolbar: 标记 运镜 角色库 + connected images */}
+      {/* Sub-toolbar: 标记 运镜 角色库 + history + connected images */}
       <div className="flex items-center gap-1.5 px-3 py-2 nodrag" style={{ borderBottom: '1px solid #2a2040' }}>
         {SUB_TOOLS.map(btn => (
           <button
@@ -314,6 +316,27 @@ export function VideoNode({ id, data, selected }: Props) {
             <span style={{ fontSize: 11, color: '#8a7aaa' }}>{btn.label}</span>
           </button>
         ))}
+        {/* History button */}
+        <button
+          className="flex flex-col items-center justify-center gap-0.5 rounded nodrag"
+          style={{
+            background: showHistory ? 'rgba(124,92,252,0.2)' : '#1e1830',
+            border: showHistory ? '1px solid #7c5cfc' : '1px solid #312550',
+            cursor: 'pointer', width: 44, height: 44, position: 'relative',
+          }}
+          onClick={() => setShowHistory(v => !v)}
+          title="生成历史"
+        >
+          <span style={{ fontSize: 14, lineHeight: 1, color: showHistory ? '#c4b5fd' : '#8a7aaa' }}>🕐</span>
+          <span style={{ fontSize: 11, color: showHistory ? '#c4b5fd' : '#8a7aaa' }}>历史</span>
+          {history.length > 0 && (
+            <span style={{
+              position: 'absolute', top: -4, right: -4, width: 16, height: 16,
+              background: '#7c5cfc', borderRadius: '50%', fontSize: 9, color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
+            }}>{history.length > 9 ? '9+' : history.length}</span>
+          )}
+        </button>
 
         {/* Connected image thumbnails — drag reorder, × delete, hover zoom */}
         {connectedImages.map((ref, i) => (
@@ -410,6 +433,79 @@ export function VideoNode({ id, data, selected }: Props) {
           </div>
         )}
       </div>
+
+      {/* History panel */}
+      {showHistory && (
+        <div className="nodrag" style={{ borderBottom: '1px solid #2a2040', maxHeight: 320, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#312550 transparent' }}>
+          {history.length === 0 ? (
+            <div style={{ padding: '16px', textAlign: 'center', color: '#4a4060', fontSize: 13 }}>暂无生成历史</div>
+          ) : (
+            <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {history.map((item) => (
+                <div key={item.id} style={{
+                  background: '#13102a', border: '1px solid #2a2040', borderRadius: 8,
+                  overflow: 'hidden',
+                }}>
+                  <div style={{ display: 'flex', gap: 8, padding: '8px 10px' }}>
+                    {/* Video thumbnail */}
+                    <div style={{ flexShrink: 0, width: 80, height: 52, background: '#0d0b18', borderRadius: 5, overflow: 'hidden' }}>
+                      <video src={item.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted playsInline />
+                    </div>
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: '#5a5070', marginBottom: 3 }}>
+                        {new Date(item.timestamp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {' · '}{item.model?.replace('Seedance_', 'S').replace('_', ' ')}
+                        {' · '}{item.modeType}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#8a7aaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.prompt || '（无提示词）'}
+                      </div>
+                    </div>
+                    {/* Delete */}
+                    <button className="nodrag" onClick={() => {
+                      const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+                      const p = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+                      const newHist = (p.history ?? []).filter((h: VideoHistoryItem) => h.id !== item.id)
+                      updateNodeData(id, { params: { ...p, history: newHist } as unknown as Record<string, unknown> })
+                    }} style={{ background: 'none', border: 'none', color: '#5a5070', cursor: 'pointer', fontSize: 16, padding: '0 4px', alignSelf: 'flex-start' }} title="删除">×</button>
+                  </div>
+                  {/* Actions */}
+                  <div style={{ display: 'flex', gap: 6, padding: '0 10px 8px' }}>
+                    {/* Restore to main */}
+                    <button className="nodrag" onClick={() => {
+                      updateNodeData(id, { url: [item.url] })
+                    }} style={{
+                      flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5,
+                      background: '#1e1830', border: '1px solid #312550', color: '#c4b5fd', cursor: 'pointer',
+                    }} title="设为主视频">↑ 还原</button>
+                    {/* Re-generate with same params */}
+                    <button className="nodrag" onClick={() => {
+                      // Restore params first, then trigger generate
+                      updateNodeData(id, {
+                        params: {
+                          ...params,
+                          prompt: item.prompt,
+                          promptHtml: item.promptHtml,
+                          promptChips: item.promptChips,
+                          model: item.model,
+                          modeType: item.modeType,
+                          settings: item.settings,
+                          imageList: item.imageList,
+                        } as unknown as Record<string, unknown>
+                      })
+                      setShowHistory(false)
+                    }} style={{
+                      flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5,
+                      background: '#251e38', border: '1px solid #5a3090', color: '#a78bfa', cursor: 'pointer',
+                    }} title="恢复此次参数">↻ 重用参数</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {(genError || data.taskInfo?.status === 3) && (

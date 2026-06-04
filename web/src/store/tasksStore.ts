@@ -1,6 +1,8 @@
 import { create } from 'zustand'
+import { v4 as uuidv4 } from 'uuid'
 import { generateApi } from '@/lib/api'
 import { useCanvasStore } from './canvasStore'
+import type { VideoParams, VideoHistoryItem, CanvasNodeData } from '@/lib/types'
 
 interface TaskEntry {
   jobId: string
@@ -69,10 +71,35 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           taskInfo: { taskId: jobId, loading: res.status < 2, status: res.status as 0|1|2|3, progressPercent: res.progressPercent, error: res.error }
         })
         if (res.status === 2 && res.urls?.length) {
-          useCanvasStore.getState().updateNodeData(current.nodeKey, {
-            url: res.urls,
-            taskInfo: { taskId: jobId, loading: false, status: 2, progressPercent: 100 }
-          })
+          // Save to history before updating the node URL
+          const store = useCanvasStore.getState()
+          const node = store.nodes.find(n => n.id === current.nodeKey || n.data.nodeKey === current.nodeKey)
+          if (node && (node.data as CanvasNodeData).type === 'video') {
+            const p = ((node.data as CanvasNodeData).params ?? {}) as unknown as VideoParams
+            const historyItem: VideoHistoryItem = {
+              id: uuidv4(),
+              timestamp: Date.now(),
+              url: res.urls[0],
+              prompt: p.prompt ?? '',
+              promptHtml: p.promptHtml,
+              promptChips: p.promptChips,
+              model: p.model ?? 'Seedance_2_0',
+              modeType: (p.modeType as string) ?? 't2v',
+              settings: { ...p.settings },
+              imageList: [...(p.imageList ?? [])],
+            }
+            const prevHistory: VideoHistoryItem[] = p.history ?? []
+            store.updateNodeData(current.nodeKey, {
+              url: res.urls,
+              taskInfo: { taskId: jobId, loading: false, status: 2, progressPercent: 100 },
+              params: { ...p, history: [historyItem, ...prevHistory].slice(0, 20) } as unknown as Record<string, unknown>,
+            })
+          } else {
+            store.updateNodeData(current.nodeKey, {
+              url: res.urls,
+              taskInfo: { taskId: jobId, loading: false, status: 2, progressPercent: 100 },
+            })
+          }
           clearInterval(interval)
           delete intervals[jobId]
           get().removeTask(jobId)

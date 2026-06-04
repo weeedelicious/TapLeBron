@@ -53,6 +53,19 @@ export interface ImageParams {
   textList: NodeRef[]
 }
 
+export interface VideoHistoryItem {
+  id: string
+  timestamp: number
+  url: string
+  prompt: string
+  promptHtml?: string
+  promptChips?: { nodeId: string; url: string; name: string }[]
+  model: string
+  modeType: string
+  settings: { ratio: string; resolution: string; duration: number; enableSound: 'on' | 'off' }
+  imageList: NodeRef[]
+}
+
 export interface VideoParams {
   prompt: string
   model: string
@@ -73,6 +86,7 @@ export interface VideoParams {
   }
   promptChips?: { nodeId: string; url: string; name: string }[]
   promptHtml?: string
+  history?: VideoHistoryItem[]
   advancedSettings?: Record<string, unknown>
 }
 
