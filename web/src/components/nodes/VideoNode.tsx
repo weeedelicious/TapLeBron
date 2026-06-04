@@ -69,7 +69,6 @@ export function VideoNode({ id, data, selected }: Props) {
   const [hoverThumb, setHoverThumb] = useState<{ url: string; name: string; rect: DOMRect } | null>(null)
   const [atMenu, setAtMenu] = useState(false)
   const [previewChipUrl, setPreviewChipUrl] = useState<string | null>(null)
-  const [chips, setChips] = useState<ChipRef[]>([])
   const [collapsed, setCollapsed] = useState(true)
   const nodeContainerRef = useRef<HTMLDivElement>(null)
   const dividerRef = useRef<HTMLDivElement>(null)
@@ -110,6 +109,7 @@ export function VideoNode({ id, data, selected }: Props) {
   const mode: VideoMode = (params.modeType as VideoMode) ?? 't2v'
   const urls = data.url ?? []
   const videoUrl = urls[0]
+  const chips = (params.promptChips ?? []) as ChipRef[]
 
   const ratio = params.settings.ratio ?? '16:9'
   const resolution = params.settings.resolution ?? '720P'
@@ -373,7 +373,7 @@ export function VideoNode({ id, data, selected }: Props) {
             value={params.prompt}
             chips={chips}
             onValueChange={val => setParam('prompt', val as never)}
-            onChipsChange={setChips}
+            onChipsChange={newChips => setParam('promptChips', newChips as never)}
             onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
             onEscape={() => setAtMenu(false)}
             placeholder="描述你想要生成的画面内容，@引用素材"

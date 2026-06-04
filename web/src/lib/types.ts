@@ -70,6 +70,7 @@ export interface VideoParams {
     duration: number
     enableSound: 'on' | 'off'
   }
+  promptChips?: { nodeId: string; url: string; name: string }[]
   advancedSettings?: Record<string, unknown>
 }
 

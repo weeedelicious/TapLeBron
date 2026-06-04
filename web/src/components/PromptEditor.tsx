@@ -177,12 +177,23 @@ export const PromptEditor = forwardRef<{ insertChip: (ref: ChipRef) => void }, P
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orderMapKey])
 
-    // Initialize DOM content on mount only
+    // Initialize DOM content on mount only (restore text + chips)
     useEffect(() => {
       const el = divRef.current
       if (!el || initializedRef.current) return
       initializedRef.current = true
-      if (value) el.textContent = value
+      el.innerHTML = ''
+      if (value) el.appendChild(document.createTextNode(value))
+      // Append chips after text (positions are approximated — exact placement would require storing HTML)
+      for (const chip of chips) {
+        const tmp = document.createElement('span')
+        tmp.innerHTML = buildChipHtml(chip)
+        const chipNode = tmp.firstChild
+        if (chipNode) {
+          el.appendChild(chipNode)
+          el.appendChild(document.createTextNode('​')) // ZWS
+        }
+      }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleInput = useCallback(() => {
