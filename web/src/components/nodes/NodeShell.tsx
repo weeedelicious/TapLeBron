@@ -30,7 +30,7 @@ interface NodeShellProps {
 
 export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, maxWidth, minHeight = 200, selected }: NodeShellProps) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const { deleteNodes, updateNodeData } = useCanvasStore()
+  const { deleteNodes, updateNodeData, duplicateNodes } = useCanvasStore()
 
   const handleDelete = useCallback(() => {
     deleteNodes([nodeKey])
@@ -42,6 +42,11 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, ma
     if (name) updateNodeData(nodeKey, { name })
     setMenuOpen(false)
   }, [nodeKey, data.name, updateNodeData])
+
+  const handleDuplicate = useCallback(() => {
+    duplicateNodes([nodeKey])
+    setMenuOpen(false)
+  }, [nodeKey, duplicateNodes])
 
   const isLoading = data.taskInfo?.loading
   const progress = data.taskInfo?.progressPercent ?? 0
@@ -93,6 +98,11 @@ export function NodeShell({ nodeKey, data, children, toolbar, minWidth = 320, ma
                 style={{ color: '#c0b8e0' }}
                 onClick={handleRename}
               >重命名</button>
+              <button
+                className="block w-full text-left px-3 py-1.5 text-sm hover:bg-white/5"
+                style={{ color: '#c0b8e0' }}
+                onClick={handleDuplicate}
+              >复制节点</button>
               <button
                 className="block w-full text-left px-3 py-1 text-xs text-red-400 hover:bg-white/5"
                 onClick={handleDelete}
