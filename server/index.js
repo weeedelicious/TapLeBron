@@ -3,13 +3,14 @@ const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const express = require('express');
 const { COOKIE_NAME, createSession, requireAdmin, requireAuth, sessionCookieOptions, touchUserLastUsed } = require('./auth');
+const { apiRouter: canvasApiRouter, assetRouter } = require('./canvasRoutes');
 const { getPool, migrate, starterCanvas } = require('./db');
 const config = require('./config');
 
 const app = express();
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 
 function asyncRoute(handler) {
@@ -95,7 +96,7 @@ async function countActiveAdmins(exceptUserId = null) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, apiKeyConfigured: Boolean(config.mivoApiKey || config.llmApiKey) });
 });
 
 app.get(
@@ -497,6 +498,9 @@ app.delete(
     res.json({ ok: true });
   })
 );
+
+app.use('/api', requireAuth, canvasApiRouter);
+app.use('/assets', requireAuth, assetRouter);
 
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));

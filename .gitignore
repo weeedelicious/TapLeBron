@@ -1,5 +1,8 @@
 node_modules/
 dist/
+data/
+projects/
+server/config.json
 
 .env
 .env.*

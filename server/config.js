@@ -14,6 +14,11 @@ function requireEnv(name, fallback) {
 module.exports = {
   port: Number(process.env.PORT || 3020),
   sessionSecret: requireEnv('SESSION_SECRET'),
+  projectsDir: process.env.PROJECTS_DIR || path.join(__dirname, '..', 'data', 'projects'),
+  mivoBaseUrl: process.env.MIVO_BASE_URL || 'https://aigc.xindong.com',
+  mivoApiKey: process.env.MIVO_API_KEY || process.env.MIVO_USER_SUB || '',
+  llmBaseUrl: process.env.LLM_BASE_URL || 'https://llm-proxy.tapsvc.com',
+  llmApiKey: process.env.LLM_API_KEY || '',
   db: {
     host: process.env.DB_HOST || '127.0.0.1',
     port: Number(process.env.DB_PORT || 3306),

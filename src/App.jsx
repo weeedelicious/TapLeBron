@@ -30,6 +30,7 @@ import {
   Video,
   X
 } from 'lucide-react';
+import CanvasApp from './canvas/App';
 
 const kindMeta = {
   input: { label: '输入', tone: 'teal' },
@@ -1519,6 +1520,14 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const isAdminRoute = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
+  async function handleLogout() {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    setUser(null);
+    if (window.location.pathname !== '/') {
+      window.history.pushState(null, '', '/');
+    }
+  }
+
   useEffect(() => {
     api('/api/auth/me')
       .then((data) => setUser(data.user))
@@ -1542,5 +1551,5 @@ export default function App() {
     return <AdminPage user={user} onLogout={() => setUser(null)} />;
   }
 
-  return <Workbench user={user} onLogout={() => setUser(null)} />;
+  return <CanvasApp user={user} onLogout={handleLogout} />;
 }
