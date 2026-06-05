@@ -96,7 +96,12 @@ async function countActiveAdmins(exceptUserId = null) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, apiKeyConfigured: Boolean(config.mivoApiKey || config.llmApiKey) });
+  res.json({
+    ok: true,
+    apiKeyConfigured: Boolean(config.mivoApiKey && config.llmApiKey),
+    mivoApiConfigured: Boolean(config.mivoApiKey),
+    llmApiConfigured: Boolean(config.llmApiKey)
+  });
 });
 
 app.get(

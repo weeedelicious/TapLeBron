@@ -530,11 +530,11 @@ const mivoBaseUrl = config.mivoBaseUrl || 'https://aigc.xindong.com';
 const llmBaseUrl = config.llmBaseUrl || 'https://llm-proxy.tapsvc.com';
 
 function requireMivoKey() {
-  if (!config.mivoApiKey) throw new Error('Mivo API Key 未配置');
+  if (!config.mivoApiKey) throw new Error('图片/音频生成需要在服务器 .env 配置 MIVO_API_KEY');
 }
 
 function requireLlmKey() {
-  if (!config.llmApiKey) throw new Error('LLM API Key 未配置');
+  if (!config.llmApiKey) throw new Error('视频/文本生成需要在服务器 .env 配置 LLM_API_KEY');
 }
 
 async function fetchMivoToken() {

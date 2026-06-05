@@ -12,11 +12,14 @@ export function TopNav({ onHome, user, onLogout }: Props) {
   const { projectName, projectUuid, isSaving, isDirty } = useCanvasStore()
   const [editing, setEditing] = useState(false)
   const [nameVal, setNameVal] = useState('')
-  const [apiKeyMissing, setApiKeyMissing] = useState(false)
+  const [apiKeyMessage, setApiKeyMessage] = useState('')
 
   useEffect(() => {
-    fetch('/api/health').then(r => r.json()).then((d: { apiKeyConfigured: boolean }) => {
-      setApiKeyMissing(!d.apiKeyConfigured)
+    fetch('/api/health').then(r => r.json()).then((d: { mivoApiConfigured?: boolean; llmApiConfigured?: boolean }) => {
+      const missing: string[] = []
+      if (!d.mivoApiConfigured) missing.push('MIVO_API_KEY')
+      if (!d.llmApiConfigured) missing.push('LLM_API_KEY')
+      setApiKeyMessage(missing.length ? `未配置 ${missing.join(' / ')}` : '')
     }).catch(() => {})
   }, [])
 
@@ -62,9 +65,9 @@ export function TopNav({ onHome, user, onLogout }: Props) {
         <span className="text-sm" style={{ color: isSaving ? '#7c5cfc' : isDirty ? '#f59e0b' : '#8a8a8a' }}>
           {isSaving ? '保存中…' : isDirty ? '未保存' : '已保存'}
         </span>
-        {apiKeyMissing && (
+        {apiKeyMessage && (
           <span className="text-xs px-2 py-0.5 rounded" style={{ background: '#3a2a00', color: '#f59e0b' }}>
-            ⚠ 未配置 Mivo API Key → 编辑 server/config.json
+            {apiKeyMessage}，请编辑服务器 .env
           </span>
         )}
       </div>
