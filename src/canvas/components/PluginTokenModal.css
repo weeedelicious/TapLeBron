@@ -1,0 +1,531 @@
+/* Account-scoped Cindy connection tokens. */
+.shotflow-plugin-token-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--sf-text-body);
+  background:
+    radial-gradient(circle at 50% 4%, color-mix(in srgb, var(--sf-accent) 14%, transparent), transparent 38%),
+    var(--sf-overlay-bg);
+  backdrop-filter: blur(14px) saturate(0.92);
+  -webkit-backdrop-filter: blur(14px) saturate(0.92);
+}
+
+.shotflow-plugin-token-modal {
+  width: min(760px, 100%);
+  max-height: min(88dvh, 900px);
+  overflow: hidden;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: 22px;
+  background: var(--sf-surface-bg);
+  box-shadow: 0 34px 100px color-mix(in srgb, var(--sf-bg-deep) 58%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: shotflow-plugin-token-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.shotflow-plugin-token-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 20px;
+  border-bottom: 1px solid var(--sf-border);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--sf-accent) 9%, transparent), transparent 52%);
+}
+
+.shotflow-plugin-token-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.shotflow-plugin-token-mark {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--sf-accent) 32%, var(--sf-border));
+  border-radius: 13px;
+  color: var(--sf-accent-strong);
+  background: color-mix(in srgb, var(--sf-accent-soft) 78%, var(--sf-control-bg));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 8px 20px color-mix(in srgb, var(--sf-accent) 13%, transparent);
+}
+
+.shotflow-plugin-token-heading h2 {
+  margin: 0;
+  color: var(--sf-text-title);
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 760;
+  letter-spacing: -0.015em;
+}
+
+.shotflow-plugin-token-heading p {
+  margin: 5px 0 0;
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shotflow-plugin-token-close {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--sf-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 130ms ease, border-color 130ms ease, background 130ms ease;
+}
+
+.shotflow-plugin-token-close:hover {
+  color: var(--sf-text-title);
+  border-color: var(--sf-border);
+  background: var(--sf-control-bg);
+}
+
+.shotflow-plugin-token-body {
+  max-height: calc(min(88dvh, 900px) - 85px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 20px 24px 24px;
+  scrollbar-color: var(--sf-border-strong) transparent;
+}
+
+.shotflow-plugin-token-guide,
+.shotflow-plugin-token-create,
+.shotflow-plugin-token-list-section {
+  border: 1px solid var(--sf-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--sf-panel-solid) 78%, transparent);
+}
+
+.shotflow-plugin-token-guide {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 13px 15px;
+  border-color: color-mix(in srgb, var(--sf-accent) 25%, var(--sf-border));
+  background: color-mix(in srgb, var(--sf-accent-soft) 48%, var(--sf-panel-solid));
+}
+
+.shotflow-plugin-token-guide > span {
+  padding: 4px 7px;
+  border-radius: 7px;
+  color: var(--sf-accent-strong);
+  background: color-mix(in srgb, var(--sf-accent-soft) 70%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.shotflow-plugin-token-guide p {
+  margin: 1px 0 0;
+  color: var(--sf-text-body);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.shotflow-plugin-token-create,
+.shotflow-plugin-token-list-section {
+  display: grid;
+  gap: 14px;
+  padding: 17px;
+}
+
+.shotflow-plugin-token-section-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sf-text-muted);
+}
+
+.shotflow-plugin-token-section-title strong {
+  color: var(--sf-text-title);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.shotflow-plugin-token-section-title > span {
+  min-width: 21px;
+  height: 21px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: auto;
+  border: 1px solid var(--sf-border);
+  border-radius: 999px;
+  color: var(--sf-text-muted);
+  background: var(--sf-panel-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.shotflow-plugin-token-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(130px, 0.75fr);
+  gap: 10px;
+}
+
+.shotflow-plugin-token-form-grid label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: var(--sf-text-muted);
+  font-size: 11px;
+  font-weight: 640;
+}
+
+.shotflow-plugin-token-form-grid input,
+.shotflow-plugin-token-form-grid select,
+.shotflow-plugin-token-value-row input {
+  width: 100%;
+  min-width: 0;
+  height: 39px;
+  border: 1px solid var(--sf-border);
+  border-radius: 10px;
+  outline: none;
+  color: var(--sf-text-title);
+  background: var(--sf-control-bg);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 130ms ease, box-shadow 130ms ease;
+}
+
+.shotflow-plugin-token-form-grid input,
+.shotflow-plugin-token-value-row input {
+  padding: 0 11px;
+}
+
+.shotflow-plugin-token-form-grid select {
+  padding: 0 30px 0 10px;
+  cursor: pointer;
+}
+
+.shotflow-plugin-token-form-grid input:focus,
+.shotflow-plugin-token-form-grid select:focus,
+.shotflow-plugin-token-value-row input:focus {
+  border-color: color-mix(in srgb, var(--sf-accent) 52%, var(--sf-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sf-accent) 12%, transparent);
+}
+
+.shotflow-plugin-token-form-grid select option {
+  color: var(--sf-text-title);
+  background: var(--sf-panel-solid);
+}
+
+.shotflow-plugin-token-access {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.shotflow-plugin-token-access > button {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: 12px;
+  color: var(--sf-text-muted);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: color 130ms ease, border-color 130ms ease, background 130ms ease, transform 130ms ease;
+}
+
+.shotflow-plugin-token-access > button:hover {
+  color: var(--sf-text-body);
+  border-color: var(--sf-border-strong);
+  background: var(--sf-panel-soft);
+  transform: translateY(-1px);
+}
+
+.shotflow-plugin-token-access > button.is-active {
+  color: var(--sf-accent-strong);
+  border-color: color-mix(in srgb, var(--sf-accent) 42%, var(--sf-border));
+  background: color-mix(in srgb, var(--sf-accent-soft) 62%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sf-accent) 8%, transparent);
+}
+
+.shotflow-plugin-token-access > button > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.shotflow-plugin-token-access strong {
+  color: var(--sf-text-title);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shotflow-plugin-token-access small {
+  overflow: hidden;
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shotflow-plugin-token-create-button,
+.shotflow-plugin-token-value-row button,
+.shotflow-plugin-token-revoke {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 130ms ease, transform 130ms ease, opacity 130ms ease;
+}
+
+.shotflow-plugin-token-create-button {
+  width: fit-content;
+  min-height: 39px;
+  padding: 0 15px;
+  border: 1px solid color-mix(in srgb, var(--sf-accent) 54%, var(--sf-border));
+  color: color-mix(in srgb, var(--sf-text-title) 92%, white);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--sf-accent) 82%, #17202a), color-mix(in srgb, var(--sf-accent-strong) 62%, #18242d));
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--sf-accent) 17%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.shotflow-plugin-token-create-button:not(:disabled):hover,
+.shotflow-plugin-token-value-row button:hover,
+.shotflow-plugin-token-revoke:not(:disabled):hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+}
+
+.shotflow-plugin-token-create-button:disabled,
+.shotflow-plugin-token-revoke:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.shotflow-plugin-token-reveal {
+  display: grid;
+  gap: 11px;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, #d7a24d 38%, var(--sf-border));
+  border-radius: 15px;
+  background: color-mix(in srgb, #d7a24d 9%, var(--sf-panel-solid));
+}
+
+.shotflow-plugin-token-reveal > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.shotflow-plugin-token-reveal strong {
+  color: var(--sf-text-title);
+  font-size: 12px;
+}
+
+.shotflow-plugin-token-reveal span {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+}
+
+.shotflow-plugin-token-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shotflow-plugin-token-value-row input {
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  letter-spacing: 0.015em;
+}
+
+.shotflow-plugin-token-value-row button {
+  height: 39px;
+  flex: 0 0 auto;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--sf-accent) 34%, var(--sf-border));
+  color: var(--sf-accent-strong);
+  background: color-mix(in srgb, var(--sf-accent-soft) 68%, var(--sf-control-bg));
+}
+
+.shotflow-plugin-token-error {
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--sf-danger) 34%, var(--sf-border));
+  border-radius: 11px;
+  color: var(--sf-danger);
+  background: var(--sf-danger-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.shotflow-plugin-token-list {
+  display: grid;
+  gap: 8px;
+}
+
+.shotflow-plugin-token-empty {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--sf-border);
+  border-radius: 11px;
+  color: var(--sf-text-muted);
+  background: var(--sf-panel-soft);
+  font-size: 12px;
+}
+
+.shotflow-plugin-token-item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: 12px;
+  background: var(--sf-panel-soft);
+}
+
+.shotflow-plugin-token-item-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.shotflow-plugin-token-item-main > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shotflow-plugin-token-item-main strong {
+  overflow: hidden;
+  color: var(--sf-text-title);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shotflow-plugin-token-item-main code {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  color: var(--sf-text-muted);
+  background: var(--sf-control-bg);
+  font-size: 10px;
+}
+
+.shotflow-plugin-token-item-main p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 0;
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.shotflow-plugin-token-item-main p > span::before {
+  content: "·";
+  margin-right: 7px;
+  color: var(--sf-text-faint);
+}
+
+.shotflow-plugin-token-revoke {
+  min-height: 34px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sf-danger) 25%, var(--sf-border));
+  color: var(--sf-danger);
+  background: var(--sf-danger-soft);
+}
+
+.shotflow-plugin-token-overlay button:focus-visible,
+.shotflow-plugin-token-overlay input:focus-visible,
+.shotflow-plugin-token-overlay select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sf-accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.shotflow-plugin-token-overlay .is-spinning {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes shotflow-plugin-token-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 640px) {
+  .shotflow-plugin-token-overlay {
+    place-items: end center;
+    padding: 10px;
+  }
+
+  .shotflow-plugin-token-modal {
+    max-height: calc(100dvh - 20px);
+    border-radius: 18px;
+  }
+
+  .shotflow-plugin-token-header {
+    padding: 17px 17px 15px;
+  }
+
+  .shotflow-plugin-token-body {
+    max-height: calc(100dvh - 104px);
+    padding: 15px 14px 18px;
+  }
+
+  .shotflow-plugin-token-form-grid,
+  .shotflow-plugin-token-access {
+    grid-template-columns: 1fr;
+  }
+
+  .shotflow-plugin-token-guide {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .shotflow-plugin-token-guide > span {
+    width: fit-content;
+  }
+
+  .shotflow-plugin-token-reveal > div:first-child,
+  .shotflow-plugin-token-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shotflow-plugin-token-reveal > div:first-child {
+    display: grid;
+    gap: 4px;
+  }
+
+  .shotflow-plugin-token-revoke {
+    width: 100%;
+  }
+}
+

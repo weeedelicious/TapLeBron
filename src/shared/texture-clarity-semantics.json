@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "comment": [
+    "纹理清晰化（精准修复）的语义字典。前端图例、worker 上色、后端融合支持区共用这一份。",
+    "",
+    "设计文档点名 SegFormer-B4，但 HuggingFace 上不存在 B4 的人体解析权重（B4 的 checkpoint",
+    "全是 ADE20K / Cityscapes / 裂缝 / 卫星；唯一叫 B4 的 s3nh/SegFormer-b4-person-segmentation",
+    "只做人/非人二分割，不是部位解析）。真实可用的人体解析 SegFormer 是 b2/b3/b5 三个，",
+    "它们的标签表完全相同（ATR 18 类），所以换权重不需要改这份映射，也不需要改代码。",
+    "默认取 b3：MiT-B3（depths [3,4,18,3]）是带 ATR 标签里容量最大且被广泛验证过的一档。",
+    "",
+    "另一个必须写明的落差：ATR 18 类里没有眼/鼻/嘴，只有 Face；也没有单独的手，只有",
+    "Left-arm / Right-arm（含手）。所以这里的类目叫「面部」和「手臂」，不叫设计稿上的",
+    "「五官」「手部」—— 宁可名字诚实，也不要在界面上标一个模型给不出来的粒度。",
+    "要真五官需要再叠一个人脸解析模型（CelebAMask-HQ 那一路），留作后续切片。",
+    "",
+    "颜色只是给人看的可视化编码。后端与融合链一律按 classId 判断，绝不反解 RGB —— 这是",
+    "设计文档 FEATURE_DESIGN.md 第 2 节的硬要求。"
+  ],
+  "sourceModels": {
+    "default": "sayeed99/segformer_b3_clothes",
+    "interchangeable": [
+      "sayeed99/segformer_b3_clothes",
+      "mattmdjaga/segformer_b2_clothes",
+      "matei-dorian/segformer-b5-finetuned-human-parsing"
+    ],
+    "labelSet": "ATR-18",
+    "note": "三者 id2label 逐项相同，换权重只改 worker 的 SEMANTIC_PARTS_MODEL_ID 环境变量。"
+  },
+  "classes": [
+    { "id": 0, "key": "background", "label": "背景", "color": "#101014", "repairSupport": false },
+    { "id": 1, "key": "skin", "label": "皮肤", "color": "#E8544A", "repairSupport": true },
+    { "id": 2, "key": "hair", "label": "发丝", "color": "#4AC8E8", "repairSupport": true },
+    { "id": 3, "key": "garment", "label": "服装", "color": "#8B6BE8", "repairSupport": true },
+    { "id": 4, "key": "face", "label": "面部", "color": "#E8C84A", "repairSupport": true },
+    { "id": 5, "key": "limb", "label": "手臂", "color": "#E88C4A", "repairSupport": true }
+  ],
+  "atrToInternal": {
+    "0": 0,
+    "1": 3,
+    "2": 2,
+    "3": 4,
+    "4": 3,
+    "5": 3,
+    "6": 3,
+    "7": 3,
+    "8": 3,
+    "9": 3,
+    "10": 3,
+    "11": 4,
+    "12": 1,
+    "13": 1,
+    "14": 5,
+    "15": 5,
+    "16": 3,
+    "17": 3
+  },
+  "atrLabels": {
+    "0": "Background",
+    "1": "Hat",
+    "2": "Hair",
+    "3": "Sunglasses",
+    "4": "Upper-clothes",
+    "5": "Skirt",
+    "6": "Pants",
+    "7": "Dress",
+    "8": "Belt",
+    "9": "Left-shoe",
+    "10": "Right-shoe",
+    "11": "Face",
+    "12": "Left-leg",
+    "13": "Right-leg",
+    "14": "Left-arm",
+    "15": "Right-arm",
+    "16": "Bag",
+    "17": "Scarf"
+  },
+  "atrMappingNotes": [
+    "帽子(1) / 眼镜(3) 的归属：帽子按遮挡物归服装，眼镜归面部 —— 修复面部时眼镜边缘要一起被检查，",
+    "把它丢进服装会让面部支持区在眼镜处出现空洞。",
+    "腿(12,13) 归皮肤：ATR 没有单列躯干皮肤，露出的皮肤主要就是腿和手臂两处；手臂另有 limb 类，",
+    "所以 skin 实际覆盖的是腿部裸露皮肤。这一条在真实图上评估后可能要调。",
+    "鞋(9,10) / 包(16) / 围巾(17) 归服装：它们都是需要保材质但不属于人体的物件。"
+  ],
+  "repairTargets": [
+    "皮肤纹理",
+    "发丝层次",
+    "布料材质",
+    "面部结构",
+    "手臂与手部"
+  ],
+  "outputPolicy": {
+    "maxEdge": 2048,
+    "preserveAspectRatio": true,
+    "candidateCount": 1
+  },
+  "fusionPolicy": "smart-blend-multiscale-v1"
+}

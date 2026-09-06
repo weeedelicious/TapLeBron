@@ -1,15 +1,71 @@
-import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
+﻿import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
+import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
+import { Camera, Copy, Crop, Download, Expand, Loader2, Lock, Scissors, SquarePen, Trash2, Unlock } from 'lucide-react'
+import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
+import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
+import { GenerationProgress } from '@/components/GenerationProgress'
+import { VideoCropModal } from '@/components/VideoCropModal'
+import { VideoTrimModal } from '@/components/VideoTrimModal'
+import { WhiteboardModal } from '@/components/WhiteboardModal'
 import { NodeShell } from './NodeShell'
+import { NodeTypeIcon } from './nodeTypeIcon'
+import { ResizablePanelHandle, readPanelSize, useResizablePanel, type PanelSize } from './ResizablePanelHandle'
+import { HoverImagePreview } from '@/components/HoverImagePreview'
 import { ImagePreview } from '@/components/ImagePreview'
+import type { ImagePreviewItem } from '@/components/ImagePreview'
 import { PromptEditor } from '@/components/PromptEditor'
-import type { ChipRef } from '@/components/PromptEditor'
+import type { ChipRef, PromptEditorHandle, PromptEditorSnapshot } from '@/components/PromptEditor'
+import { resolveTextMentionAt, resolveTextMentionsIn as resolveTextMentionsInText } from '@/lib/promptTokenMention'
+import { edgesWithoutLink } from '@/lib/referenceEdges'
 import { useCanvasStore } from '@/store/canvasStore'
 import { useTasksStore } from '@/store/tasksStore'
-import { generateApi } from '@/lib/api'
-import { defaultVideoParams, VIDEO_MODELS } from '@/lib/nodeData'
-import type { CanvasNodeData, VideoParams, NodeRef, VideoHistoryItem } from '@/lib/types'
+import { assetsApi, generateApi, toolboxApi } from '@/lib/api'
+import { errorToText } from '@/lib/display'
+import { defaultImageParams, defaultVideoParams, VIDEO_MODELS } from '@/lib/nodeData'
+import { textPromptFromRefs } from '@/lib/textPrompt'
+import {
+  markPromptChipRefsMissingInParams,
+  refreshPromptChipUrlsInHtml,
+  refreshPromptChipUrlsInParams,
+  type PromptChipLiveUrls,
+} from '@/lib/promptChips'
+import { liveRefUrl, primaryOutputUrl } from '@/lib/primaryOutput'
+import { mediaPreviewUrl } from '@/lib/mediaPreview'
+import { videoDownloadFileName } from '@/lib/videoFileName'
+import { writeTextToClipboard } from '@/lib/clipboard'
+import {
+  VIDEO_RATIO_OPTIONS,
+  getVideoDurationRule,
+  getVideoGenerationCounts,
+  getVideoModeOptions,
+  getVideoModelRule,
+  getVideoRatioOptions,
+  getVideoRefRule,
+  getVideoResolutionNote,
+  getVideoResolutionOptions,
+  videoRefCountError,
+  videoReferenceNote,
+  normalizeVideoDurationValue,
+  normalizeVideoGenerationCount,
+  normalizeVideoModeKey,
+  normalizeVideoRatioValue,
+  normalizeVideoResolutionValue,
+  validateVideoCapability,
+  type VideoModeKey,
+} from '@/lib/videoRules'
+import { popoverPlacement, type PopoverPlacement } from '@/lib/popoverFit'
+import { modelPromptFromNodeParams } from '@/lib/modelPrompt'
+import type { AssetGenerationMeta, CanvasNodeData, VideoParams, NodeRef, ResourceMeta, TaskInfo, FailedGeneration } from '@/lib/types'
+import { hasPendingUpstream } from '@/lib/autoGenerate'
+import {
+  captureVideoFrameFile,
+  captureVideoFrameFileFromUrl,
+  dataUrlToFile,
+  readWhiteboardState,
+  resourceMetaFromUploadPayload,
+  writeWhiteboardState,
+} from '@/lib/whiteboard'
 
 interface Props {
   id: string
@@ -22,120 +78,651 @@ function getParams(data: CanvasNodeData): VideoParams {
   return defaultVideoParams()
 }
 
-const RATIOS: { value: string; label: string; w: number; h: number }[] = [
-  { value: 'auto', label: 'Auto', w: 20, h: 14 },
-  { value: '16:9', label: '16:9', w: 22, h: 13 },
-  { value: '4:3',  label: '4:3',  w: 20, h: 15 },
-  { value: '1:1',  label: '1:1',  w: 16, h: 16 },
-  { value: '3:4',  label: '3:4',  w: 15, h: 20 },
-  { value: '9:16', label: '9:16', w: 13, h: 22 },
-  { value: '21:9', label: '21:9', w: 26, h: 11 },
-]
-const RESOLUTIONS = ['480P', '720P', '1080P']
-const DURATION_MIN = 4
-const DURATION_MAX = 15
+type VideoMode = VideoModeKey
 
-type VideoMode = 't2v' | 'omni' | 'i2v' | 'keyframe' | 'img_ref'
+function fitFrameToAspect(w: number, h: number, maxWidth: number, maxHeight: number, minWidth: number) {
+  const safeW = Math.max(1, w)
+  const safeH = Math.max(1, h)
+  let width = maxWidth
+  let height = width * (safeH / safeW)
+  if (height > maxHeight) {
+    height = maxHeight
+    width = height * (safeW / safeH)
+  }
+  if (width < minWidth) {
+    width = minWidth
+    height = width * (safeH / safeW)
+    if (height > maxHeight) {
+      height = maxHeight
+      width = height * (safeW / safeH)
+    }
+  }
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+  }
+}
 
-const MODES: { key: VideoMode; label: string }[] = [
-  { key: 't2v', label: '文生视频' },
-  { key: 'omni', label: '全能参考' },
-  { key: 'i2v', label: '图生视频' },
-  { key: 'keyframe', label: '首尾帧' },
-  { key: 'img_ref', label: '图片参考' },
-]
+type GalleryItem = {
+  url: string
+  order: number
+}
 
-const SUB_TOOLS = [
-  { icon: '⚑', label: '标记' },
-  { icon: '🎥', label: '运镜' },
-  { icon: '◉', label: '角色库' },
-]
+/** 生成按钮点一次后锁多久。只为防手抖连点，不等视频跑完。 */
+const GENERATE_COOLDOWN_MS = 5000
+
+function galleryItemsFromNodeData(data: CanvasNodeData): GalleryItem[] {
+  const seen = new Set<string>()
+  const rawUrls = (data.url ?? []).filter((url): url is string => {
+    if (typeof url !== 'string') return false
+    const clean = url.trim()
+    if (!clean || seen.has(clean)) return false
+    seen.add(clean)
+    return true
+  })
+  const timestampMap = data._assetCreatedAtMs ?? {}
+  const sortable = rawUrls.map((url, index) => {
+    const timestamp = Number(timestampMap[url])
+    return {
+      url,
+      index,
+      timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null,
+    }
+  })
+  if (sortable.length > 1 && sortable.every((item) => item.timestamp !== null)) {
+    sortable.sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return Number(a.timestamp) - Number(b.timestamp)
+      return a.index - b.index
+    })
+  }
+  return sortable.map((item, index) => ({ url: item.url, order: index + 1 }))
+}
+
+function primaryGalleryItem(data: CanvasNodeData, items: GalleryItem[]) {
+  const primaryUrl = typeof data._primaryAssetUrl === 'string' ? data._primaryAssetUrl : ''
+  const firstUrl = (data.url ?? []).find((url): url is string => typeof url === 'string' && url.trim().length > 0)
+  return items.find((item) => item.url === primaryUrl) ?? items.find((item) => item.url === firstUrl) ?? items[0]
+}
+
+function extensionFromUrl(url?: string) {
+  const clean = String(url || '').split('#')[0].split('?')[0]
+  const match = clean.match(/\.([a-z0-9]+)$/i)
+  return match ? match[1].toLowerCase() : ''
+}
+
+function mimeTypeFromVideoExtension(extension?: string) {
+  if (extension === 'mov') return 'video/quicktime'
+  if (extension === 'mp4') return 'video/mp4'
+  return undefined
+}
+
+function primaryVideoMeta(nodeData?: CanvasNodeData, fallbackUrl?: string): ResourceMeta | null {
+  const rawItems = (nodeData?._resourceMeta?.items ?? []) as ResourceMeta[]
+  const videoMeta = rawItems.find((item) => item?.kind === 'video') ?? null
+  if (videoMeta) {
+    return {
+      ...videoMeta,
+      extension: videoMeta.extension || extensionFromUrl(fallbackUrl),
+      mimeType: videoMeta.mimeType || mimeTypeFromVideoExtension(videoMeta.extension || extensionFromUrl(fallbackUrl)),
+    }
+  }
+
+  const extension = extensionFromUrl(fallbackUrl)
+  if (!extension) return null
+  return {
+    kind: 'video',
+    extension,
+    mimeType: mimeTypeFromVideoExtension(extension),
+  }
+}
+
+function videoPreviewSrc(url: string) {
+  return url.includes('#') ? url : `${url}#t=0.001`
+}
+
+function videoPosterFromNode(nodeData: CanvasNodeData | undefined) {
+  const poster = typeof nodeData?.poster === 'string' ? nodeData.poster.trim() : ''
+  return poster || undefined
+}
+
+function ReferenceVideoCover({
+  src,
+  poster,
+  iconSize = 13,
+}: {
+  src: string
+  poster?: string
+  iconSize?: number
+}) {
+  return (
+    <>
+      <video
+        src={src}
+        poster={poster || undefined}
+        muted
+        playsInline
+        preload="metadata"
+        draggable={false}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      />
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#efeaff',
+          background: 'linear-gradient(180deg, rgba(10,6,18,0.04), rgba(10,6,18,0.28))',
+          pointerEvents: 'none',
+        }}
+      >
+        <NodeTypeIcon type="video" size={iconSize} />
+      </div>
+    </>
+  )
+}
+
+function floatingNodeControlBarStyle(): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 1,
+    height: 21,
+    padding: 1,
+    borderRadius: 7,
+    background: 'linear-gradient(180deg, rgba(27,24,34,0.88), rgba(12,12,16,0.78))',
+    border: '1px solid rgba(255,255,255,0.16)',
+    boxShadow: '0 10px 24px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.08)',
+    backdropFilter: 'blur(14px)',
+    WebkitBackdropFilter: 'blur(14px)',
+  }
+}
+
+function floatingNodeTextButtonStyle(active = false, minWidth = 46): React.CSSProperties {
+  return {
+    minWidth,
+    height: 19,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    border: active ? '1px solid rgba(255,255,255,0.52)' : '1px solid transparent',
+    background: active ? 'rgba(255,255,255,0.94)' : 'rgba(255,255,255,0.06)',
+    color: active ? '#14111f' : '#f7f5ff',
+    fontSize: 11,
+    fontWeight: 900,
+    lineHeight: 1,
+    padding: '0 6px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
+}
+
+function floatingNodeIconButtonStyle(active = false, disabled = false): React.CSSProperties {
+  return {
+    width: 19,
+    height: 19,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    border: active ? '1px solid rgba(255,255,255,0.56)' : '1px solid transparent',
+    background: active ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.06)',
+    color: active ? '#15111e' : '#f7f5ff',
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.66 : 1,
+    padding: 0,
+  }
+}
+
+function videoGalleryActionButton(kind: 'dark' | 'primary'): React.CSSProperties {
+  const primary = kind === 'primary'
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+    height: 20,
+    borderRadius: 6,
+    border: primary ? '1px solid rgba(255,255,255,0.22)' : '1px solid rgba(255,255,255,0.14)',
+    background: primary ? 'rgba(124,92,252,0.86)' : 'rgba(10,10,12,0.72)',
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 800,
+    cursor: 'pointer',
+    padding: '0 6px',
+    boxShadow: '0 8px 18px rgba(0,0,0,0.26)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    whiteSpace: 'nowrap',
+  }
+}
+
+type ConnectedMediaRef = NodeRef & {
+  orderName: string
+  previewKind: 'image' | 'video' | 'audio'
+  poster?: string
+  coverSrc?: string
+}
+
+const FRAME_STEP_SECONDS = 1 / 30
+
+function frameNumberFromTime(timeSec: number) {
+  const safeTime = Number.isFinite(timeSec) && timeSec > 0 ? timeSec : 0
+  return Math.max(1, Math.floor(safeTime / FRAME_STEP_SECONDS) + 1)
+}
 
 export function VideoNode({ id, data, selected }: Props) {
-  const { updateNodeData, nodes, edges, setEdges } = useCanvasStore()
+  const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, pushHistory } = useCanvasStore()
   const { addTask, startPolling, cancelTask } = useTasksStore()
+  /** 真正还在轮询的任务表。进度条只信这个，不信节点上残留的 loading 标记。 */
+  const liveTasks = useTasksStore(state => state.tasks)
+  const initialPanelSize = readPanelSize((getParams(data).advancedSettings as Record<string, unknown> | undefined)?.bottomPanelSize)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const editorRef = useRef<{ insertChip: (ref: ChipRef) => void }>(null)
+  const hoverPreviewMutedRef = useRef(false)
+  const editorRef = useRef<PromptEditorHandle>(null)
+  const promptPanelRef = useRef<HTMLDivElement>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const bottomWrapRef = useRef<HTMLDivElement | null>(null)
+  const settingsPopoverRef = useRef<HTMLDivElement | null>(null)
+  /** 设置弹层的锚点（底栏在屏幕上的位置）；null = 弹层没开 */
+  const [settingsAnchor, setSettingsAnchor] = useState<{ left: number; width: number; top: number; bottom: number } | null>(null)
+  /** 弹层最终的定位：往上（bottom）还是往下（top），装不下时才带 maxHeight */
+  const [settingsPlacement, setSettingsPlacement] = useState<PopoverPlacement>({})
   const [genError, setGenError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isTranslating, setIsTranslating] = useState(false)
+  const [nameDraft, setNameDraft] = useState(data.name)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [videoSize, setVideoSize] = useState<{ w: number; h: number } | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  /**
+   * 视频大图查看器。跟上面那个 previewUrl 分开：previewUrl 预览的是**连进来的参考图**
+   * （图片，走 <img>），这个装的是本节点自己的视频。合用一个 state 就会出现
+   * 拿 <img> 渲染 mp4 或者拿 <video> 渲染 png 的情况。
+   */
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null)
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false)
+  const [whiteboardSourceFile, setWhiteboardSourceFile] = useState<File | null>(null)
+  const [whiteboardPreparing, setWhiteboardPreparing] = useState(false)
+  const [whiteboardError, setWhiteboardError] = useState<string | null>(null)
+  const [cropOpen, setCropOpen] = useState(false)
+  const [cropSubmitting, setCropSubmitting] = useState(false)
+  const [trimOpen, setTrimOpen] = useState(false)
+  const [trimSubmitting, setTrimSubmitting] = useState(false)
+  const [frameMode, setFrameMode] = useState(false)
+  const [frameNumber, setFrameNumber] = useState(1)
+  const [frameCapturing, setFrameCapturing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [galleryLocked, setGalleryLocked] = useState(false)
+  const [panelExpanded, setPanelExpanded] = useState(false)
+  const [panelSize, setPanelSize] = useState<PanelSize | null>(() => initialPanelSize)
 
-  // Auto-clear stale taskInfo on mount — don't restart polling for expired jobs
   useEffect(() => {
     if (data.taskInfo?.loading) {
-      updateNodeData(id, { taskInfo: undefined })
+      setIsSubmitting(false)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const [count, setCount] = useState(1)
-  const [hoverThumb, setHoverThumb] = useState<{ url: string; name: string; rect: DOMRect } | null>(null)
+  }, [data.taskInfo?.loading])
+
+  /**
+   * 生成按钮的短冷却。
+   *
+   * 以前按钮是 disabled={isSubmitting || taskInfo.loading} —— 视频要跑几分钟，这几分钟里
+   * 按钮一直是灰的。现在改成只锁 5 秒（防手抖连点），5 秒后就算上一次还在跑也能再点。
+   *
+   * 注意这不是"排队跑两个"：节点的 taskInfo 只存一个任务，再点一次会把它顶掉，
+   * 于是**上一次的结果生成完也不会被采用**（tasksStore 的 isCurrentTask 按 taskId 比对，
+   * 服务端还会把旧任务标成 shouldApply=false）。所以按钮 title 里会写明这一点。
+   */
+  const [generateCooldown, setGenerateCooldown] = useState(false)
+  const cooldownTimerRef = useRef<number | undefined>(undefined)
+  const startGenerateCooldown = useCallback(() => {
+    window.clearTimeout(cooldownTimerRef.current)
+    setGenerateCooldown(true)
+    cooldownTimerRef.current = window.setTimeout(() => setGenerateCooldown(false), GENERATE_COOLDOWN_MS)
+  }, [])
+  useEffect(() => () => window.clearTimeout(cooldownTimerRef.current), [])
+  const [hoverThumb, setHoverThumb] = useState<{ url: string; name: string; rect: DOMRect; kind?: 'image' | 'video' } | null>(null)
   const [atMenu, setAtMenu] = useState(false)
-  const [previewChipUrl, setPreviewChipUrl] = useState<string | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
-  const [collapsed, setCollapsed] = useState(true)
-  const nodeContainerRef = useRef<HTMLDivElement>(null)
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0)
   const dividerRef = useRef<HTMLDivElement>(null)
-  const controlsPortalRef = useRef<HTMLDivElement>(null)
+  const videoAreaRef = useRef<HTMLDivElement>(null)
+  const panelPortalRef = useRef<HTMLDivElement>(null)
+  const galleryPortalRef = useRef<HTMLDivElement>(null)
   const updateNodeInternals = useUpdateNodeInternals()
 
   const { zoom, x: vpX, y: vpY } = useViewport()
   const nodeAbsPos = useStore(s => (s.nodeLookup as Map<string, { internals?: { positionAbsolute?: { x: number; y: number } } }>)?.get(id)?.internals?.positionAbsolute)
   const [portalRect, setPortalRect] = useState<DOMRect | null>(null)
+  const [galleryRect, setGalleryRect] = useState<DOMRect | null>(null)
+  const isSoleSelected = selectedNodeKeys.length === 1 && selectedNodeKeys[0] === id
+  const isPanelActive = activePanelNodeId === id && isSoleSelected
+  const persistPanelSize = useCallback((size: PanelSize) => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : getParams(data)
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        advancedSettings: {
+          ...((currentParams.advancedSettings ?? {}) as Record<string, unknown>),
+          bottomPanelSize: size,
+        },
+      } as unknown as Record<string, unknown>,
+    })
+  }, [data, id, updateNodeData])
+  const handlePanelResizeStart = useResizablePanel(panelPortalRef, setPanelSize, {
+    minWidth: 520,
+    minHeight: 220,
+    onResizeEnd: persistPanelSize,
+  })
+
+  const isGenerateVideoNode = data.action === 'video_generate'
+  const isPanelOpen = Boolean(isPanelActive && isGenerateVideoNode)
 
   useLayoutEffect(() => {
-    if (collapsed) { setPortalRect(null); return }
     setPortalRect(dividerRef.current?.getBoundingClientRect() ?? null)
-  }, [collapsed, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
+  }, [isPanelOpen, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
+
+  useLayoutEffect(() => {
+    if (!expanded) { setGalleryRect(null); return }
+    setGalleryRect(videoRef.current?.getBoundingClientRect() ?? null)
+  }, [expanded, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y, videoSize?.w, videoSize?.h, data.url?.length])
 
   // Force React Flow to re-measure handles after collapse/expand
   useEffect(() => {
     updateNodeInternals(id)
-  }, [collapsed, id, updateNodeInternals])
+  }, [id, isPanelOpen, updateNodeInternals])
 
-  // Auto-collapse when clicking outside the node
   useEffect(() => {
-    if (collapsed) return
-    const handler = (e: MouseEvent) => {
+    if (!isPanelOpen) {
+      setShowSettings(false)
+      setAtMenu(false)
+      setHoverThumb(null)
+      setPanelExpanded(false)
+    }
+  }, [isPanelOpen])
+
+  /** 量设置弹层的锚点（底栏），弹层 portal 到 body 后靠它定位 */
+  useLayoutEffect(() => {
+    if (!showSettings) {
+      setSettingsAnchor(null)
+      return
+    }
+    const measure = () => {
+      const wrap = bottomWrapRef.current
+      if (!wrap) return
+      const rect = wrap.getBoundingClientRect()
+      setSettingsAnchor({ left: rect.left, width: rect.width, top: rect.top, bottom: rect.bottom })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
+  }, [showSettings, panelSize?.height, panelExpanded, expanded, zoom, vpX, vpY, portalRect?.top, portalRect?.left])
+
+
+  useEffect(() => {
+    if (!isPanelOpen || panelSize) return
+    const savedSize = readPanelSize((getParams(data).advancedSettings as Record<string, unknown> | undefined)?.bottomPanelSize)
+    if (savedSize) setPanelSize(savedSize)
+  }, [data, isPanelOpen, panelSize])
+
+  useEffect(() => {
+    if (!expanded) return
+    const handler = (event: MouseEvent) => {
+      if (galleryLocked) return
+      const target = event.target as Node
       if (
-        !nodeContainerRef.current?.contains(e.target as Node) &&
-        !controlsPortalRef.current?.contains(e.target as Node)
-      ) {
-        setCollapsed(true)
-        setShowSettings(false)
-      }
+        videoAreaRef.current?.contains(target) ||
+        galleryPortalRef.current?.contains(target)
+      ) return
+      setExpanded(false)
     }
     document.addEventListener('mousedown', handler, true)
     return () => document.removeEventListener('mousedown', handler, true)
-  }, [collapsed])
+  }, [expanded, galleryLocked])
+
+  useEffect(() => {
+    if (!isPanelActive) {
+      if (!galleryLocked) setExpanded(false)
+      setPanelExpanded(false)
+    }
+  }, [galleryLocked, isPanelActive])
+
+  const hoverTimerRef = useRef<number | null>(null)
+  const activeHoverKeyRef = useRef<string | null>(null)
+
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+  }, [])
+
+  const hideHoverPreview = useCallback((key?: string) => {
+    if (key && activeHoverKeyRef.current && activeHoverKeyRef.current !== key) return
+    clearHoverTimer()
+    activeHoverKeyRef.current = null
+    setHoverThumb(null)
+  }, [clearHoverTimer])
+
+  const scheduleHoverPreview = useCallback((key: string, url: string, name: string, rect: DOMRect, kind: 'image' | 'video' = 'image') => {
+    clearHoverTimer()
+    activeHoverKeyRef.current = key
+    hoverTimerRef.current = window.setTimeout(() => {
+      if (activeHoverKeyRef.current !== key) return
+      setHoverThumb({ url, name, rect, kind })
+      hoverTimerRef.current = null
+    }, 450)
+  }, [clearHoverTimer])
+
+  useEffect(() => {
+    return () => clearHoverTimer()
+  }, [clearHoverTimer])
+
+  useEffect(() => {
+    setNameDraft(data.name)
+    setIsRenaming(false)
+  }, [data.name])
 
   const params = getParams(data)
-  const mode: VideoMode = (params.modeType as VideoMode) ?? 't2v'
+  const advancedSettings = (params.advancedSettings ?? {}) as Record<string, unknown>
+  const whiteboardState = readWhiteboardState(advancedSettings)
+  const model = params.model || 'Seedance_2_0'
+  const mode = normalizeVideoModeKey(params.modeType as string | undefined)
+  const modeOptions = getVideoModeOptions(model)
+  const ratioOptions = getVideoRatioOptions(model, mode)
+  const resolutionOptions = getVideoResolutionOptions(model)
+  const durationRule = getVideoDurationRule(model, mode)
   const urls = data.url ?? []
-  const videoUrl = urls[0]
-  const chips = (params.promptChips ?? []) as ChipRef[]
-  const history = (params.history ?? []) as VideoHistoryItem[]
+  const videoUrls = urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+  const galleryItems = galleryItemsFromNodeData(data)
+  const mainVideoItem = primaryGalleryItem(data, galleryItems)
+  const videoUrl = mainVideoItem?.url
+  const expandedVideoItems = galleryItems.filter((item) => item.url !== videoUrl)
+  const currentVideoMeta = primaryVideoMeta(data, videoUrl)
+  const displayVideoUrl = mediaPreviewUrl(data, videoUrl)
 
-  const ratio = params.settings.ratio ?? '16:9'
-  const resolution = params.settings.resolution ?? '720P'
-  const duration = params.settings.duration ?? 5
+  const ratio = normalizeVideoRatioValue(model, params.settings.ratio, mode)
+  const resolution = normalizeVideoResolutionValue(model, params.settings.resolution)
+  const duration = normalizeVideoDurationValue(model, params.settings.duration, mode)
   const sound = params.settings.enableSound ?? 'on'
 
-  // Auto-sync: resolve live URLs + assign order-based names — memoized to avoid nodes.find per render
-  const connectedRefs = useMemo(
-    () => (params.imageList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? [],
-    [params.imageList]
+  /**
+   * 决定设置弹层往上还是往下展开。目标是**完整显示**：
+   * 上方装得下就往上（习惯位置）；装不下但下方装得下就翻到下方；
+   * 两边都装不下才取空间大的一侧限高滚动 —— 那是兜底，不是常态。
+   * 放在这里是因为要用到 resolutionOptions / ratioOptions（选项数量决定内容高度），
+   * 它们在上面才声明；同时仍在任何早退之前，不会动到 hook 数量。
+   */
+  useLayoutEffect(() => {
+    if (!showSettings || !settingsAnchor) return
+    const element = settingsPopoverRef.current
+    setSettingsPlacement(popoverPlacement({
+      anchorTop: settingsAnchor.top,
+      anchorBottom: settingsAnchor.bottom,
+      contentHeight: element ? element.scrollHeight : 0,
+      viewportHeight: typeof window === 'undefined' ? 800 : window.innerHeight,
+    }))
+  }, [showSettings, settingsAnchor, resolutionOptions.length, ratioOptions.length])
+  const durationLockedToInput = durationRule.min === durationRule.max && durationRule.default === durationRule.min && durationRule.min < 0
+  const durationLabel = durationLockedToInput ? '跟随输入视频' : `${duration}s`
+
+  // Auto-sync: resolve live URLs + assign order-based names 鈥?memoized to avoid nodes.find per render
+  const connectedImageRefs = useMemo(
+    () => {
+      const refs = (params.imageList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? []
+      const order = (params.imageListOrder as string[] | undefined) ?? []
+      if (order.length === 0) return refs
+      const indexByNodeId = new Map(order.map((nodeId, index) => [nodeId, index]))
+      return [...refs].sort((a, b) => {
+        const ai = indexByNodeId.get(a.nodeId) ?? Number.MAX_SAFE_INTEGER
+        const bi = indexByNodeId.get(b.nodeId) ?? Number.MAX_SAFE_INTEGER
+        return ai - bi
+      })
+    },
+    [params.imageList, params.imageListOrder]
   )
-  const connectedImages = useMemo(() =>
-    connectedRefs.map((ref, i) => {
+  /**
+   * 参考素材一律解析成上游**当前的主图 / 主视频**（liveRefUrl），不是 url[0]。
+   * 以前取 url[0] 等于永远拿上游第一次生成的那个，在源节点点「设为主图 / 设为主视频」
+   * 之后这里不跟着换 —— 2026-08-25 用户报的就是这个。上游被删掉时退回引用里的快照。
+   */
+  const connectedImages = useMemo<ConnectedMediaRef[]>(() =>
+    connectedImageRefs.map((ref, i) => {
       const srcNode = nodes.find(n => n.id === ref.nodeId)
-      const liveUrl = (srcNode?.data as CanvasNodeData)?.url?.[0] ?? ref.url
-      return { ...ref, url: liveUrl, orderName: `图片${i + 1}` }
+      const liveUrl = liveRefUrl(srcNode?.data as CanvasNodeData, ref.url)
+      return { ...ref, url: liveUrl, orderName: `图片${i + 1}`, previewKind: 'image' }
     }).filter(r => r.url),
-    [connectedRefs, nodes]
+    [connectedImageRefs, nodes]
+  )
+  const generationCount = normalizeVideoGenerationCount(model, params.count, connectedImages.length > 0)
+  const generationCountOptions = getVideoGenerationCounts(model, connectedImages.length > 0)
+  const canChooseGenerationCount = generationCountOptions.length > 1
+
+  const connectedVideoRefs = useMemo(
+    () => (params.videoList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? [],
+    [params.videoList]
+  )
+  const connectedVideos = useMemo<ConnectedMediaRef[]>(() =>
+    connectedVideoRefs.map((ref, i) => {
+      const srcNode = nodes.find(n => n.id === ref.nodeId)
+      const liveUrl = liveRefUrl(srcNode?.data as CanvasNodeData, ref.url)
+      const nodeData = (srcNode?.data ?? data) as CanvasNodeData
+      return {
+        ...ref,
+        url: liveUrl,
+        orderName: `视频${i + 1}`,
+        previewKind: 'video' as const,
+        poster: videoPosterFromNode(srcNode?.data as CanvasNodeData | undefined),
+        coverSrc: videoPreviewSrc(mediaPreviewUrl(nodeData, liveUrl)),
+      }
+    }).filter(r => r.url),
+    [connectedVideoRefs, data, nodes]
   )
 
-  // orderMap must be declared here at component body level — NOT inline in JSX (hooks rule)
+  const connectedAudioRefs = useMemo(
+    () => (params.audioList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? [],
+    [params.audioList]
+  )
+  const connectedAudios = useMemo<ConnectedMediaRef[]>(() =>
+    connectedAudioRefs.map((ref, i) => {
+      const srcNode = nodes.find(n => n.id === ref.nodeId)
+      const liveUrl = liveRefUrl(srcNode?.data as CanvasNodeData, ref.url)
+      return { ...ref, url: liveUrl, orderName: `音频${i + 1}`, previewKind: 'audio' }
+    }).filter(r => r.url),
+    [connectedAudioRefs, nodes]
+  )
+  const connectedTextRefs = useMemo(
+    () => (params.textList as NodeRef[] | undefined)?.filter(r => r.nodeId) ?? [],
+    [params.textList]
+  )
+  const upstreamTextPrompt = useMemo(
+    () => textPromptFromRefs(connectedTextRefs, nodes),
+    [connectedTextRefs, nodes]
+  )
+
+  const connectedMedia = useMemo(
+    () => [...connectedImages, ...connectedVideos, ...connectedAudios],
+    [connectedImages, connectedVideos, connectedAudios]
+  )
+
+  /**
+   * 当前模式**用不上**的那几类参考素材（2026-08-26 用户反馈）。
+   *
+   * 连线是跨模式共用的：在「多模态」里连了参考图，切到「视频编辑」那张图还挂着，
+   * 但这个模式一张图都不收 —— 以前要点了生成才知道，而且报的是
+   * 「视频编辑最多支持 0 个图片参考」。现在缩略图上直接标出来，点之前就看得见。
+   */
+  const unusableRefKinds = useMemo(() => ({
+    images: connectedImages.length > 0 && getVideoRefRule(model, mode, 'images').max === 0,
+    videos: connectedVideos.length > 0 && getVideoRefRule(model, mode, 'videos').max === 0,
+    audios: connectedAudios.length > 0 && getVideoRefRule(model, mode, 'audios').max === 0,
+  }), [connectedAudios.length, connectedImages.length, connectedVideos.length, mode, model])
+
+  /** 参考素材超限 / 不支持时的那句话，点生成之前就显示出来。 */
+  const refKindWarning = useMemo(() => (
+    videoRefCountError(model, mode, 'images', connectedImages.length) ||
+    videoRefCountError(model, mode, 'videos', connectedVideos.length) ||
+    videoRefCountError(model, mode, 'audios', connectedAudios.length)
+  ), [connectedAudios.length, connectedImages.length, connectedVideos.length, mode, model])
+
+  /** 参考视频的格式 / 时长 / 条数说明，从模型规则算，不写死 */
+  const referenceVideoNote = useMemo(() => videoReferenceNote(model, mode), [mode, model])
+  const mentionCandidates = useMemo(
+    () => connectedMedia.map(ref => ({
+      nodeId: ref.nodeId,
+      url: ref.url,
+      name: ref.orderName,
+      mediaType: ref.previewKind,
+    })),
+    [connectedMedia]
+  )
+
+  /**
+   * 提示词里的 @引用也跟着上游主图 / 主视频换。
+   * 服务端算参考素材时把 imageList / videoList 和 promptChips 的地址**取并集**，
+   * 只换缩略图不换药丸，等于把新旧两个素材一起发出去 —— 比不换更糟。
+   * 声明在这里是因为要用 connectedMedia 解析出来的实时地址。
+   */
+  const liveChipUrls = useMemo<PromptChipLiveUrls>(
+    () => Object.fromEntries(connectedMedia.filter(ref => ref.nodeId).map(ref => [ref.nodeId, ref.url])),
+    [connectedMedia]
+  )
+  const liveChipUrlsKey = JSON.stringify(liveChipUrls)
+  const chips = useMemo(() => {
+    const list = (params.promptChips ?? []) as ChipRef[]
+    return refreshPromptChipUrlsInParams({ promptChips: list }, liveChipUrls).promptChips as ChipRef[]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.promptChips, liveChipUrlsKey])
+  const promptHtmlSnapshot = useMemo(
+    () => refreshPromptChipUrlsInHtml(params.promptHtml, liveChipUrls) as string | undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [params.promptHtml, liveChipUrlsKey],
+  )
+
+  // 手写 `image1` / `video1` / `audio1` + 分隔符 → 自动换成对应的 @引用。
+  // 视频节点的引用可以是图片、视频、音频三种，名字分别是 图片N / 视频N / 音频N，都能对上。
+  const resolveTextMention = useCallback(
+    (textBeforeCaret: string) => resolveTextMentionAt(textBeforeCaret, mentionCandidates),
+    [mentionCandidates],
+  )
+
+  // 失焦时整段扫一遍：在已有文字中间插的 image1（后面直接跟汉字、没再敲键）
+  // 和粘贴进来的提示词都靠这条兜住。
+  const resolveTextMentionsIn = useCallback(
+    (text: string) => resolveTextMentionsInText(text, mentionCandidates),
+    [mentionCandidates],
+  )
+
+  // orderMap must be declared here at component body level 鈥?NOT inline in JSX (hooks rule)
   const orderMap = useMemo(
-    () => Object.fromEntries(connectedImages.map(r => [r.nodeId, r.orderName])),
-    [connectedImages]
+    () => Object.fromEntries(connectedMedia.map(r => [r.nodeId, r.orderName])),
+    [connectedMedia]
   )
 
   const setParam = useCallback(<K extends keyof VideoParams>(key: K, val: VideoParams[K]) => {
@@ -144,17 +731,48 @@ export function VideoNode({ id, data, selected }: Props) {
     updateNodeData(id, { params: { ...currentParams, [key]: val } as unknown as Record<string, unknown> })
   }, [id, updateNodeData]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Remove connected image + disconnect edge
-  const removeConnectedImage = useCallback((nodeId: string) => {
-    const newList = (params.imageList as NodeRef[] ?? []).filter(r => r.nodeId !== nodeId)
-    updateNodeData(id, { params: { ...params, imageList: newList } as unknown as Record<string, unknown> })
-    setEdges(edges.filter(e => !(e.source === nodeId && e.target === id) && !(e.source === id && e.target === nodeId)))
-  }, [id, params, updateNodeData, edges, setEdges])
+  const handlePromptChange = useCallback((snapshot: PromptEditorSnapshot) => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        prompt: snapshot.text,
+        promptChips: snapshot.chips,
+        promptHtml: snapshot.html,
+      } as unknown as Record<string, unknown>,
+    })
+  }, [id, params, updateNodeData])
 
-  // Reorder connected images by drag — use nodeId to find real index in imageList
+  // Remove connected media + disconnect edge
+  const removeConnectedRef = useCallback((listKey: 'imageList' | 'videoList' | 'audioList', nodeId: string) => {
+    const state = useCanvasStore.getState()
+    const freshNode = state.nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const originalList = (currentParams[listKey] as NodeRef[] | undefined) ?? []
+    const removedRef = originalList.find(r => r.nodeId === nodeId)
+    if (!removedRef) return
+    const currentList = originalList.filter(r => r.nodeId !== nodeId)
+    const chipRefs = [{ nodeId, url: removedRef.url }]
+    let nextParams: Record<string, unknown> = { ...currentParams, [listKey]: currentList }
+    if (listKey === 'imageList') {
+      nextParams.imageListOrder = ((currentParams.imageListOrder as string[] | undefined) ?? []).filter(key => key !== nodeId)
+    }
+    if (listKey === 'videoList') {
+      nextParams.mixedList = ((currentParams.mixedList as NodeRef[] | undefined) ?? []).filter(r => r.nodeId !== nodeId)
+      nextParams.mixedListOrder = ((currentParams.mixedListOrder as string[] | undefined) ?? []).filter(key => key !== nodeId)
+    }
+    nextParams = markPromptChipRefsMissingInParams(nextParams, chipRefs)
+    pushHistory()
+    editorRef.current?.markChipsMissing(chipRefs)
+    updateNodeData(id, { params: nextParams })
+    setEdges(edgesWithoutLink(useCanvasStore.getState().edges, nodeId, id))
+  }, [id, params, pushHistory, updateNodeData, setEdges])
+
+  // Reorder connected images by drag; persist both the visible list and its explicit order.
   const moveConnectedImage = useCallback((fromConnIdx: number, toConnIdx: number) => {
     if (fromConnIdx === toConnIdx) return
-    const connList = (params.imageList as NodeRef[] ?? []).filter(r => r.nodeId)
+    const connList = connectedImageRefs
     const fromId = connList[fromConnIdx]?.nodeId
     const toId = connList[toConnIdx]?.nodeId
     if (!fromId || !toId) return
@@ -164,120 +782,1507 @@ export function VideoNode({ id, data, selected }: Props) {
     if (fromReal === -1 || toReal === -1) return
     const [item] = fullList.splice(fromReal, 1)
     fullList.splice(toReal, 0, item)
-    updateNodeData(id, { params: { ...params, imageList: fullList } as unknown as Record<string, unknown> })
-  }, [id, params, updateNodeData])
+    const imageListOrder = fullList.map(ref => ref.nodeId).filter((nodeId): nodeId is string => Boolean(nodeId))
+    updateNodeData(id, {
+      params: {
+        ...params,
+        imageList: fullList,
+        imageListOrder,
+      } as unknown as Record<string, unknown>,
+    })
+  }, [connectedImageRefs, id, params, updateNodeData])
 
   // @mention: insert chip inline via PromptEditor
   const handleAtInsert = useCallback((ref: ChipRef) => {
     setAtMenu(false)
+    pushHistory()
     editorRef.current?.insertChip(ref)
-  }, [])
+  }, [pushHistory])
+
+  const handleReferenceMention = useCallback((ref: ConnectedMediaRef) => {
+    handleAtInsert({
+      nodeId: ref.nodeId,
+      url: ref.url,
+      name: ref.orderName,
+      mediaType: ref.previewKind,
+    })
+  }, [handleAtInsert])
+
+  const handleSyncTextPrompt = useCallback(() => {
+    const text = textPromptFromRefs((params.textList as NodeRef[] | undefined)?.filter(r => r.nodeId), useCanvasStore.getState().nodes)
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    editorRef.current?.setPlainText(text)
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        prompt: text,
+        promptChips: [],
+        promptHtml: undefined,
+      } as unknown as Record<string, unknown>,
+    })
+  }, [id, params, updateNodeData])
+
+  const handleCopyPrompt = useCallback(async () => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const text = String(currentParams.prompt || '')
+    if (!text.trim()) return
+    try {
+      await writeTextToClipboard(text)
+    } catch (error) {
+      console.warn('Copy video prompt failed', error)
+    }
+  }, [id, params])
+
+  const handleClearPrompt = useCallback(() => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const hasPromptContent = Boolean(String(currentParams.prompt || '').trim()) ||
+      Boolean((currentParams.promptChips as ChipRef[] | undefined)?.length) ||
+      Boolean(currentParams.promptHtml)
+    if (!hasPromptContent) return
+    pushHistory()
+    setAtMenu(false)
+    editorRef.current?.setPlainText('')
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        prompt: '',
+        promptChips: [],
+        promptHtml: undefined,
+      } as unknown as Record<string, unknown>,
+    })
+  }, [id, params, pushHistory, updateNodeData])
+
+  const handleTranslatePrompt = useCallback(async () => {
+    if (isTranslating) return
+    const state = useCanvasStore.getState()
+    const freshNode = state.nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const sourceText = String(currentParams.prompt || '').trim()
+    if (!sourceText) {
+      setGenError('请先填写需要翻译的提示词')
+      return
+    }
+
+    setIsTranslating(true)
+    setGenError(null)
+    try {
+      const result = await generateApi.translate(sourceText)
+      const translated = String(result.translated || '').trim()
+      if (!translated) throw new Error('翻译结果为空')
+
+      const latestNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+      const latestParams = latestNode ? getParams(latestNode.data as CanvasNodeData) : currentParams
+      if (String(latestParams.prompt || '').trim() !== sourceText) {
+        setGenError('提示词已被修改，翻译结果未覆盖')
+        return
+      }
+
+      pushHistory()
+      updateNodeData(id, {
+        params: {
+          ...latestParams,
+          prompt: translated,
+          promptChips: latestParams.promptChips ?? currentParams.promptChips ?? [],
+          promptHtml: undefined,
+        } as unknown as Record<string, unknown>,
+      })
+    } catch (error) {
+      setGenError(errorToText(error, '翻译失败'))
+    } finally {
+      setIsTranslating(false)
+    }
+  }, [id, isTranslating, params, pushHistory, updateNodeData])
+
+  const handleMentionNavigate = useCallback((direction: 'up' | 'down') => {
+    if (mentionCandidates.length === 0) return
+    setActiveMentionIndex(current =>
+      direction === 'down'
+        ? (current + 1) % mentionCandidates.length
+        : (current - 1 + mentionCandidates.length) % mentionCandidates.length
+    )
+  }, [mentionCandidates.length])
+
+  const handleMentionSelect = useCallback(() => {
+    const chip = mentionCandidates[activeMentionIndex]
+    if (chip) handleAtInsert(chip)
+  }, [activeMentionIndex, handleAtInsert, mentionCandidates])
 
   const setSettings = useCallback((key: string, val: unknown) => {
     setParam('settings', { ...params.settings, [key]: val })
   }, [params, setParam])
 
   const handleGenerate = useCallback(async () => {
+    // 只挡"请求还在飞"和 5 秒冷却。故意不再挡 taskInfo.loading —— 上一次还在跑也允许再发。
+    if (isSubmitting || generateCooldown) return
     setGenError(null)
     try {
-      // Refresh imageList URLs from live node data before sending to API
-      const freshImageList = ((params.imageList as NodeRef[] | undefined) ?? []).map(ref => {
+      /** 发出去的地址跟着上游**当前的主图 / 主视频**走，同时记下来给药丸对齐。 */
+      const requestChipUrls: PromptChipLiveUrls = {}
+      const refreshRefList = (list?: NodeRef[]) => (list ?? []).map(ref => {
         const srcNode = nodes.find(n => n.id === ref.nodeId)
-        const liveUrl = (srcNode?.data as CanvasNodeData)?.url?.[0]
+        const liveUrl = primaryOutputUrl(srcNode?.data as CanvasNodeData)
+        if (liveUrl && ref.nodeId) requestChipUrls[ref.nodeId] = liveUrl
         return liveUrl ? { ...ref, url: liveUrl } : ref
       })
-      const freshParams = { ...params, imageList: freshImageList }
-      const res = await generateApi.video(data.projectUuid, id, freshParams as unknown as Record<string, unknown>)
-      addTask(res.jobId, id)
-      startPolling(res.jobId, data.projectUuid)
-    } catch (e: unknown) {
-      const axErr = e as { response?: { data?: { error?: string } }; message?: string }
-      setGenError(axErr.response?.data?.error ?? axErr.message ?? '生成失败')
-    }
-  }, [data.projectUuid, id, params, nodes, addTask, startPolling])
+      const freshImageList = refreshRefList(params.imageList as NodeRef[] | undefined).filter(ref => ref.url)
+      const freshVideoList = refreshRefList(params.videoList as NodeRef[] | undefined).filter(ref => ref.url)
+      const freshAudioList = refreshRefList(params.audioList as NodeRef[] | undefined).filter(ref => ref.url)
+      const requestModel = params.model || 'Seedance_2_0'
+      const normalizedMode = normalizeVideoModeKey(params.modeType as string | undefined)
+      const normalizedRatio = normalizeVideoRatioValue(requestModel, params.settings.ratio, normalizedMode)
+      const normalizedResolution = normalizeVideoResolutionValue(requestModel, params.settings.resolution)
+      const normalizedDuration = normalizeVideoDurationValue(requestModel, params.settings.duration, normalizedMode)
+      const prompt = String(params.prompt || '').trim() || textPromptFromRefs(params.textList as NodeRef[] | undefined, nodes)
+      const hasVisualRef = freshImageList.length > 0 || freshVideoList.length > 0
+      const hasAnyRef = hasVisualRef || freshAudioList.length > 0
+      const submitCount = normalizeVideoGenerationCount(requestModel, params.count, freshImageList.length > 0)
+      const capabilityError = validateVideoCapability({
+        model: requestModel,
+        mode: normalizedMode,
+        prompt,
+        imageCount: freshImageList.length,
+        videoCount: freshVideoList.length,
+        audioCount: freshAudioList.length,
+        ratio: normalizedRatio,
+        resolution: normalizedResolution,
+        duration: normalizedDuration,
+        count: submitCount,
+      })
 
-  const isLoading = !!data.taskInfo?.loading
+      if (!prompt && !hasAnyRef) {
+        setGenError('请填写提示词或连接素材')
+        return
+      }
+      if (capabilityError) {
+        setGenError(capabilityError)
+        return
+      }
+      if (freshAudioList.length > 0 && !hasVisualRef) {
+        setGenError('音频不能单独输入，至少需要 1 个图片或视频素材')
+        return
+      }
+      const currentReferenceVideoRule = getVideoModelRule(requestModel).referenceVideo
+      if (currentReferenceVideoRule && freshVideoList.length > currentReferenceVideoRule.maxCount) {
+        setGenError(`参考视频最多支持 ${currentReferenceVideoRule.maxCount} 个`)
+        return
+      }
+
+      const videoReferenceEntries = freshVideoList.map((ref, index) => {
+        const srcNode = nodes.find((node) => node.id === ref.nodeId)
+        const nodeData = srcNode?.data as CanvasNodeData | undefined
+        const meta = primaryVideoMeta(nodeData, ref.url)
+        const durationSec = Number(meta?.durationSec)
+        return {
+          index,
+          extension: String(meta?.extension || extensionFromUrl(ref.url)).toLowerCase(),
+          durationSec,
+          width: Number(meta?.width),
+          height: Number(meta?.height),
+        }
+      })
+
+      const invalidVideoDuration = videoReferenceEntries.find(
+        (entry) =>
+          currentReferenceVideoRule &&
+          Number.isFinite(entry.durationSec) &&
+          (entry.durationSec < currentReferenceVideoRule.minDurationSec || entry.durationSec > currentReferenceVideoRule.maxDurationSec)
+      )
+      if (invalidVideoDuration && currentReferenceVideoRule) {
+        setGenError(
+          `参考视频 ${invalidVideoDuration.index + 1} 时长需在 ${currentReferenceVideoRule.minDurationSec}-${currentReferenceVideoRule.maxDurationSec} 秒之间`
+        )
+        return
+      }
+
+      const knownVideoDurationCount = videoReferenceEntries.filter((entry) => Number.isFinite(entry.durationSec)).length
+      const totalVideoDuration = videoReferenceEntries.reduce(
+        (sum, entry) => sum + (Number.isFinite(entry.durationSec) ? entry.durationSec : 0),
+        0
+      )
+      if (
+        currentReferenceVideoRule &&
+        knownVideoDurationCount === videoReferenceEntries.length &&
+        totalVideoDuration > currentReferenceVideoRule.maxTotalDurationSec + 0.01
+      ) {
+        setGenError(`参考视频总时长不能超过 ${currentReferenceVideoRule.maxTotalDurationSec} 秒`)
+        return
+      }
+
+      // 提示词里的 @引用同样换成上游当前的主图 / 主视频 —— 服务端把素材列表和 promptChips
+      // 的地址取并集当参考，漏掉药丸就会把旧素材一起发出去。
+      const freshParams = refreshPromptChipUrlsInParams({
+        ...params,
+        model: requestModel,
+        prompt,
+        imageList: freshImageList,
+        videoList: freshVideoList,
+        audioList: freshAudioList,
+        modeType: normalizedMode,
+        settings: {
+          ...params.settings,
+          ratio: normalizedRatio,
+          resolution: normalizedResolution,
+          duration: normalizedDuration,
+        },
+        count: submitCount,
+      }, requestChipUrls)
+      if (
+        !String(params.prompt || '').trim() ||
+        params.modeType !== normalizedMode ||
+        params.settings.ratio !== normalizedRatio ||
+        params.settings.resolution !== normalizedResolution ||
+        params.settings.duration !== normalizedDuration ||
+        params.count !== submitCount ||
+        freshParams.promptChips !== params.promptChips ||
+        freshParams.promptHtml !== params.promptHtml
+      ) {
+        updateNodeData(id, { params: freshParams as unknown as Record<string, unknown> })
+      }
+      setIsSubmitting(true)
+      // 发给模型的文本要把药丸按原位展开成 @图片1（上游文档要求的指代惯例）。
+      // 只放进请求、**不写回节点** —— 写回去会让编辑器的兜底渲染变成"文本里一个 @图片1、
+      // 末尾再挂一个药丸"的重复显示。
+      const modelPrompt = modelPromptFromNodeParams({
+        prompt,
+        promptHtml: params.promptHtml as string | undefined,
+      })
+      const submitParams = modelPrompt && modelPrompt !== prompt
+        ? { ...freshParams, modelPrompt }
+        : freshParams
+      const res = await generateApi.video(data.projectUuid, id, submitParams as unknown as Record<string, unknown>)
+      addTask(res.jobId, id, res.generationVersion)
+      startPolling(res.jobId, data.projectUuid)
+      // 提交成功才起冷却：失败的话应该能立刻重试
+      startGenerateCooldown()
+    } catch (e: unknown) {
+      setIsSubmitting(false)
+      const axErr = e as { response?: { data?: { error?: unknown } }; message?: string }
+      setGenError(errorToText(axErr.response?.data?.error ?? axErr.message, '生成失败'))
+    }
+  }, [data.projectUuid, id, params, nodes, updateNodeData, addTask, startPolling, isSubmitting, generateCooldown, startGenerateCooldown])
+
+  // Cindy "应用并生成": fire this video node's own generate once when flagged.
+  const autoGenerateFiredRef = useRef(false)
+  useEffect(() => {
+    if (!data._autoGenerate) return
+    // Already generating or has output (e.g. the flag survived a reload): clear
+    // the flag and never (re)fire, so a refresh never double-charges.
+    if (data.taskInfo?.loading || (Array.isArray(data.url) && data.url.length > 0)) {
+      autoGenerateFiredRef.current = true
+      updateNodeData(id, { _autoGenerate: undefined })
+      return
+    }
+    if (autoGenerateFiredRef.current) return
+    // Dependency-ordered "apply & generate": wait until upstream input nodes that
+    // are themselves queued/generating have finished, so this node receives their
+    // output (e.g. a video waits for its source image). Keep the flag while
+    // waiting so our own downstream still treats us as pending; it is cleared only
+    // once we actually start generating (the branch above), which closes the race
+    // where a downstream might fire during the gap before loading is reflected.
+    if (hasPendingUpstream(params as unknown as Record<string, unknown>, (nodeId) =>
+      nodes.find(n => n.id === nodeId)?.data as CanvasNodeData | undefined)) return
+    autoGenerateFiredRef.current = true
+    void handleGenerate()
+  }, [data._autoGenerate, data.taskInfo?.loading, data.url, handleGenerate, id, updateNodeData, nodes, params])
+
+  const handleDownload = useCallback((url: string) => {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = videoDownloadFileName(data.name, url)
+    a.click()
+  }, [data.name])
+
+  /**
+   * 双击 / 「全屏」打开大图查看器。
+   *
+   * 以前这里是 window.open(url) —— 直接把裸视频地址扔进新标签页，没有缩略图轨道、没有翻页、
+   * 没有主视频按钮、没有节点功能行，跟图片节点的查看器完全不是一个东西。现在复用
+   * ImagePreview（kind="video"），跟图片那边同一套外观与快捷键。
+   */
+  const openVideoPreview = useCallback((url: string) => {
+    if (url) setVideoPreviewUrl(url)
+  }, [])
+
+  const openWhiteboard = useCallback(async () => {
+    if (!videoRef.current || !videoUrl || whiteboardPreparing) return
+    setGenError(null)
+    setWhiteboardError(null)
+    setWhiteboardSourceFile(null)
+    setWhiteboardOpen(true)
+    setWhiteboardPreparing(true)
+    try {
+      const file = await captureVideoFrameFile(videoRef.current, data.name || 'video')
+      setWhiteboardSourceFile(file)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '白板资源加载失败'
+      setGenError(message)
+      setWhiteboardError(message)
+    } finally {
+      setWhiteboardPreparing(false)
+    }
+  }, [data.name, videoUrl, whiteboardPreparing])
+
+  const openTrimModal = useCallback(() => {
+    if (!videoUrl || trimSubmitting) return
+    setGenError(null)
+    setTrimOpen(true)
+  }, [trimSubmitting, videoUrl])
+
+  const openCropModal = useCallback(() => {
+    if (!videoUrl || cropSubmitting) return
+    setGenError(null)
+    setCropOpen(true)
+  }, [cropSubmitting, videoUrl])
+
+  const updateFrameNumberFromVideo = useCallback((video = videoRef.current) => {
+    if (!video) return
+    setFrameNumber(frameNumberFromTime(video.currentTime))
+  }, [])
+
+  const seekFrame = useCallback((direction: -1 | 1) => {
+    const video = videoRef.current
+    if (!video || !videoUrl) return
+    video.pause()
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
+    const maxTime = duration ? Math.max(0, duration - 0.001) : Number.MAX_SAFE_INTEGER
+    const nextTime = Math.max(0, Math.min(maxTime, video.currentTime + direction * FRAME_STEP_SECONDS))
+    try {
+      video.currentTime = nextTime
+      setFrameNumber(frameNumberFromTime(nextTime))
+    } catch {
+      // ignore seek errors while metadata is still settling
+    }
+  }, [videoUrl])
+
+  const toggleFrameMode = useCallback(() => {
+    const video = videoRef.current
+    if (video) {
+      video.pause()
+      updateFrameNumberFromVideo(video)
+    }
+    useCanvasStore.getState().setSelected([id])
+    setFrameMode(value => !value)
+  }, [id, updateFrameNumberFromVideo])
+
+  useEffect(() => {
+    setFrameMode(false)
+    setFrameNumber(1)
+  }, [videoUrl])
+
+  useEffect(() => {
+    if (!frameMode || !isSoleSelected) return undefined
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      event.preventDefault()
+      event.stopPropagation()
+      seekFrame(event.key === 'ArrowRight' ? 1 : -1)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [frameMode, isSoleSelected, seekFrame])
+
+  const handleVideoMouseEnter = useCallback(() => {
+    const video = videoRef.current
+    if (!video || !videoUrl) return
+    hoverPreviewMutedRef.current = !video.muted
+    video.muted = true
+    video.currentTime = 0
+    void video.play().catch(() => {})
+  }, [videoUrl])
+
+  const handleVideoMouseLeave = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    video.pause()
+    try {
+      video.currentTime = 0
+    } catch {
+      // ignore seek errors for videos that are not ready yet
+    }
+    if (hoverPreviewMutedRef.current) {
+      video.muted = false
+      hoverPreviewMutedRef.current = false
+    }
+  }, [])
+
+  const isLoading = isSubmitting || !!data.taskInfo?.loading
+  /**
+   * 生成按钮自己的锁：**不含 taskInfo.loading**。
+   * 上一次还在跑也允许再点，只锁 5 秒防手拖连点。
+   * isLoading 保持原语义（任务在跑），进度条那些还靠它。
+   */
+  const generateLocked = isSubmitting || generateCooldown
+  const runningPercent = data.taskInfo?.progressPercent ?? 0
+  const generateLockTitle = generateLocked
+    ? (isSubmitting ? '正在提交…' : '刚发过一次，5 秒后可再点')
+    : data.taskInfo?.loading
+      ? `生成（上一次还在跑 ${runningPercent}%，再点会取代它，旧的结果不会采用）`
+      : '生成'
+  /**
+   * 要画的进度条：以 _pendingTasks 为准（并发时可能好几条），老画布没这个字段就回落到
+   * 单个 taskInfo，行为跟改造前一致。按开始时间排，先点的在上面。
+   */
+  const progressRows = useMemo<TaskInfo[]>(() => {
+    const pending = data._pendingTasks
+    // 只画**真的还有轮询在跑**的任务。光看节点上的 loading 会画出僵尸进度条：
+    // 任务被取消 / 被作废之后如果没摘干净，那条 loading:true 会永远挂着、计时一直涨
+    // （2026-08-19 线上实证）。以 tasksStore 里有没有这个任务为准，等于自动愈合历史脏数据。
+    const rows = pending
+      ? Object.entries(pending)
+        .filter(([jobId, info]) => info?.loading && Object.prototype.hasOwnProperty.call(liveTasks, jobId))
+        .map(([, info]) => info)
+      : []
+    if (rows.length > 0) return rows.sort((a, b) => Number(a.startedAtMs || 0) - Number(b.startedAtMs || 0))
+    // 刚点下生成、任务还没登记进 tasksStore 的那一瞬间，先按 taskInfo 顶一下，别闪空
+    if (data.taskInfo?.loading && (isSubmitting || Object.prototype.hasOwnProperty.call(liveTasks, data.taskInfo.taskId))) {
+      return [data.taskInfo]
+    }
+    return []
+  }, [data._pendingTasks, data.taskInfo, isSubmitting, liveTasks])
+  const cancelProgressRow = useCallback((taskId?: string) => {
+    if (taskId) cancelTask(taskId)
+    setIsSubmitting(false)
+    window.clearTimeout(cooldownTimerRef.current)
+    setGenerateCooldown(false)
+  }, [cancelTask])
+  const isControlsPanelVisible = Boolean(isPanelOpen && !expanded && portalRect)
+  /**
+   * 进度条放在**整个弹窗下面**，不占面板内部高度。
+   * 面板开着就贴在面板下沿（跟面板同宽同左），面板收起就贴在节点下沿。
+   * 全屏模式不走这条 —— 那时面板铺满视口，"下面"没有位置，改成画在面板最后一行。
+   */
+  const [panelRect, setPanelRect] = useState<{ left: number; width: number; bottom: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!isControlsPanelVisible || progressRows.length === 0) {
+      setPanelRect(null)
+      return
+    }
+    const measure = () => {
+      const element = panelPortalRef.current
+      if (!element) return
+      const rect = element.getBoundingClientRect()
+      setPanelRect({ left: rect.left, width: rect.width, bottom: rect.bottom })
+    }
+    measure()
+    const raf = window.requestAnimationFrame(measure)
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
+  }, [isControlsPanelVisible, progressRows.length, panelSize?.height, panelExpanded, portalRect?.bottom, portalRect?.left, zoom, vpX, vpY])
+  const showDetachedProgress = Boolean(progressRows.length > 0 && !panelExpanded && (panelRect || portalRect))
+  const handleCancelGeneration = useCallback(() => {
+    const taskId = data.taskInfo?.taskId
+    if (taskId) cancelTask(taskId)
+    else updateNodeData(id, { taskInfo: undefined })
+    setIsSubmitting(false)
+    // 取消了就别再让 5 秒冷却拦着重发
+    window.clearTimeout(cooldownTimerRef.current)
+    setGenerateCooldown(false)
+  }, [cancelTask, data.taskInfo?.taskId, id, updateNodeData])
+  const safeZoom = zoom || 1
+  const inverseZoom = 1 / safeZoom
+  const currentRatioOption = ratioOptions.find((option) => option.value === ratio)
+    ?? VIDEO_RATIO_OPTIONS.find((option) => option.value === '16:9')
+    ?? VIDEO_RATIO_OPTIONS[0]
+  const sourceResolutionLabel = currentVideoMeta?.width && currentVideoMeta?.height
+    ? `${currentVideoMeta.width} x ${currentVideoMeta.height}`
+    : ''
+  const videoResolutionLabel = sourceResolutionLabel || (videoSize ? `${videoSize.w} x ${videoSize.h}` : resolution)
+  const uploadInfo = data.uploadInfo
+  const uploadProgress = Math.max(0, Math.min(100, Number(uploadInfo?.progressPercent ?? 0)))
+  const isUploadActive = Boolean(uploadInfo?.loading)
+  const uploadStatusText = uploadInfo?.status === 'processing'
+    ? '压缩显示版中'
+    : uploadInfo?.status === 'failed'
+      ? String(uploadInfo.error || '上传失败')
+      : `上传中 ${uploadProgress}%`
+  const headerIconWidth = 22
+  const headerNameWidth = 128
+  const headerResolutionWidth = Math.max(70, Math.ceil(videoResolutionLabel.length * 7 + 18))
+  const headerGap = 6
+  const previewAspectW = currentVideoMeta?.displayWidth ?? videoSize?.w ?? currentVideoMeta?.width ?? currentRatioOption.w
+  const previewAspectH = currentVideoMeta?.displayHeight ?? videoSize?.h ?? currentVideoMeta?.height ?? currentRatioOption.h
+  const previewFrame = fitFrameToAspect(previewAspectW, previewAspectH, 520, 400, 220)
+  const shellWidth = previewFrame.width
+  const galleryGap = 8
+  const expandedTileWidth = Math.max(1, Math.round(galleryRect?.width ?? shellWidth))
+  const expandedTileHeight = Math.max(1, Math.round(galleryRect?.height ?? previewFrame.height))
+  // 失败的生成也在多视频里占一个位：一个空的视频位 + 红色报错。并发之后同时可能有好几条在跑，
+  // 光靠一个 taskInfo.error 说不清是哪条挂了，所以按任务分别留痕。
+  const failedGenerations = Array.isArray(data._failedGenerations) ? data._failedGenerations : []
+  const expandedTileSources: Array<{ url: string; order: number; failed?: FailedGeneration }> = [
+    ...expandedVideoItems.map((item) => ({ url: item.url, order: item.order })),
+    ...failedGenerations.map((failed, index) => ({
+      url: '',
+      order: galleryItems.length + index + 1,
+      failed,
+    })),
+  ]
+  const expandedVideoPlacements = galleryRect
+    ? expandedTileSources.map((item, index) => {
+        const rightLeft = galleryRect.right + galleryGap
+        const aboveTop = galleryRect.top - expandedTileHeight - galleryGap
+        const aboveRightLeft = galleryRect.right + galleryGap
+
+        let left = rightLeft
+        let top = galleryRect.top
+        if (index === 1) {
+          left = galleryRect.left
+          top = aboveTop
+        } else if (index === 2) {
+          left = aboveRightLeft
+          top = aboveTop
+        } else if (index > 2) {
+          const extraIndex = index - 3
+          const extraColumn = Math.floor(extraIndex / 2) + 2
+          const extraRow = extraIndex % 2
+          left = galleryRect.left + extraColumn * (expandedTileWidth + galleryGap)
+          top = extraRow === 0 ? aboveTop : galleryRect.top
+        }
+
+        return {
+          url: item.url,
+          order: item.order,
+          failed: item.failed,
+          left,
+          top,
+        }
+      })
+    : []
+  const panelWidth = Math.max(560, shellWidth)
+  const effectivePanelWidth = panelSize?.width ?? panelWidth
+  const panelLeft = portalRect
+    ? Math.min(
+        Math.max(16, portalRect.left + (portalRect.width - effectivePanelWidth) / 2),
+        Math.max(16, window.innerWidth - effectivePanelWidth - 16)
+      )
+    : 16
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 720
+  const mentionMenuRect = atMenu ? promptPanelRef.current?.getBoundingClientRect() : null
+  const mentionMenuEstimatedHeight = Math.min(320, 28 + connectedMedia.length * 38)
+  const mentionMenuTop = mentionMenuRect
+    ? (
+      mentionMenuRect.top - mentionMenuEstimatedHeight - 6 > 12
+        ? mentionMenuRect.top - mentionMenuEstimatedHeight - 6
+        : Math.min(mentionMenuRect.bottom + 6, viewportHeight - mentionMenuEstimatedHeight - 12)
+    )
+    : 12
+  const mentionMenuLeft = mentionMenuRect
+    ? Math.min(Math.max(12, mentionMenuRect.left + 12), Math.max(12, viewportWidth - 260))
+    : 12
+  const expandedPanelWidth = Math.round(Math.min(
+    viewportWidth - 48,
+    Math.max(960, panelWidth * 2)
+  ))
+  const panelPromptMaxHeight = panelExpanded
+    ? Math.max(380, Math.min(680, viewportHeight - 360))
+    : 132
+
+  const commitNodeName = useCallback(() => {
+    const nextName = nameDraft.trim() || 'video'
+    setNameDraft(nextName)
+    setIsRenaming(false)
+    if (nextName !== data.name) updateNodeData(id, { name: nextName })
+  }, [data.name, id, nameDraft, updateNodeData])
+
+  /**
+   * 设为主视频，并把**底栏的生成参数**换成这条视频当初用的那套（模型 / 比例 / 清晰度 / 时长）。
+   * 这样你挑中哪条，接着生成就是从那条的设置继续，不用手动回忆再调一遍。
+   *
+   * 刻意不动的两样：
+   *   - 提示词：那是你正在编辑的东西，悄悄替换掉等于把你刚写的字弄丢；
+   *   - 模式（文生/图生/多模态…）：那是工作流分页、不在这个弹窗里，换了还可能让参考素材不合规。
+   * 参数一律过一遍归一化 —— 老视频可能是别的模型生成的，它的清晰度在新模型上不一定合法
+   * （比如 4K 只有 2.0 有），不归一化会留下一个提交就报错的非法组合。
+   */
+  const setMainVideo = useCallback((url: string) => {
+    if (!url) return
+    pushHistory()
+    const patch: Partial<CanvasNodeData> = { _primaryAssetUrl: url, _updatedAtMs: Date.now() }
+    const meta = data._assetGenerationMeta?.[url] as AssetGenerationMeta | undefined
+    if (meta && (meta.model || meta.ratio || meta.resolution || meta.durationSec)) {
+      const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+      const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+      const nextModel = meta.model || currentParams.model || 'Seedance_2_0'
+      const nextMode = normalizeVideoModeKey(currentParams.modeType as string | undefined)
+      patch.params = {
+        ...currentParams,
+        model: nextModel,
+        settings: {
+          ...currentParams.settings,
+          ratio: normalizeVideoRatioValue(nextModel, meta.ratio ?? currentParams.settings.ratio, nextMode),
+          resolution: normalizeVideoResolutionValue(nextModel, meta.resolution ?? currentParams.settings.resolution),
+          duration: normalizeVideoDurationValue(nextModel, meta.durationSec ?? currentParams.settings.duration, nextMode),
+        },
+      } as unknown as Record<string, unknown>
+    }
+    updateNodeData(id, patch)
+    setExpanded(false)
+  }, [id, pushHistory, updateNodeData, data._assetGenerationMeta, params])
+
+  const removeVideoUrl = useCallback((url: string) => {
+    const newUrls = [...((data.url ?? []).filter((url): url is string => typeof url === 'string' && url.trim().length > 0))]
+    const nextUrls = newUrls.filter((item) => item !== url)
+    if (nextUrls.length === newUrls.length) return
+    const patch: Partial<CanvasNodeData> = { url: nextUrls, _updatedAtMs: Date.now() }
+    if (data._primaryAssetUrl === url) patch._primaryAssetUrl = nextUrls[0] ?? ''
+    pushHistory()
+    updateNodeData(id, patch)
+    if (nextUrls.length <= 1) {
+      setExpanded(false)
+      setGalleryLocked(false)
+    }
+  }, [data._primaryAssetUrl, data.url, id, pushHistory, updateNodeData])
+
+  const persistPrimaryVideoMeta = useCallback((patch: Partial<ResourceMeta>) => {
+    const currentItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
+    const currentVideoMeta = currentItems.find((item) => item?.kind === 'video') ?? null
+    const fallbackExtension = extensionFromUrl(videoUrl)
+    const nextVideoMeta: ResourceMeta = {
+      kind: 'video',
+      ...currentVideoMeta,
+      ...patch,
+      extension: patch.extension || currentVideoMeta?.extension || fallbackExtension || undefined,
+      mimeType:
+        patch.mimeType ||
+        currentVideoMeta?.mimeType ||
+        mimeTypeFromVideoExtension(patch.extension || currentVideoMeta?.extension || fallbackExtension),
+    }
+    const remainingItems = currentItems.filter((item) => item?.kind !== 'video')
+    const currentKey = JSON.stringify(currentVideoMeta ?? null)
+    const nextKey = JSON.stringify(nextVideoMeta)
+    if (currentKey === nextKey) return
+    updateNodeData(id, { _resourceMeta: { items: [nextVideoMeta, ...remainingItems] } })
+  }, [data._resourceMeta?.items, id, updateNodeData, videoUrl])
+
+  const handleTrimAccept = useCallback(async ({ startSec, endSec }: { startSec: number; endSec: number }) => {
+    if (!videoUrl || trimSubmitting) return
+    setGenError(null)
+    setTrimSubmitting(true)
+    try {
+      const result = await toolboxApi.videoTrim(data.projectUuid, id, videoUrl, startSec, endSec)
+      const resourceMeta = resourceMetaFromUploadPayload(result.meta as Record<string, unknown> | undefined, 'video')
+      const sourceNode = nodes.find((node) => node.id === id)
+      const createdNode = addNodeAt('video', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
+        name: `${data.name || '视频'} 剪辑`,
+        url: [result.url],
+        action: 'image_resource',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+      })
+
+      const edgeId = `e-${id}-${createdNode.id}`
+      if (!edges.some((edge) => edge.id === edgeId)) {
+        setEdges(addEdge({
+          id: edgeId,
+          source: id,
+          target: createdNode.id,
+          type: 'glow',
+          selectable: true,
+          interactionWidth: 34,
+        }, edges))
+      }
+
+      setTrimOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '视频裁剪失败'
+      setGenError(message)
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setTrimSubmitting(false)
+    }
+  }, [addNodeAt, data.name, data.projectUuid, edges, id, nodes, setEdges, shellWidth, trimSubmitting, videoUrl])
+
+  const handleCropAccept = useCallback(async ({ x, y, width, height }: { x: number; y: number; width: number; height: number }) => {
+    if (!videoUrl || cropSubmitting) return
+    setGenError(null)
+    setCropSubmitting(true)
+    try {
+      const result = await toolboxApi.videoCrop(data.projectUuid, id, videoUrl, { x, y, width, height })
+      const resourceMeta = resourceMetaFromUploadPayload(result.meta as Record<string, unknown> | undefined, 'video')
+      const sourceNode = nodes.find((node) => node.id === id)
+      const createdNode = addNodeAt('video', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
+        name: `${data.name || '视频'} 裁剪`,
+        url: [result.url],
+        action: 'image_resource',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+      })
+
+      const edgeId = `e-${id}-${createdNode.id}`
+      if (!edges.some((edge) => edge.id === edgeId)) {
+        setEdges(addEdge({
+          id: edgeId,
+          source: id,
+          target: createdNode.id,
+          type: 'glow',
+          selectable: true,
+          interactionWidth: 34,
+        }, edges))
+      }
+
+      setCropOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '视频裁剪失败'
+      setGenError(message)
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setCropSubmitting(false)
+    }
+  }, [addNodeAt, cropSubmitting, data.name, data.projectUuid, edges, id, nodes, setEdges, shellWidth, videoUrl])
+
+  const captureCurrentFrameToImageNode = useCallback(async () => {
+    const video = videoRef.current
+    if (!videoUrl || !video || frameCapturing) return
+    setGenError(null)
+    setFrameCapturing(true)
+    video.pause()
+    try {
+      const captureSourceUrl = currentVideoMeta?.originalUrl || videoUrl || displayVideoUrl
+      const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0
+      const file = await captureVideoFrameFileFromUrl(captureSourceUrl, currentTime, data.name || 'video')
+      const uploaded = await assetsApi.upload(data.projectUuid, file)
+      const resourceMeta = resourceMetaFromUploadPayload(uploaded.meta as Record<string, unknown> | undefined, 'image')
+      const sourceNode = nodes.find((node) => node.id === id)
+      const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+      const createdNode = addNodeAt('image', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
+        name: `${data.name || '视频'} 当前帧`,
+        url: [uploaded.url],
+        action: 'image_resource',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+        params: {
+          ...defaultImageParams(),
+          videoList: [sourceRef],
+        } as unknown as Record<string, unknown>,
+      })
+
+      const edgeId = `e-${id}-${createdNode.id}`
+      if (!edges.some((edge) => edge.id === edgeId)) {
+        setEdges(addEdge({
+          id: edgeId,
+          source: id,
+          target: createdNode.id,
+          type: 'glow',
+          selectable: true,
+          interactionWidth: 34,
+        }, edges))
+      }
+    } catch (error) {
+      setGenError(error instanceof Error ? error.message : '截取当前帧失败')
+    } finally {
+      setFrameCapturing(false)
+    }
+  }, [addNodeAt, currentVideoMeta?.originalUrl, data.name, data.projectUuid, displayVideoUrl, edges, frameCapturing, id, nodes, setEdges, shellWidth, videoUrl])
+
+  const fixedTopLeft = (top: number, left: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: top / safeZoom,
+    left: left / safeZoom,
+    transform: `scale(${inverseZoom})`,
+    transformOrigin: 'top left',
+  })
+
+  const fixedTopRight = (top: number, right: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: top / safeZoom,
+    right: right / safeZoom,
+    transform: `scale(${inverseZoom})`,
+    transformOrigin: 'top right',
+  })
+
+  const videoGalleryOrderBadge = (fixed = false): React.CSSProperties => ({
+    ...(fixed ? fixedTopLeft(8, 8) : { position: 'absolute', top: 8, left: 8 }),
+    zIndex: 13,
+    minWidth: 26,
+    height: 26,
+    padding: '0 8px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.18)',
+    background: 'rgba(10,10,12,0.76)',
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 900,
+    lineHeight: 1,
+    boxShadow: '0 8px 20px rgba(0,0,0,0.3)',
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)',
+    pointerEvents: 'none',
+  })
+
+  // 选中时贴在节点名字上方那一行（NodeShell 的 selectedMeta）。透明度由外壳统一给 50%。
+  const resolutionMeta = (
+    <span
+      style={{
+        color: '#c8bfe8',
+        fontSize: 'calc(11px * var(--canvas-text-scale, 1))',
+        lineHeight: 1.1,
+      }}
+    >
+      {videoResolutionLabel}
+    </span>
+  )
+
+  /**
+   * 查看器缩略图轨道 / 计数 / 信息面板要的那份清单。
+   * 不给 thumbUrl —— 视频没给 thumbUrl 时查看器会用 <video preload="metadata"> 取首帧，
+   * 给了反而会被当图片塞进 <img>，mp4 会画成裂图。
+   */
+  const videoPreviewItems = useMemo<ImagePreviewItem[]>(() => galleryItems.map((item) => ({
+    url: item.url,
+    name: data.name,
+    resourceMeta: data._resourceMeta?.items?.find(
+      (meta) => meta.originalUrl === item.url || meta.displayUrl === item.url,
+    ) as ResourceMeta | undefined,
+    generationMeta: data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined,
+    createdAtMs: data._assetCreatedAtMs?.[item.url],
+    badge: (data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined)?.resolution,
+  })), [galleryItems, data])
+
+  // 提成变量是为了让大图查看器（ImagePreview kind="video"）复用同一份 —— 图片节点那边
+  // 也是把 mediaToolbarActions 直接传进查看器，两边不各写一份，改一处两边都跟上。
+  // 查看器内部会把 'fullscreen' 过滤掉（已经在大图里了）。
+  const mediaToolbarActions: MediaNodeToolbarAction[] = [
+        {
+          key: 'trim',
+          label: trimSubmitting ? '正在剪辑' : '剪辑',
+          icon: trimSubmitting
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Scissors size={14} strokeWidth={1.9} />,
+          onClick: openTrimModal,
+          disabled: trimSubmitting,
+        },
+        {
+          key: 'crop',
+          label: cropSubmitting ? '正在裁剪' : '裁剪',
+          icon: cropSubmitting
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Crop size={14} strokeWidth={1.9} />,
+          onClick: openCropModal,
+          disabled: cropSubmitting,
+        },
+        {
+          key: 'whiteboard',
+          label: whiteboardPreparing ? '正在打开白板' : '白板标注',
+          icon: whiteboardPreparing
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <SquarePen size={14} strokeWidth={1.9} />,
+          onClick: openWhiteboard,
+          disabled: whiteboardPreparing,
+        },
+        {
+          key: 'capture-frame',
+          label: frameCapturing ? '正在截取当前帧' : '截取当前帧',
+          icon: frameCapturing
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Camera size={14} strokeWidth={1.9} />,
+          onClick: captureCurrentFrameToImageNode,
+          disabled: frameCapturing,
+        },
+        {
+          key: 'download',
+          label: '下载',
+          icon: <Download size={14} strokeWidth={1.9} />,
+          onClick: () => handleDownload(videoUrl),
+        },
+        {
+          key: 'fullscreen',
+          label: '全屏',
+          icon: <Expand size={14} strokeWidth={1.9} />,
+          onClick: () => openVideoPreview(videoUrl),
+        },
+  ]
+
+  const toolbar = isPanelActive && videoUrl ? (
+    <MediaNodeToolbar actions={mediaToolbarActions} />
+  ) : undefined
+
+  const handleWhiteboardAccept = useCallback(async ({ dataUrl, snapshot }: { dataUrl: string; snapshot: unknown }) => {
+    const file = await dataUrlToFile(dataUrl, data.name || 'video')
+    const uploaded = await assetsApi.upload(data.projectUuid, file)
+    const resourceMeta = resourceMetaFromUploadPayload(uploaded.meta as Record<string, unknown> | undefined, 'image')
+    const updatedAtMs = Date.now()
+    const resultNodeId = whiteboardState?.resultNodeId
+    const existingResultNode = resultNodeId ? nodes.find((node) => node.id === resultNodeId) : undefined
+    const sourceNode = nodes.find((node) => node.id === id)
+    const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+    let resolvedResultNodeId = existingResultNode?.id
+
+    if (existingResultNode) {
+      pushHistory()
+      const resultParams = ((existingResultNode.data.params as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>
+      const existingImageList = Array.isArray(resultParams.imageList) ? resultParams.imageList : []
+      const existingOrder = Array.isArray(resultParams.imageListOrder) ? resultParams.imageListOrder as string[] : []
+
+      updateNodeData(existingResultNode.id, {
+        type: 'upload',
+        url: [uploaded.url],
+        action: 'image_resource',
+        sourceKind: 'derived',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+        params: {
+          ...resultParams,
+          imageList: existingImageList.some((entry) => (entry as { nodeId?: string }).nodeId === id)
+            ? existingImageList
+            : [...existingImageList, sourceRef],
+          imageListOrder: existingOrder.includes(id) ? existingOrder : [...existingOrder, id],
+          whiteboard: {
+            ...(readWhiteboardState(resultParams) ?? {}),
+            snapshot,
+            updatedAtMs,
+          },
+        },
+      })
+    } else {
+      const createdNode = addNodeAt('upload', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
+        name: `${data.name || '视频'} 标注`,
+        url: [uploaded.url],
+        action: 'image_resource',
+        sourceKind: 'derived',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+        params: {
+          ...defaultImageParams(),
+          imageList: [sourceRef],
+          imageListOrder: [id],
+          whiteboard: {
+            snapshot,
+            updatedAtMs,
+          },
+        } as unknown as Record<string, unknown>,
+      })
+
+      resolvedResultNodeId = createdNode.id
+      const edgeId = `e-${id}-${createdNode.id}`
+      if (!edges.some((edge) => edge.id === edgeId)) {
+        setEdges(addEdge({
+          id: edgeId,
+          source: id,
+          target: createdNode.id,
+          type: 'glow',
+          selectable: true,
+          interactionWidth: 34,
+        }, edges))
+      }
+    }
+
+    updateNodeData(id, {
+      params: {
+        ...params,
+        advancedSettings: writeWhiteboardState(advancedSettings, {
+          snapshot,
+          resultNodeId: resolvedResultNodeId,
+          updatedAtMs,
+        }),
+      } as unknown as Record<string, unknown>,
+    })
+
+    setWhiteboardOpen(false)
+    setWhiteboardSourceFile(null)
+    setPreviewUrl(null)
+  }, [addNodeAt, advancedSettings, data.name, data.projectUuid, edges, id, nodes, params, pushHistory, setEdges, shellWidth, updateNodeData, videoUrl, whiteboardState?.resultNodeId])
 
   return (
     <>
-    <div ref={nodeContainerRef} style={{ display: 'contents' }}>
-    <NodeShell nodeKey={id} data={data} selected={selected}
-      minWidth={collapsed ? 260 : 420}
-      minHeight={160}
+    <NodeShell nodeKey={id} data={data} selected={selected} selectedMeta={resolutionMeta} toolbar={toolbar} showFavoriteToolbarFallback={false} showMenuButton={false}
+      minWidth={shellWidth}
+      maxWidth={shellWidth}
+      minHeight={previewFrame.height}
+      bodyStyle={videoUrl ? { background: 'transparent', overflow: 'visible' } : undefined}
     >
-      {/* Video preview — click to expand when collapsed */}
       <div
-        className="relative"
+        ref={videoAreaRef}
+        className="relative shotflow-media-lod-shell shotflow-media-lod-video-shell"
+        data-shotflow-expanded-gallery={expanded ? '1' : undefined}
         style={{
-          background: '#0d0b18',
-          minHeight: collapsed ? 160 : 196,
-          cursor: collapsed ? 'pointer' : 'default',
+          background: videoUrl ? 'transparent' : '#0d0b18',
+          minHeight: previewFrame.height,
+          overflow: 'visible',
         }}
-        onClick={collapsed ? () => setCollapsed(false) : undefined}
+        onMouseEnter={videoUrl && !frameMode ? handleVideoMouseEnter : undefined}
+        onMouseLeave={videoUrl && !frameMode ? handleVideoMouseLeave : undefined}
       >
         {videoUrl ? (
+          <>
+          {!expanded && (
+          <div
+            className="nodrag"
+            style={{
+              ...fixedTopLeft(5, 5),
+              zIndex: 18,
+              ...floatingNodeControlBarStyle(),
+            }}
+          >
+            <button
+              type="button"
+              title="逐帧模式：使用左右方向键控制上一帧 / 下一帧"
+              aria-pressed={frameMode}
+              onClick={event => {
+                event.stopPropagation()
+                toggleFrameMode()
+              }}
+              style={floatingNodeTextButtonStyle(frameMode, frameMode ? Math.max(23, String(frameNumber).length * 7.5 + 10) : 35)}
+            >
+              {frameMode ? frameNumber : '逐帧'}
+            </button>
+            <button
+              type="button"
+              title="截取当前帧"
+              aria-label="截取当前帧"
+              disabled={frameCapturing}
+              onClick={event => {
+                event.stopPropagation()
+                captureCurrentFrameToImageNode()
+              }}
+              style={floatingNodeIconButtonStyle(false, frameCapturing)}
+            >
+              {frameCapturing ? (
+                <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <Camera size={13} strokeWidth={2} />
+              )}
+            </button>
+          </div>
+          )}
+          {galleryItems.length > 1 && !expanded && expandedVideoItems.slice(0, 3).map((item, layerIndex) => {
+            const url = item.url
+            const offset = layerIndex + 1
+            return (
+              <div
+                key={`${url}-${layerIndex}`}
+                className="shotflow-media-lod-content shotflow-media-lod-stack"
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 0,
+                  borderRadius: 9,
+                  overflow: 'hidden',
+                  border: '1px solid rgba(255,255,255,0.18)',
+                  background: '#090812',
+                  opacity: 0.7 - layerIndex * 0.12,
+                  filter: 'brightness(0.78) saturate(0.86)',
+                  transform: `translate(${offset * 7}px, ${offset * 9}px) rotate(${offset * 1.25}deg)`,
+                  transformOrigin: 'bottom right',
+                  boxShadow: `${offset * 2}px ${offset * 6}px ${12 + offset * 7}px rgba(0,0,0,0.36)`,
+                  pointerEvents: 'none',
+                }}
+              >
+                <video
+                  src={videoPreviewSrc(mediaPreviewUrl(data, url))}
+                  muted
+                  playsInline
+                  preload="none"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />
+              </div>
+            )
+          })}
           <video
             ref={videoRef}
-            src={videoUrl}
-            className="w-full"
-            style={{ maxHeight: collapsed ? 220 : 280, display: 'block' }}
-            controls={!collapsed}
+            src={displayVideoUrl}
+            className="w-full shotflow-media-lod-content"
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              width: shellWidth,
+              maxWidth: '100%',
+              height: 'auto',
+              maxHeight: previewFrame.height,
+              display: 'block',
+              borderRadius: 9,
+              boxShadow: galleryItems.length > 1 && !expanded ? '0 20px 32px rgba(0,0,0,0.32)' : undefined,
+            }}
+            controls={frameMode || isPanelOpen || !isGenerateVideoNode}
             playsInline
-            onClick={e => { if (collapsed) { e.stopPropagation(); setCollapsed(false) } }}
+            preload="metadata"
+            onError={() => {
+              if (/^https?:\/\//i.test(String(displayVideoUrl || videoUrl)) && !genError) {
+                setGenError('视频链接已失效，请重新生成或重新导入')
+              }
+            }}
+            onDoubleClick={() => openVideoPreview(videoUrl)}
+            onLoadedMetadata={e => {
+              const video = e.currentTarget
+              updateFrameNumberFromVideo(video)
+              setVideoSize({ w: video.videoWidth, h: video.videoHeight })
+              const durationSec = Number.isFinite(video.duration) && video.duration > 0
+                ? Number(video.duration.toFixed(3))
+                : undefined
+              if (displayVideoUrl && displayVideoUrl !== videoUrl) {
+                persistPrimaryVideoMeta({
+                  displayWidth: video.videoWidth || undefined,
+                  displayHeight: video.videoHeight || undefined,
+                  displayDurationSec: durationSec,
+                })
+              } else {
+                persistPrimaryVideoMeta({
+                  width: video.videoWidth || undefined,
+                  height: video.videoHeight || undefined,
+                  durationSec,
+                  extension: extensionFromUrl(videoUrl) || undefined,
+                  mimeType: mimeTypeFromVideoExtension(extensionFromUrl(videoUrl)),
+                })
+              }
+            }}
+            onSeeked={e => updateFrameNumberFromVideo(e.currentTarget)}
+            onTimeUpdate={e => {
+              if (frameMode) updateFrameNumberFromVideo(e.currentTarget)
+            }}
           />
+          <div className="shotflow-media-lod-placeholder" aria-hidden="true">
+            <NodeTypeIcon type="video" size={18} strokeWidth={1.8} />
+            <span>视频</span>
+          </div>
+          {expanded && galleryItems.length > 1 && mainVideoItem && (
+            <div style={videoGalleryOrderBadge(true)}>{mainVideoItem.order}</div>
+          )}
+          {galleryItems.length > 1 && (
+            <div
+              role="button"
+              className="nodrag"
+              style={{
+                ...fixedTopRight(4, 4),
+                ...floatingNodeControlBarStyle(),
+                color: '#f7f5ff',
+                fontSize: 14,
+                cursor: 'pointer',
+                fontWeight: 900,
+                zIndex: 12,
+                lineHeight: 1,
+                padding: '1px 6px 1px 1px',
+              }}
+              onClick={event => {
+                event.stopPropagation()
+                setShowSettings(false)
+                setAtMenu(false)
+                setExpanded(value => {
+                  const next = !value
+                  if (!next) setGalleryLocked(false)
+                  return next
+                })
+              }}
+            >
+              <Expand size={13} strokeWidth={2.2} />
+              {expanded && (
+                <button
+                  type="button"
+                  title={galleryLocked ? '已锁定展开状态' : '锁定展开状态'}
+                  style={{
+                    ...floatingNodeIconButtonStyle(galleryLocked),
+                  }}
+                  onClick={event => {
+                    event.stopPropagation()
+                    setGalleryLocked(value => !value)
+                  }}
+                >
+                  {galleryLocked ? <Lock size={11} strokeWidth={2.3} /> : <Unlock size={11} strokeWidth={2.3} />}
+                </button>
+              )}
+              {expanded ? '收起' : `${galleryItems.length}个`}
+            </div>
+          )}
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center gap-2"
-            style={{ height: collapsed ? 160 : 196 }}
+            style={{ height: previewFrame.height, padding: 24 }}
           >
-            <svg width="36" height="36" viewBox="0 0 40 40" fill="none" opacity={0.15}>
-              <polygon points="14,10 32,20 14,30" fill="#fff" />
-            </svg>
-            {collapsed && (
-              <span style={{ fontSize: 12, color: '#4a4060' }}>点击展开</span>
+            {uploadInfo ? (
+              <div
+                className="nodrag"
+                style={{
+                  width: 'min(260px, 82%)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 10,
+                  color: uploadInfo.status === 'failed' ? '#ff8a8a' : '#c4b5fd',
+                  transform: `scale(${inverseZoom})`,
+                  transformOrigin: 'center',
+                }}
+              >
+                {isUploadActive ? (
+                  <svg width="28" height="28" viewBox="0 0 28 28" style={{ animation: 'spin 1s linear infinite' }}>
+                    <circle cx="14" cy="14" r="10.5" stroke="#312550" strokeWidth="3" fill="none" />
+                    <path d="M14 3.5A10.5 10.5 0 0 1 24.5 14" stroke="#8f73ff" strokeWidth="3" strokeLinecap="round" fill="none" />
+                  </svg>
+                ) : (
+                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+                    <circle cx="15" cy="15" r="11" stroke="#ff6b8a" strokeWidth="2" />
+                    <path d="M11 11l8 8M19 11l-8 8" stroke="#ff6b8a" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                )}
+                <div style={{ fontSize: 13, fontWeight: 650, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {uploadStatusText}
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    height: 7,
+                    borderRadius: 999,
+                    overflow: 'hidden',
+                    background: 'rgba(196,181,253,0.16)',
+                    border: '1px solid rgba(124,92,252,0.32)',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${uploadInfo.status === 'failed' ? 100 : uploadProgress}%`,
+                      height: '100%',
+                      borderRadius: 999,
+                      background: uploadInfo.status === 'failed'
+                        ? 'rgba(248,113,113,0.72)'
+                        : 'linear-gradient(90deg, #7c5cfc, #bba7ff)',
+                      transition: 'width 180ms ease',
+                    }}
+                  />
+                </div>
+                {uploadInfo.status === 'processing' && (
+                  <div style={{ fontSize: 11, color: '#8f82b5', textAlign: 'center' }}>
+                    原视频已上传，正在生成浏览压缩版
+                  </div>
+                )}
+              </div>
+            ) : (
+              <svg width="36" height="36" viewBox="0 0 40 40" fill="none" opacity={0.15}>
+                <polygon points="14,10 32,20 14,30" fill="#fff" />
+              </svg>
             )}
-          </div>
-        )}
-
-        {/* Small expand indicator when collapsed */}
-        {collapsed && (
-          <div style={{
-            position: 'absolute', bottom: 8, right: 8,
-            background: 'rgba(13,11,24,0.7)', border: '1px solid #312550',
-            borderRadius: 4, color: '#6a5a8a', fontSize: 11,
-            padding: '2px 6px', pointerEvents: 'none',
-          }}>
-            点击展开
           </div>
         )}
       </div>
 
-      {/* Divider ref — bottom of video area, used for portal positioning */}
+      {/* Divider ref 鈥?bottom of video area, used for portal positioning */}
       <div ref={dividerRef} style={{ height: 0 }} />
     </NodeShell>
 
-    {/* Panel — rendered as portal so it stays fixed-size at any canvas zoom */}
-    {!collapsed && portalRect && createPortal(
-      <div ref={controlsPortalRef} className="nodrag" style={{
-        position: 'fixed',
-        top: portalRect.bottom,
-        left: portalRect.left,
-        width: portalRect.width / zoom,  // always fixed at natural node width, never scales with canvas zoom
-        zIndex: 1000,
+    {/*
+      进度条挂在**整个弹窗下面**：面板开着就贴面板下沿、跟面板同宽同左；面板收起就贴节点下沿。
+      放在面板里会占掉内部高度、把提示词输入区挤没（2026-08-19 用户反馈），所以一律放外面。
+    */}
+    {showDetachedProgress && createPortal(
+      <div
+        className="nodrag nopan"
+        style={panelRect ? {
+          position: 'fixed',
+          top: panelRect.bottom + 6,
+          left: panelRect.left,
+          width: panelRect.width,
+          zIndex: 1050,
+          pointerEvents: 'auto',
+        } : {
+          position: 'fixed',
+          top: (portalRect?.bottom ?? 0) + 6,
+          left: (portalRect?.left ?? 0) + (portalRect?.width ?? 0) / 2,
+          transform: 'translateX(-50%)',
+          zIndex: 1050,
+          pointerEvents: 'auto',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {progressRows.map((info, index) => (
+            <GenerationProgress
+              key={info.taskId}
+              variant={panelRect ? 'panel' : 'card'}
+              compact={!panelRect && (portalRect?.width ?? 0) < 260}
+              taskInfo={info}
+              label={progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
+              onCancel={() => cancelProgressRow(info.taskId)}
+            />
+          ))}
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {expanded && galleryRect && expandedVideoPlacements.length > 0 && createPortal(
+      <div
+        ref={galleryPortalRef}
+        className="nodrag"
+        data-shotflow-expanded-gallery="1"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 1300,
+          pointerEvents: 'none',
+        }}
+      >
+        {expandedVideoPlacements.map(({ url, order, left, top, failed }) => failed ? (
+          <div
+            key={`failed-${failed.taskId}`}
+            style={{
+              position: 'fixed',
+              left,
+              top,
+              width: expandedTileWidth,
+              height: expandedTileHeight,
+              overflow: 'auto',
+              borderRadius: 9,
+              background: '#1a0c10',
+              border: '1px solid rgba(248,113,113,0.45)',
+              boxShadow: '0 12px 26px rgba(0,0,0,0.28)',
+              pointerEvents: 'auto',
+              padding: 12,
+              boxSizing: 'border-box',
+            }}
+          >
+            <div style={{ color: '#fca5a5', fontSize: 12, fontWeight: 800, marginBottom: 6 }}>生成失败</div>
+            <div style={{ color: '#f87171', fontSize: 11, lineHeight: 1.5, wordBreak: 'break-word' }}>{failed.error}</div>
+            <div style={{ color: '#8f7a86', fontSize: 10, marginTop: 8, lineHeight: 1.6 }}>
+              {[failed.model, failed.ratio, failed.resolution, failed.durationSec ? `${failed.durationSec}s` : ''].filter(Boolean).join(' · ')}
+              {failed.prompt ? <><br />{failed.prompt}</> : null}
+            </div>
+            <button
+              className="nodrag"
+              style={{ marginTop: 10, background: 'rgba(248,113,113,0.14)', border: '1px solid rgba(248,113,113,0.4)', color: '#fca5a5', borderRadius: 6, fontSize: 11, padding: '4px 10px', cursor: 'pointer' }}
+              onClick={() => updateNodeData(id, {
+                _failedGenerations: failedGenerations.filter((item) => item.taskId !== failed.taskId),
+              })}
+            >
+              知道了，移除
+            </button>
+          </div>
+        ) : (
+          <div
+            key={`${url}-${order}`}
+            className="relative group"
+            style={{
+              position: 'fixed',
+              left,
+              top,
+              width: expandedTileWidth,
+              height: expandedTileHeight,
+              overflow: 'hidden',
+              borderRadius: 9,
+              background: '#08070d',
+              boxShadow: '0 12px 26px rgba(0,0,0,0.28)',
+              pointerEvents: 'auto',
+            }}
+          >
+            <video
+              src={mediaPreviewUrl(data, url)}
+              controls
+              playsInline
+              preload="metadata"
+              style={{
+                objectFit: 'cover',
+                height: '100%',
+                width: '100%',
+                display: 'block',
+              }}
+            />
+            <div style={videoGalleryOrderBadge()}>{order}</div>
+            <div className="nodrag" style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 3, zIndex: 12 }}>
+              <button
+                type="button"
+                style={videoGalleryActionButton('dark')}
+                onClick={event => {
+                  event.stopPropagation()
+                  handleDownload(url)
+                }}
+              >
+                <Download size={13} strokeWidth={2} />
+                下载
+              </button>
+              <button
+                type="button"
+                style={videoGalleryActionButton('primary')}
+                onClick={event => {
+                  event.stopPropagation()
+                  setMainVideo(url)
+                }}
+              >
+                设为主视频
+              </button>
+              <button
+                type="button"
+                title="删除"
+                style={{
+                  ...videoGalleryActionButton('dark'),
+                  color: '#fecaca',
+                  border: '1px solid rgba(248,113,113,0.36)',
+                }}
+                onClick={event => {
+                  event.stopPropagation()
+                  removeVideoUrl(url)
+                }}
+              >
+                <Trash2 size={13} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>,
+      document.body
+    )}
+
+    {/* Panel 鈥?rendered as portal so it stays fixed-size at any canvas zoom */}
+    {isPanelOpen && !expanded && portalRect && createPortal(
+      <div
+        ref={panelPortalRef}
+        className={panelExpanded ? 'nodrag shotflow-node-popover-backdrop' : 'nodrag shotflow-node-popover shotflow-node-popover-video'}
+        onMouseDown={event => {
+          if (panelExpanded && event.target === event.currentTarget) setPanelExpanded(false)
+        }}
+        style={panelExpanded ? {
+          position: 'fixed',
+          inset: 0,
+          zIndex: 1800,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+          background: 'rgba(0,0,0,0.52)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+        } : {
+          position: 'fixed',
+          top: portalRect.bottom + 6,
+          left: panelLeft,
+          width: effectivePanelWidth,
+          ...(panelSize ? { height: panelSize.height, overflow: 'visible' } : {}),
+          zIndex: 1000,
+          background: '#171320',
+          borderRadius: 10,
+          border: '1px solid rgba(124,92,252,0.18)',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.42)',
+        }}
+      >
+      <div className="shotflow-node-popover-shell" style={panelExpanded ? {
+        width: expandedPanelWidth,
+        maxHeight: '86vh',
+        overflowY: 'auto',
         background: '#1a1625',
-        borderRadius: '0 0 10px 10px',
+        borderRadius: 16,
         border: '1px solid #2d2040',
-        borderTop: 'none',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-      }}>
+        boxShadow: '0 24px 80px rgba(0,0,0,0.68)',
+      } : panelSize ? { height: '100%', overflow: 'hidden', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', minHeight: 0 } : {}}>
       <>
 
       {/* Mode tabs + expand */}
-      <div className="flex items-center nodrag" style={{ borderBottom: '1px solid #2a2040' }}>
-        <div className="flex flex-1 px-2 pt-1 gap-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-          {MODES.map(m => (
+      <div
+        className="flex items-center nodrag shotflow-node-popover-tabs"
+        role="tablist"
+        aria-label="视频生成模式"
+        style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}
+      >
+        <div className="flex flex-1 px-1.5 pt-0.5 gap-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          {modeOptions.map(m => (
             <button
               key={m.key}
-              className="text-sm px-3 py-2 whitespace-nowrap nodrag"
+              type="button"
+              role="tab"
+              aria-selected={mode === m.key}
+              className={`text-sm px-2.5 py-1.5 whitespace-nowrap nodrag${mode === m.key ? ' is-active' : ''}`}
               style={{
                 background: 'none',
                 color: mode === m.key ? '#c4b5fd' : '#5a5070',
@@ -287,297 +2292,441 @@ export function VideoNode({ id, data, selected }: Props) {
                 fontWeight: mode === m.key ? 500 : 400,
                 transition: 'color 0.15s',
               }}
-              onClick={() => setParam('modeType', m.key as never)}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                setParam('modeType', m.key as never)
+              }}
             >{m.label}</button>
           ))}
         </div>
         <button
           className="nodrag"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5a5070', fontSize: 13, padding: '0 10px 0 4px' }}
-          title="展开面板"
-        >⤢</button>
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7b6fa0', fontSize: 13, padding: '0 8px 0 3px' }}
+          title={panelExpanded ? '收起面板' : '展开面板'}
+          onClick={() => {
+            setShowSettings(false)
+            setAtMenu(false)
+            setPanelExpanded(value => !value)
+          }}
+        >
+          {panelExpanded ? '↙' : '⤢'}
+        </button>
       </div>
 
-      {/* Sub-toolbar: 标记 运镜 角色库 + history + connected images */}
-      <div className="flex items-center gap-1.5 px-3 py-2 nodrag" style={{ borderBottom: '1px solid #2a2040' }}>
-        {SUB_TOOLS.map(btn => (
-          <button
-            key={btn.label}
-            className="flex flex-col items-center justify-center gap-0.5 rounded nodrag"
-            style={{
-              background: '#1e1830',
-              border: '1px solid #312550',
-              cursor: 'pointer',
-              width: 44,
-              height: 44,
-            }}
-          >
-            <span style={{ fontSize: 14, lineHeight: 1, color: '#8a7aaa' }}>{btn.icon}</span>
-            <span style={{ fontSize: 11, color: '#8a7aaa' }}>{btn.label}</span>
-          </button>
-        ))}
-        {/* History button */}
-        <button
-          className="flex flex-col items-center justify-center gap-0.5 rounded nodrag"
-          style={{
-            background: showHistory ? 'rgba(124,92,252,0.2)' : '#1e1830',
-            border: showHistory ? '1px solid #7c5cfc' : '1px solid #312550',
-            cursor: 'pointer', width: 44, height: 44, position: 'relative',
-          }}
-          onClick={() => setShowHistory(v => !v)}
-          title="生成历史"
-        >
-          <span style={{ fontSize: 14, lineHeight: 1, color: showHistory ? '#c4b5fd' : '#8a7aaa' }}>🕐</span>
-          <span style={{ fontSize: 11, color: showHistory ? '#c4b5fd' : '#8a7aaa' }}>历史</span>
-          {history.length > 0 && (
-            <span style={{
-              position: 'absolute', top: -4, right: -4, width: 16, height: 16,
-              background: '#7c5cfc', borderRadius: '50%', fontSize: 9, color: '#fff',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-            }}>{history.length > 9 ? '9+' : history.length}</span>
-          )}
-        </button>
-
-        {/* Connected image thumbnails — drag reorder, × delete, hover zoom */}
+      <div className="flex items-center gap-1 px-2 py-1.5 nodrag shotflow-node-popover-reference-row" style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+        {/* Connected image thumbnails 鈥?drag reorder, 脳 delete, hover zoom */}
         {connectedImages.map((ref, i) => (
           <div key={ref.nodeId}
-            className="relative nodrag"
-            style={{ flexShrink: 0, width: 44, height: 44 }}
+            className="relative nodrag reference-thumb"
+            style={{ flexShrink: 0, width: 44, height: 42, overflow: 'visible' }}
             draggable
             onDragStart={e => e.dataTransfer.setData('thumb-idx', String(i))}
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); moveConnectedImage(Number(e.dataTransfer.getData('thumb-idx')), i) }}
             onMouseEnter={e => {
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-              setHoverThumb({ url: ref.url, name: ref.orderName, rect })
+              scheduleHoverPreview(ref.nodeId, ref.url, ref.orderName, (e.currentTarget as HTMLElement).getBoundingClientRect())
             }}
-            onMouseLeave={() => setHoverThumb(null)}
+            onMouseLeave={() => hideHoverPreview(ref.nodeId)}
           >
-            <div className="rounded overflow-hidden" style={{ width: 44, height: 44, border: '1px solid #312550', cursor: 'grab' }}>
+            <div
+              className="rounded overflow-hidden"
+              style={{
+                width: 44, height: 42, border: '1px solid rgba(124,92,252,0.18)', cursor: 'zoom-in',
+                // 当前模式收不了这类素材：置灰 + 说明，别等点了生成才知道
+                ...(unusableRefKinds.images ? { filter: 'grayscale(1)', opacity: 0.42 } : {}),
+              }}
+              onClick={() => setPreviewUrl(ref.url)}
+              title={unusableRefKinds.images ? `${ref.orderName}：当前模式不用参考图` : `预览${ref.orderName}`}
+            >
               <img src={ref.url} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
-            {/* × delete button */}
             <button
-              className="nodrag"
+              type="button"
+              className="nodrag nopan reference-thumb-action is-at"
+              title="@引用"
+              aria-label="@引用"
+              onPointerDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onMouseDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                handleReferenceMention(ref)
+              }}
               style={{
-                position: 'absolute', top: -5, right: -5, width: 14, height: 14,
+                position: 'absolute', left: -5, bottom: -5, zIndex: 3, width: 17, height: 17,
+                borderRadius: 999, border: '1px solid rgba(225,218,255,0.5)',
+                background: 'rgba(12,18,32,0.18)', color: 'rgba(246,243,255,0.92)',
+                fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.32)',
+              }}
+            >@</button>
+            {/* 脳 delete button */}
+            <button
+              type="button"
+              className="nodrag reference-thumb-action is-remove"
+              title="取消参考"
+              aria-label="取消参考"
+              onPointerDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onMouseDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              style={{
+                position: 'absolute', top: -6, right: -6, width: 15, height: 15,
                 borderRadius: '50%', background: '#312550', border: '1px solid #5a4080',
                 color: '#c4b5fd', fontSize: 9, cursor: 'pointer', lineHeight: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
-              onClick={() => removeConnectedImage(ref.nodeId)}
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                removeConnectedRef('imageList', ref.nodeId)
+              }}
             >×</button>
             {/* Order label */}
             <div style={{
               position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center',
-              fontSize: 8, color: 'rgba(255,255,255,0.6)', background: 'rgba(0,0,0,0.5)',
-              lineHeight: '14px', pointerEvents: 'none',
+              fontSize: 7, color: 'rgba(255,255,255,0.66)', background: 'rgba(0,0,0,0.5)',
+              lineHeight: '12px', pointerEvents: 'none',
+            }}>{ref.orderName}</div>
+          </div>
+        ))}
+        {connectedVideos.map(ref => (
+          <div key={ref.nodeId}
+            className="relative nodrag reference-thumb"
+            style={{ flexShrink: 0, width: 44, height: 42, overflow: 'visible' }}
+            onMouseEnter={e => {
+              scheduleHoverPreview(
+                ref.nodeId,
+                ref.coverSrc || videoPreviewSrc(ref.url),
+                ref.orderName,
+                (e.currentTarget as HTMLElement).getBoundingClientRect(),
+                'video',
+              )
+            }}
+            onMouseLeave={() => hideHoverPreview(ref.nodeId)}
+          >
+            <div
+              className="rounded overflow-hidden"
+              title={unusableRefKinds.videos ? `${ref.orderName}：当前模式不用参考视频` : `预览${ref.orderName}`}
+              style={{
+                width: 44, height: 42, border: '1px solid rgba(124,92,252,0.18)', background: '#151022', position: 'relative', cursor: 'zoom-in',
+                ...(unusableRefKinds.videos ? { filter: 'grayscale(1)', opacity: 0.42 } : {}),
+              }}
+            >
+              <ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={13} />
+            </div>
+            <button
+              type="button"
+              className="nodrag nopan reference-thumb-action is-at"
+              title="@引用"
+              aria-label="@引用"
+              onPointerDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onMouseDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                handleReferenceMention(ref)
+              }}
+              style={{
+                position: 'absolute', left: -5, bottom: -5, zIndex: 3, width: 17, height: 17,
+                borderRadius: 999, border: '1px solid rgba(225,218,255,0.5)',
+                background: 'rgba(12,18,32,0.18)', color: 'rgba(246,243,255,0.92)',
+                fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.32)',
+              }}
+            >@</button>
+            <button
+              type="button"
+              className="nodrag reference-thumb-action is-remove"
+              title="取消参考"
+              aria-label="取消参考"
+              onPointerDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onMouseDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              style={{
+                position: 'absolute', top: -6, right: -6, width: 15, height: 15,
+                borderRadius: '50%', background: '#312550', border: '1px solid #5a4080',
+                color: '#c4b5fd', fontSize: 9, cursor: 'pointer', lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                removeConnectedRef('videoList', ref.nodeId)
+              }}
+            >×</button>
+            <div style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center',
+              fontSize: 7, color: 'rgba(255,255,255,0.72)', background: 'rgba(0,0,0,0.5)',
+              lineHeight: '12px', pointerEvents: 'none',
+            }}>{ref.orderName}</div>
+          </div>
+        ))}
+        {connectedAudios.map(ref => (
+          <div key={ref.nodeId}
+            className="relative nodrag"
+            style={{ flexShrink: 0, width: 34, height: 32 }}
+          >
+            <div className="rounded overflow-hidden" style={{ width: 34, height: 32, border: '1px solid rgba(124,92,252,0.18)', background: '#151022', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#efeaff' }}>
+              <NodeTypeIcon type="audio" size={15} />
+            </div>
+            <button
+              className="nodrag"
+              style={{
+                position: 'absolute', top: -4, right: -4, width: 13, height: 13,
+                borderRadius: '50%', background: '#312550', border: '1px solid #5a4080',
+                color: '#c4b5fd', fontSize: 9, cursor: 'pointer', lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              onClick={() => removeConnectedRef('audioList', ref.nodeId)}
+            >×</button>
+            <div style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center',
+              fontSize: 7, color: 'rgba(255,255,255,0.72)', background: 'rgba(0,0,0,0.5)',
+              lineHeight: '12px', pointerEvents: 'none',
             }}>{ref.orderName}</div>
           </div>
         ))}
       </div>
+      {connectedVideos.length > 0 && referenceVideoNote && (
+        <div
+          className="px-3 py-2 nodrag shotflow-node-popover-reference-note"
+          style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', fontSize: 10, color: '#6a5a8a', ...(panelSize ? { flexShrink: 0 } : {}) }}
+        >
+          {referenceVideoNote}
+        </div>
+      )}
+      {/* 参考素材和当前模式不匹配时，点生成之前就说清楚（2026-08-26 用户反馈：
+          以前要点了生成才看到「视频编辑最多支持 0 个图片参考」这种话） */}
+      {refKindWarning && (
+        <div
+          className="px-3 py-2 nodrag shotflow-node-popover-reference-note"
+          style={{
+            borderBottom: '1px solid rgba(255,170,90,0.2)', fontSize: 10, lineHeight: 1.5,
+            color: '#e8b478', background: 'rgba(255,170,90,0.08)',
+            ...(panelSize ? { flexShrink: 0 } : {}),
+          }}
+        >
+          {refKindWarning}
+        </div>
+      )}
 
-      {/* Prompt — PromptEditor with scrollable area */}
-      <div className="px-3 pt-2 pb-1 nodrag" style={{ position: 'relative' }}>
+      {/* Prompt 鈥?PromptEditor with scrollable area */}
+      <div ref={promptPanelRef} className="px-2 pt-1.5 pb-1 nodrag shotflow-node-popover-prompt-area" style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', ...(panelSize ? { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } : {}) }}>
+        <div
+          className="nodrag shotflow-prompt-header"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            minHeight: 24,
+            marginBottom: 2,
+          }}
+        >
+          <span className="shotflow-prompt-title" style={{ color: 'rgba(218,209,245,0.72)', fontSize: 11, fontWeight: 600 }}>
+            提示词（{Array.from(String(params.prompt || '').replace(/\s/g, '')).length}字）
+          </span>
+          <div className="shotflow-prompt-actions" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {connectedTextRefs.length > 0 && (
+            <button
+              type="button"
+              className="nodrag"
+              disabled={!upstreamTextPrompt}
+              onClick={handleSyncTextPrompt}
+              style={{
+                border: '1px solid rgba(124,92,252,0.36)',
+                background: upstreamTextPrompt ? 'rgba(124,92,252,0.14)' : 'rgba(70,60,90,0.16)',
+                color: upstreamTextPrompt ? '#d8ccff' : '#6a5a8a',
+                borderRadius: 6,
+                padding: '2px 7px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: upstreamTextPrompt ? 'pointer' : 'not-allowed',
+              }}
+              title={upstreamTextPrompt ? '同步上游文本节点内容' : '上游文本节点暂无内容'}
+            >
+              同步
+            </button>
+            )}
+            <button
+              type="button"
+              className="nodrag nopan shotflow-prompt-icon-button"
+              disabled={!String(params.prompt || '').trim()}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={handleCopyPrompt}
+              title="复制提示词"
+              aria-label="复制提示词"
+            >
+              <Copy size={12} strokeWidth={2.1} />
+            </button>
+            <button
+              type="button"
+              className="nodrag nopan shotflow-prompt-icon-button"
+              disabled={!String(params.prompt || '').trim() && chips.length === 0}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={handleClearPrompt}
+              title="清空提示词"
+              aria-label="清空提示词"
+            >
+              <Trash2 size={12} strokeWidth={2.1} />
+            </button>
+          </div>
+        </div>
         {/* Scrollable wrapper with styled scrollbar */}
         <div
-          className="nodrag"
+          className="nodrag shotflow-node-popover-scroll"
           style={{
-            maxHeight: 200,
+            maxHeight: panelSize ? 'none' : panelPromptMaxHeight,
             overflowY: 'auto',
             overflowX: 'hidden',
-            paddingRight: 4,
+            paddingRight: 3,
             scrollbarWidth: 'thin',
             scrollbarColor: '#312550 transparent',
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            boxSizing: 'border-box',
+            ...(panelSize ? { flex: '1 1 auto', minHeight: 0 } : {}),
           }}
         >
           <PromptEditor
             ref={editorRef}
             value={params.prompt}
             chips={chips}
-            htmlSnapshot={params.promptHtml}
-            onValueChange={val => setParam('prompt', val as never)}
-            onChipsChange={newChips => setParam('promptChips', newChips as never)}
-            onHtmlChange={html => setParam('promptHtml', html as never)}
-            onAtKey={() => connectedImages.length > 0 && setAtMenu(true)}
+            htmlSnapshot={promptHtmlSnapshot}
+            onChange={handlePromptChange}
+            onAtKey={() => {
+              if (connectedMedia.length === 0) return
+              setActiveMentionIndex(0)
+              setAtMenu(true)
+            }}
             onEscape={() => setAtMenu(false)}
-            placeholder="描述你想要生成的画面内容，@引用素材"
+            mentionMenuOpen={atMenu}
+            onMentionNavigate={handleMentionNavigate}
+            onMentionSelect={handleMentionSelect}
+            placeholder="描述你想要生成的视频内容，@引用素材"
             orderMap={orderMap}
-            style={{ fontSize: 14, lineHeight: 1.7, minHeight: 80 }}
+            resolveTextMention={resolveTextMention}
+            resolveTextMentionsIn={resolveTextMentionsIn}
+            style={{ fontSize: 13, lineHeight: 1.45, minHeight: 56, color: '#e8e1ff' }}
           />
         </div>
 
         {/* @ dropdown */}
-        {atMenu && connectedImages.length > 0 && (
-          <div className="nodrag" style={{
-            position: 'absolute', left: 12, bottom: '100%', marginBottom: 4,
+        {atMenu && connectedMedia.length > 0 && createPortal(
+          <div className="nodrag" data-at-mention-dropdown="1" style={{
+            position: 'fixed',
+            left: mentionMenuLeft,
+            top: Math.max(12, mentionMenuTop),
             background: '#16112a', border: '1px solid #312550',
-            borderRadius: 8, overflow: 'hidden', minWidth: 160,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.7)', zIndex: 50,
+            borderRadius: 10,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            minWidth: 220,
+            maxWidth: 320,
+            maxHeight: Math.min(320, Math.max(150, viewportHeight - 32)),
+            boxShadow: '0 18px 44px rgba(0,0,0,0.72)',
+            zIndex: 2600,
           }}>
-            <div style={{ padding: '5px 10px 4px', fontSize: 10, color: '#5a5070' }}>引用图片节点</div>
-            {connectedImages.map(ref => (
+            <div style={{ padding: '5px 10px 4px', fontSize: 10, color: '#5a5070' }}>引用素材</div>
+            {connectedMedia.map((ref, index) => (
               <button key={ref.nodeId} className="nodrag flex items-center gap-2 w-full"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 10px', color: '#c4b5fd', fontSize: 12 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(124,92,252,0.15)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                style={{
+                  background: index === activeMentionIndex ? 'rgba(124,92,252,0.15)' : 'none',
+                  border: 'none', cursor: 'pointer', padding: '6px 10px', color: '#c4b5fd', fontSize: 12,
+                }}
+                onMouseEnter={() => setActiveMentionIndex(index)}
                 onMouseDown={e => {
                   e.preventDefault()
-                  handleAtInsert({ nodeId: ref.nodeId, url: ref.url, name: ref.orderName })
+                  e.stopPropagation()
+                  handleAtInsert({ nodeId: ref.nodeId, url: ref.url, name: ref.orderName, mediaType: ref.previewKind })
                 }}
               >
-                <img src={ref.url} draggable={false} style={{ width: 24, height: 24, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />
+                {ref.previewKind === 'image' ? (
+                    <img src={mediaPreviewUrl(nodes.find(node => node.id === ref.nodeId)?.data ?? data, ref.url)} draggable={false} style={{ width: 24, height: 24, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />
+                ) : ref.previewKind === 'video' ? (
+                  <span style={{ width: 24, height: 24, position: 'relative', display: 'block', borderRadius: 3, overflow: 'hidden', background: '#221a36', flexShrink: 0 }}>
+                    <ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={11} />
+                  </span>
+                ) : (
+                  <span style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 3, background: '#221a36', color: '#efeaff', flexShrink: 0 }}>
+                    <NodeTypeIcon type={ref.previewKind} size={12} />
+                  </span>
+                )}
                 <span>{ref.orderName}</span>
               </button>
             ))}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
 
-      {/* History panel */}
-      {showHistory && (
-        <div className="nodrag" style={{ borderBottom: '1px solid #2a2040', maxHeight: 480, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#312550 transparent' }}>
-          {history.length === 0 ? (
-            <div style={{ padding: '16px', textAlign: 'center', color: '#4a4060', fontSize: 13 }}>暂无生成历史</div>
-          ) : (
-            <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {history.map((item) => (
-                <div key={item.id} style={{
-                  background: '#13102a', border: '1px solid #2a2040', borderRadius: 8,
-                  overflow: 'hidden',
-                }}>
-                  {/* Video preview — clickable, shows controls on hover */}
-                  <div style={{ position: 'relative', background: '#0d0b18' }}>
-                    <video
-                      src={item.url}
-                      controls
-                      style={{ width: '100%', maxHeight: 160, display: 'block', objectFit: 'contain', background: '#0d0b18' }}
-                      playsInline
-                    />
-                    {/* Fullscreen button */}
-                    <button className="nodrag" onClick={() => setPreviewChipUrl(item.url)}
-                      style={{
-                        position: 'absolute', top: 6, right: 6, background: 'rgba(13,10,26,0.75)',
-                        border: '1px solid #312550', borderRadius: 4, color: '#c4b5fd',
-                        fontSize: 13, cursor: 'pointer', padding: '2px 7px',
-                      }} title="全屏预览">⤢</button>
-                    {/* Delete button */}
-                    <button className="nodrag" onClick={() => {
-                      const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
-                      const p = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
-                      const newHist = (p.history ?? []).filter((h: VideoHistoryItem) => h.id !== item.id)
-                      updateNodeData(id, { params: { ...p, history: newHist } as unknown as Record<string, unknown> })
-                    }} style={{
-                      position: 'absolute', top: 6, left: 6, background: 'rgba(13,10,26,0.75)',
-                      border: '1px solid #312550', borderRadius: 4, color: '#f87171',
-                      fontSize: 13, cursor: 'pointer', padding: '2px 7px',
-                    }} title="删除">×</button>
-                  </div>
-
-                  {/* Meta info */}
-                  <div style={{ padding: '7px 10px 4px' }}>
-                    <div style={{ fontSize: 11, color: '#5a5070', marginBottom: 5 }}>
-                      {new Date(item.timestamp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      {' · '}{item.model?.replace('Seedance_', 'S').replace('_0', '.0')}
-                      {' · '}{item.modeType}
-                      {' · '}{item.settings?.resolution} {item.settings?.duration}s
-                    </div>
-
-                    {/* Reference images */}
-                    {item.imageList?.filter(r => r.url).length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, marginBottom: 6, flexWrap: 'wrap' }}>
-                        {item.imageList.filter(r => r.url).map((ref, i) => (
-                          <img key={i} src={ref.url} alt="" draggable={false}
-                            style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 4, border: '1px solid #2a2040', flexShrink: 0 }} />
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Full prompt text */}
-                    <div style={{
-                      fontSize: 12, color: '#c0b8e0', lineHeight: 1.6,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                      maxHeight: 120, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#312550 transparent',
-                    }}>
-                      {item.prompt || '（无提示词）'}
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: 'flex', gap: 6, padding: '0 10px 8px' }}>
-                    {/* Restore to main */}
-                    <button className="nodrag" onClick={() => {
-                      updateNodeData(id, { url: [item.url] })
-                    }} style={{
-                      flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5,
-                      background: '#1e1830', border: '1px solid #312550', color: '#c4b5fd', cursor: 'pointer',
-                    }} title="设为主视频">↑ 还原</button>
-                    {/* Re-generate with same params */}
-                    <button className="nodrag" onClick={() => {
-                      updateNodeData(id, {
-                        params: {
-                          ...params,
-                          prompt: item.prompt,
-                          promptHtml: item.promptHtml,
-                          promptChips: item.promptChips,
-                          model: item.model,
-                          modeType: item.modeType,
-                          settings: item.settings,
-                          imageList: item.imageList,
-                        } as unknown as Record<string, unknown>
-                      })
-                      setShowHistory(false)
-                    }} style={{
-                      flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5,
-                      background: '#251e38', border: '1px solid #5a3090', color: '#a78bfa', cursor: 'pointer',
-                    }} title="恢复此次参数">↻ 重用参数</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Error */}
       {(genError || data.taskInfo?.status === 3) && (
-        <div className="mx-3 mb-1 px-2 py-1 rounded text-xs nodrag flex items-center justify-between"
-          style={{ background: '#2a1020', color: '#f87171' }}>
-          <span>{genError ?? data.taskInfo?.error ?? '生成失败'}</span>
+        <div className="mx-2 mb-1 px-2 py-0.5 rounded text-xs nodrag flex items-center justify-between shotflow-node-popover-error"
+          style={{ background: '#2a1020', color: '#f87171', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+          <span>{genError ?? errorToText(data.taskInfo?.error, '生成失败')}</span>
           <button className="nodrag" style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 10 }}
             onClick={() => { setGenError(null); updateNodeData(id, { taskInfo: undefined }) }}>清除</button>
         </div>
       )}
 
-      {/* Cancel stuck generation */}
-      {isLoading && (
-        <div className="flex justify-end px-3 pb-1 nodrag">
-          <button className="nodrag text-xs"
-            style={{ background: 'none', border: 'none', color: '#5a5070', cursor: 'pointer' }}
-            onClick={() => {
-              const taskId = data.taskInfo?.taskId
-              if (taskId) cancelTask(taskId)
-              else updateNodeData(id, { taskInfo: undefined })
-            }}
-          >取消生成</button>
-        </div>
-      )}
+      {/* 进度条只在两处渲染，且互斥：面板内那条（本文件下方 shotflow-node-popover-progress-row）
+          和面板收起时游离在节点下方那条（showDetachedProgress）。这里原先还有第三处，被
+          `isLoading && false` 长期关着，是死代码，已删。 */}
 
-      {/* Bottom bar wrapper — settings popup floats above */}
-      <div className="relative nodrag" style={{ borderTop: '1px solid #2a2040' }}>
-        {showSettings && (
-          <div className="absolute nodrag"
+      {/* Bottom bar wrapper 鈥?settings popup floats above */}
+      <div ref={bottomWrapRef} className="relative nodrag shotflow-node-popover-bottom-wrap" style={{ borderTop: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+        {/*
+          这个弹层必须 portal 到 body，不能留在面板里：留在里面它就被面板上边裁掉，
+          被裁掉的正是最上面的「比例」「清晰度」两行（2026-08-19 的"改不了分辨率"）。
+          出去之后按视口决定往上还是往下展开，目标是**完整显示**，限高滚动只作最后兜底。
+        */}
+        {showSettings && settingsAnchor && createPortal(
+          <div
+            ref={settingsPopoverRef}
+            className="nodrag nowheel shotflow-node-popover-settings"
             style={{
-              bottom: '100%', left: 0, right: 0, marginBottom: 4,
+              position: 'fixed',
+              left: settingsAnchor.left,
+              width: settingsAnchor.width,
+              ...settingsPlacement,
               background: '#13102a', border: '1px solid #312550',
-              borderRadius: 10, padding: '14px 16px',
-              boxShadow: '0 -8px 24px rgba(0,0,0,0.6)', zIndex: 40,
+              borderRadius: 9, padding: '10px 12px',
+              boxShadow: '0 -8px 24px rgba(0,0,0,0.6)', zIndex: 1100,
+              overflowY: settingsPlacement.maxHeight ? 'auto' : 'visible',
+              boxSizing: 'border-box',
             }}
           >
             <div className="mb-3">
               <div className="text-xs mb-2" style={{ color: '#5a5070' }}>比例</div>
               <div className="flex flex-wrap gap-2">
-                {RATIOS.map(r => {
+                {ratioOptions.map(r => {
                   const active = ratio === r.value
                   return (
                     <button key={r.value}
@@ -597,9 +2746,13 @@ export function VideoNode({ id, data, selected }: Props) {
             <div className="mb-3">
               <div className="text-xs mb-2" style={{ color: '#5a5070' }}>清晰度</div>
               <div className="flex gap-2">
-                {RESOLUTIONS.map(r => (
+                {resolutionOptions.map(r => (
                   <button key={r} className="flex-1 text-sm py-1.5 rounded nodrag"
                     style={{ background: resolution === r ? '#7c5cfc' : '#1e1830', color: resolution === r ? '#fff' : '#8a7aaa', border: resolution === r ? 'none' : '1px solid #312550', cursor: 'pointer' }}
+                    // 提示只能挂在 title 上，**不许**在弹层里多加一行：这个弹层是 bottom:100% 向上
+                    // 展开的，多一行就把最上面的「比例」「清晰度」顶出屏幕顶部，而且超出视口的部分
+                    // 既看不见也滚不到 —— 2026-08-19「不能调分辨率了」就是这么来的。
+                    title={getVideoResolutionNote(model, r) || undefined}
                     onClick={() => setSettings('resolution', r)}>{r}</button>
                 ))}
               </div>
@@ -607,15 +2760,23 @@ export function VideoNode({ id, data, selected }: Props) {
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs" style={{ color: '#5a5070' }}>视频时长</span>
-                <span className="text-sm font-medium" style={{ color: '#c4b5fd' }}>{duration}s</span>
+                <span className="text-sm font-medium" style={{ color: '#c4b5fd' }}>{durationLabel}</span>
               </div>
-              <input type="range" min={DURATION_MIN} max={DURATION_MAX} step={1} value={duration}
-                className="w-full nodrag" style={{ accentColor: '#7c5cfc', cursor: 'pointer' }}
-                onChange={e => setSettings('duration', Number(e.target.value))} />
-              <div className="flex justify-between mt-1">
-                <span style={{ fontSize: 10, color: '#5a5070' }}>{DURATION_MIN}s</span>
-                <span style={{ fontSize: 10, color: '#5a5070' }}>{DURATION_MAX}s</span>
-              </div>
+              {durationLockedToInput ? (
+                <div className="text-xs rounded nodrag" style={{ background: '#1e1830', border: '1px solid #312550', color: '#8a7aaa', padding: '8px 10px' }}>
+                  当前模式按输入视频时长生成
+                </div>
+              ) : (
+                <>
+                  <input type="range" min={durationRule.min} max={durationRule.max} step={durationRule.step || 1} value={duration}
+                    className="w-full nodrag" style={{ accentColor: '#7c5cfc', cursor: 'pointer' }}
+                    onChange={e => setSettings('duration', Number(e.target.value))} />
+                  <div className="flex justify-between mt-1">
+                    <span style={{ fontSize: 10, color: '#5a5070' }}>{durationRule.min}s</span>
+                    <span style={{ fontSize: 10, color: '#5a5070' }}>{durationRule.max}s</span>
+                  </div>
+                </>
+              )}
             </div>
             <div>
               <div className="text-xs mb-2" style={{ color: '#5a5070' }}>生成音频</div>
@@ -629,17 +2790,28 @@ export function VideoNode({ id, data, selected }: Props) {
                 ))}
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
-      <div className="flex items-center gap-1.5 px-3 py-2 nodrag">
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 nodrag shotflow-node-popover-bottom-bar"
+        style={{ flexWrap: 'wrap', rowGap: 5 }}
+      >
         {/* Model selector */}
         <select
           className="text-sm rounded px-2 py-1 nodrag"
           style={{
             background: '#1e1830', border: '1px solid #312550',
-            color: '#c4b5fd', maxWidth: 136, flex: '0 0 auto',
+            color: '#d1c6ff',
+            width: 156,
+            minWidth: 156,
+            maxWidth: 190,
+            flex: '0 0 156px',
+            fontSize: 12,
+            fontWeight: 600,
+            outline: 'none',
           }}
-          value={params.model}
+          value={model}
           onChange={e => setParam('model', e.target.value)}
         >
           {VIDEO_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
@@ -651,15 +2823,21 @@ export function VideoNode({ id, data, selected }: Props) {
           style={{
             background: '#1e1830', border: '1px solid #312550',
             color: '#8a7aaa', cursor: 'pointer', whiteSpace: 'nowrap',
+            width: 'auto',
+            minWidth: 132,
+            flex: '0 0 auto',
+            boxSizing: 'border-box',
+            justifyContent: 'center',
           }}
+          title={`${ratio === 'adaptive' ? '自适应' : ratio} · ${resolution} · ${durationLabel}${sound === 'on' ? ' · 开启声音' : ''}`}
           onClick={() => setShowSettings(v => !v)}
         >
-          <span>{ratio === 'auto' ? 'Auto' : ratio}</span>
+          <span style={{ flexShrink: 0 }}>{ratio === 'adaptive' ? '自适应' : ratio}</span>
           <span style={{ opacity: 0.3 }}>·</span>
-          <span>{resolution}</span>
+          <span style={{ flexShrink: 0 }}>{resolution}</span>
           <span style={{ opacity: 0.3 }}>·</span>
-          <span>{duration}s</span>
-          {sound === 'on' && <span style={{ fontSize: 11 }}>·🔊</span>}
+          <span style={{ flexShrink: 0 }}>{durationLabel}</span>
+          {sound === 'on' && <span style={{ fontSize: 11, flexShrink: 0 }}>·🔊</span>}
         </button>
 
         {/* Translate */}
@@ -667,85 +2845,170 @@ export function VideoNode({ id, data, selected }: Props) {
           className="text-xs px-1.5 py-1 rounded nodrag"
           style={{
             background: '#1e1830', border: '1px solid #312550',
-            color: '#8a7aaa', cursor: 'pointer', fontWeight: 500,
+            color: isTranslating ? '#c4b5fd' : '#8a7aaa',
+            cursor: isTranslating ? 'wait' : 'pointer',
+            fontWeight: 500,
+            width: 34,
+            minWidth: 34,
+            maxWidth: 34,
+            height: 28,
+            flex: '0 0 34px',
+            whiteSpace: 'nowrap',
+            padding: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: isTranslating ? 0.92 : 1,
           }}
-          title="翻译提示词"
-        >文A</button>
+          title="翻译为英文提示词，保留 @ 图片/视频引用"
+          type="button"
+          disabled={isTranslating}
+          onClick={handleTranslatePrompt}
+        >
+          {isTranslating ? <Loader2 size={13} className="animate-spin" /> : '文A'}
+        </button>
 
         <div style={{ flex: 1 }} />
 
-        {/* Count */}
-        <button
-          className="flex items-center gap-0.5 text-xs px-1.5 py-1 rounded nodrag"
-          style={{
-            background: '#1e1830', border: '1px solid #312550',
-            color: '#8a7aaa', cursor: 'pointer',
-          }}
-          onClick={() => setCount(c => c >= 4 ? 1 : c + 1)}
-        >
-          {count}个
-          <span style={{ fontSize: 8, marginLeft: 1 }}>▲</span>
-        </button>
-
-        {/* Generate button */}
-        <button
-          className="flex items-center justify-center nodrag"
-          style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: isLoading ? '#1e1830' : '#ffffff',
-            border: 'none',
-            cursor: isLoading ? 'default' : 'pointer',
-            color: isLoading ? '#7c5cfc' : '#111',
-            boxShadow: isLoading ? 'none' : '0 2px 8px rgba(0,0,0,0.25)',
-            transition: 'all 0.15s',
-          }}
-          onMouseEnter={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0' }}
-          onMouseLeave={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
-          onClick={handleGenerate}
-          disabled={isLoading}
-          title={isLoading ? `生成中 ${data.taskInfo?.progressPercent ?? 0}%` : '生成'}
-        >
-          {isLoading
-            ? <svg width="15" height="15" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
-                <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
-                <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+        <div className="flex items-center nodrag" style={{ gap: 3, flexShrink: 0 }}>
+          {canChooseGenerationCount && (
+            <select
+              className="nodrag"
+              value={generationCount}
+              onChange={e => setParam('count', Number(e.target.value))}
+              title="生成个数"
+              style={{
+                height: 28,
+                background: '#1e1830',
+                border: '1px solid #312550',
+                borderRadius: 7,
+                color: '#c4b5fd',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                outline: 'none',
+                padding: '0 6px',
+                width: 52,
+                minWidth: 52,
+                maxWidth: 52,
+                flex: '0 0 52px',
+              }}
+            >
+              {generationCountOptions.map(n => <option key={n} value={n}>{n}个</option>)}
+            </select>
+          )}
+          {/* Generate button */}
+          <button
+            className="flex items-center justify-center nodrag shotflow-node-primary-action"
+            style={{
+              width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+              background: generateLocked ? '#1e1830' : '#ffffff',
+              border: 'none',
+              cursor: generateLocked ? 'default' : 'pointer',
+              color: generateLocked ? '#7c5cfc' : '#111',
+              boxShadow: generateLocked ? 'none' : '0 2px 8px rgba(0,0,0,0.25)',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { if (!generateLocked) (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0' }}
+            onMouseLeave={e => { if (!generateLocked) (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
+            onClick={handleGenerate}
+            disabled={generateLocked}
+            title={generateLockTitle}
+          >
+            {generateLocked
+              ? <svg width="15" height="15" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
+                  <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
+                  <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
+                </svg>
+              : <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 13V3M8 3L4 7M8 3l4 4" stroke="#111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-            : <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M8 13V3M8 3L4 7M8 3l4 4" stroke="#111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-          }
-        </button>
+            }
+          </button>
+        </div>
       </div>
       </div>{/* end bottom bar wrapper */}
+      {/*
+        进度条**只有全屏模式**才画在面板里 —— 全屏时面板就是整个弹窗，最后一行本身就是"下面"。
+        普通模式下画在面板里会占掉内部高度，把提示词输入区挤没（2026-08-19 用户反馈），
+        所以那种情况改成挂在面板外、整个弹窗下方，见下方 progressBelowPanel 那个 portal。
+      */}
+      {panelExpanded && progressRows.length > 0 && (
+        <div className="px-2 pb-2 nodrag shotflow-node-popover-progress-row" style={panelSize ? { flexShrink: 0 } : undefined}>
+          {progressRows.map((info, index) => (
+            <GenerationProgress
+              key={info.taskId}
+              variant="panel"
+              taskInfo={info}
+              label={progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
+              onCancel={() => cancelProgressRow(info.taskId)}
+            />
+          ))}
+        </div>
+      )}
 
       </>
+      </div>
+      {!panelExpanded && <ResizablePanelHandle onPointerDown={handlePanelResizeStart} />}
       </div>,
       document.body
     )}{/* end controls portal */}
 
-    {/* Hover zoom Portal — outside overflow-hidden */}
-    {hoverThumb && createPortal(
-      <div style={{
-        position: 'fixed',
-        left: hoverThumb.rect.left + hoverThumb.rect.width / 2,
-        top: hoverThumb.rect.top - 8,
-        transform: 'translate(-50%, -100%)',
-        zIndex: 99998, pointerEvents: 'none',
-        background: '#0d0b18', border: '1px solid #312550',
-        borderRadius: 8, padding: 4,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.9)',
-      }}>
-        <img src={hoverThumb.url} draggable={false}
-          style={{ width: 180, height: 180, objectFit: 'contain', display: 'block', borderRadius: 5 }} />
-        <div style={{ fontSize: 10, color: '#8a7aaa', textAlign: 'center', marginTop: 4 }}>
-          {hoverThumb.name}
-        </div>
-      </div>,
-      document.body
+    {/* Hover zoom Portal 鈥?outside overflow-hidden */}
+    <HoverImagePreview entry={hoverThumb} />
+    {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+    {/* 视频大图查看器：跟图片节点同一个组件、同一套外观（顶部工具条 / 计数 / 缩略图轨道 /
+        主视频按钮 / 节点功能行），只是 kind="video"。
+        items 一律用**原始地址**：设为主视频比的是 data._primaryAssetUrl，下载也以它为准，
+        换成 mediaPreviewUrl 那个轻量预览地址会把这两件事都对不上。 */}
+    {videoPreviewUrl && <ImagePreview
+      kind="video"
+      url={videoPreviewUrl}
+      items={videoPreviewItems}
+      onSetPrimary={setMainVideo}
+      primaryUrl={videoUrl}
+      nodeActions={mediaToolbarActions}
+      onRemoveItem={removeVideoUrl}
+      name={data.name}
+      onClose={() => setVideoPreviewUrl(null)}
+    />}
+    {trimOpen && videoUrl && (
+      <VideoTrimModal
+        url={videoUrl}
+        name={data.name || '视频'}
+        durationHintSec={Number(currentVideoMeta?.durationSec) || undefined}
+        onCancel={() => {
+          if (!trimSubmitting) setTrimOpen(false)
+        }}
+        onConfirm={handleTrimAccept}
+      />
     )}
-
-    {previewChipUrl && <ImagePreview url={previewChipUrl} onClose={() => setPreviewChipUrl(null)} />}
-    </div>
+    {cropOpen && videoUrl && (
+      <VideoCropModal
+        url={videoUrl}
+        name={data.name || '视频'}
+        sourceWidthHint={Number(currentVideoMeta?.width) || undefined}
+        sourceHeightHint={Number(currentVideoMeta?.height) || undefined}
+        onCancel={() => {
+          if (!cropSubmitting) setCropOpen(false)
+        }}
+        onConfirm={handleCropAccept}
+      />
+    )}
+    {whiteboardOpen && (
+      <WhiteboardModal
+        sourceName={data.name}
+        sourceFile={whiteboardSourceFile}
+        isPreparing={whiteboardPreparing}
+        loadError={whiteboardError}
+        onCancel={() => {
+          setWhiteboardOpen(false)
+          setWhiteboardSourceFile(null)
+          setWhiteboardError(null)
+        }}
+        onAccept={handleWhiteboardAccept}
+      />
+    )}
     </>
   )
 }

@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const config = require('./config');
 const { getPool } = require('./db');
+const { authenticatePluginToken } = require('./services/PluginTokenService');
+const { touchUserCatalogLastUsed } = require('./userCatalog');
 
 const COOKIE_NAME = 'tapflow_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -52,14 +54,8 @@ function sessionCookieOptions() {
   };
 }
 
-async function touchUserLastUsed(userId) {
-  await getPool().query(
-    `UPDATE users
-      SET last_used_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-        AND (last_used_at IS NULL OR last_used_at < CURRENT_TIMESTAMP - INTERVAL 1 MINUTE)`,
-    [userId]
-  );
+async function touchUserLastUsed(userId, externalUserId = null) {
+  await touchUserCatalogLastUsed(userId, externalUserId);
 }
 
 async function requireAuth(req, res, next) {
@@ -71,7 +67,7 @@ async function requireAuth(req, res, next) {
     }
 
     const [rows] = await getPool().query(
-      'SELECT id, username, role, active FROM users WHERE id = ? LIMIT 1',
+      'SELECT id, external_user_id, username, role, active FROM users WHERE id = ? LIMIT 1',
       [session.id]
     );
 
@@ -81,11 +77,49 @@ async function requireAuth(req, res, next) {
     }
 
     req.user = rows[0];
-    await touchUserLastUsed(req.user.id);
+    await touchUserLastUsed(req.user.id, req.user.external_user_id);
     next();
   } catch (error) {
     next(error);
   }
+}
+
+async function requirePluginAuth(req, res, next) {
+  try {
+    const authorization = String(req.get('authorization') || '');
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    const authenticated = match ? await authenticatePluginToken(match[1]) : null;
+    if (!authenticated) {
+      res.status(401).json({
+        error: 'Shotflow plugin token is missing, invalid, revoked, or expired',
+        errorCode: 'PLUGIN_AUTH_REQUIRED',
+      });
+      return;
+    }
+
+    req.user = authenticated.user;
+    req.pluginAuth = authenticated.token;
+    await touchUserLastUsed(req.user.id, req.user.external_user_id);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requirePluginScope(...requiredScopes) {
+  return (req, res, next) => {
+    const grantedScopes = Array.isArray(req.pluginAuth?.scopes) ? req.pluginAuth.scopes : [];
+    const missingScopes = requiredScopes.filter((scope) => !grantedScopes.includes(scope));
+    if (missingScopes.length > 0) {
+      res.status(403).json({
+        error: `Plugin token is missing required scope: ${missingScopes.join(', ')}`,
+        errorCode: 'PLUGIN_SCOPE_REQUIRED',
+        requiredScopes: missingScopes,
+      });
+      return;
+    }
+    next();
+  };
 }
 
 function requireAdmin(req, res, next) {
@@ -101,6 +135,8 @@ module.exports = {
   createSession,
   requireAuth,
   requireAdmin,
+  requirePluginAuth,
+  requirePluginScope,
   touchUserLastUsed,
   sessionCookieOptions
 };

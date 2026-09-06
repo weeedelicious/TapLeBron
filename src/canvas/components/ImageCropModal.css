@@ -1,0 +1,131 @@
+.shotflow-image-cropper .cropper-container {
+  background: #050507;
+}
+
+.shotflow-image-cropper .cropper-modal {
+  background: #000;
+  opacity: 0.68;
+}
+
+.shotflow-image-cropper .cropper-view-box {
+  outline: 1px solid rgba(255, 255, 255, 0.96);
+  outline-color: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 0 0 1px rgba(151, 126, 255, 0.6),
+    0 0 26px rgba(126, 96, 255, 0.2);
+}
+
+.shotflow-image-cropper .cropper-face {
+  background: transparent;
+  opacity: 0;
+}
+
+.shotflow-image-cropper .cropper-dashed {
+  border-color: rgba(255, 255, 255, 0.46);
+  opacity: 0.58;
+}
+
+.shotflow-image-cropper .cropper-line {
+  background: transparent;
+  opacity: 1;
+}
+
+.shotflow-image-cropper .cropper-line.line-e,
+.shotflow-image-cropper .cropper-line.line-w {
+  top: 0;
+  width: 16px;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 7px,
+    rgba(255, 255, 255, 0.86) 7px,
+    rgba(255, 255, 255, 0.86) 8px,
+    transparent 8px
+  );
+}
+
+.shotflow-image-cropper .cropper-line.line-e {
+  right: -8px;
+}
+
+.shotflow-image-cropper .cropper-line.line-w {
+  left: -8px;
+}
+
+.shotflow-image-cropper .cropper-line.line-n,
+.shotflow-image-cropper .cropper-line.line-s {
+  left: 0;
+  width: 100%;
+  height: 16px;
+  background: linear-gradient(
+    180deg,
+    transparent 7px,
+    rgba(255, 255, 255, 0.86) 7px,
+    rgba(255, 255, 255, 0.86) 8px,
+    transparent 8px
+  );
+}
+
+.shotflow-image-cropper .cropper-line.line-n {
+  top: -8px;
+}
+
+.shotflow-image-cropper .cropper-line.line-s {
+  bottom: -8px;
+}
+
+.shotflow-image-cropper .cropper-point {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #7563e8;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 2px rgba(7, 5, 12, 0.62),
+    0 2px 10px rgba(129, 99, 255, 0.56);
+  opacity: 1;
+}
+
+.shotflow-image-cropper .cropper-point.point-e {
+  right: -6px;
+  margin-top: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-n {
+  top: -6px;
+  margin-left: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-w {
+  left: -6px;
+  margin-top: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-s {
+  bottom: -6px;
+  margin-left: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-ne {
+  top: -6px;
+  right: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-nw {
+  top: -6px;
+  left: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-se {
+  right: -6px;
+  bottom: -6px;
+}
+
+.shotflow-image-cropper .cropper-point.point-sw {
+  bottom: -6px;
+  left: -6px;
+}
+
+.shotflow-image-cropper .cropper-center {
+  display: none;
+}

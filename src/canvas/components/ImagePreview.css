@@ -1,0 +1,648 @@
+/* 图片全屏查看器。
+   这份样式此前只存在于线上编译产物里、源码从未有过，2026-08-14 按线上实际样式补回，
+   数值与线上一致，避免切回正常构建后查看器变成无样式。 */
+
+.shotflow-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #07080a;
+  color: #eef3f8;
+  user-select: none;
+  overflow: hidden;
+}
+
+.shotflow-image-viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.shotflow-image-viewer.is-dragging,
+.shotflow-image-viewer.is-dragging * {
+  cursor: grabbing !important;
+}
+
+.shotflow-image-viewer-stage.has-info {
+  right: 340px;
+}
+
+/* 顶部缩略图轨道占位：不让开，图会盖在轨道上 */
+.shotflow-image-viewer-stage.has-strip {
+  top: 158px;
+}
+
+/* video 一起选上：视频节点的大图查看器复用这一套（ImagePreview 的 kind="video"）。
+   视频要留出原生控件的高度，所以比图片矮一点。 */
+.shotflow-image-viewer-stage img,
+.shotflow-image-viewer-stage video {
+  max-width: 92%;
+  max-height: 92%;
+  object-fit: contain;
+  border-radius: 5px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.68);
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* 原生控件条大约 40px，不减掉的话放大到 92% 时控件会被 stage 裁掉 */
+.shotflow-image-viewer-stage video {
+  max-height: calc(92% - 40px);
+  background: #0b0910;
+}
+
+.shotflow-image-viewer-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(17, 20, 24, 0.88);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px);
+}
+
+.shotflow-image-viewer-toolbar span {
+  min-width: 48px;
+  text-align: center;
+  font-size: 11px;
+  color: #aab5c2;
+}
+
+.shotflow-image-viewer-toolbar button {
+  height: 32px;
+  min-width: 32px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e9f1f8;
+  cursor: pointer;
+}
+
+.shotflow-image-viewer-toolbar button:hover {
+  background: rgba(128, 189, 255, 0.16);
+  border-color: rgba(128, 189, 255, 0.28);
+}
+
+/* —— 多图：顶部缩略图轨道 ————————————————————————————————
+   尺寸沿用 yet-another-react-lightbox 的 Thumbnails 约定（4px 圆角、4px 内边距、
+   object-fit: contain、轨道两端渐隐），只把 120×80 收成 96×62 以适配这个查看器
+   顶部的空间。轨道自己横向滚动，当前项由 scrollIntoView 带进可视区。 */
+.shotflow-image-viewer-strip {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(1100px, calc(100vw - 48px));
+  /* 左右留 28px：下面那道 mask 把两端各 24px 渐隐掉，padding 小于 24px 时最外侧那一格的
+     角标和删除按钮就会被洗淡（删除按钮被洗淡尤其糟 —— 它是要点的）。留够 28px 让渐隐
+     只盖在 padding 上。滚动时缩略图照样会滑进渐隐区，"还能往两边滚"的暗示不受影响。 */
+  padding: 8px 28px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(17, 20, 24, 0.86);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  /* 两端渐隐，暗示还能往两边滚 */
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+.shotflow-image-viewer-strip.has-info {
+  left: calc(50% - 170px);
+  max-width: min(1100px, calc(100vw - 388px));
+}
+
+.shotflow-image-viewer-strip::-webkit-scrollbar {
+  height: 6px;
+}
+
+.shotflow-image-viewer-strip::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.shotflow-image-viewer-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 62px;
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+
+.shotflow-image-viewer-thumb img,
+.shotflow-image-viewer-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+  pointer-events: none;
+}
+
+.shotflow-image-viewer-thumb:hover {
+  border-color: rgba(128, 189, 255, 0.42);
+  background: rgba(128, 189, 255, 0.12);
+}
+
+.shotflow-image-viewer-thumb.is-active {
+  border-color: #7fbcff;
+  background: rgba(128, 189, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.shotflow-image-viewer-thumb-order {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(7, 8, 10, 0.72);
+  color: #cfd9e4;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* 每格的外壳。存在的唯一理由是给删除按钮一个定位参照，同时让「×」能当缩略图按钮的兄弟节点
+   （button 套 button 是非法 HTML）。轨道是 flex，所以 flex 属性要挪到这一层上来。 */
+.shotflow-image-viewer-thumb-cell {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+}
+
+/* 收在格子内、不外挑：轨道 overflow-y 是 hidden，外挑的角容易被裁；
+   而且最外侧那一格外挑出去就会伸进上面说的渐隐区。 */
+.shotflow-image-viewer-thumb-remove {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 50%;
+  background: rgba(20, 12, 16, 0.92);
+  color: #ffd9d9;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.72;
+  transition: opacity 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.shotflow-image-viewer-thumb-cell:hover .shotflow-image-viewer-thumb-remove {
+  opacity: 1;
+}
+
+.shotflow-image-viewer-thumb-remove:hover {
+  background: #b3323f;
+  border-color: #ff8f9a;
+  color: #fff;
+  opacity: 1;
+}
+
+.shotflow-image-viewer-thumb-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(7, 8, 10, 0.72);
+  color: #9fb4c8;
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+/* —— 多图：左右翻页箭头 —————————————————————————————— */
+.shotflow-image-viewer-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 44px;
+  height: 76px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(17, 20, 24, 0.7);
+  color: #e9f1f8;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.shotflow-image-viewer-nav:hover {
+  background: rgba(128, 189, 255, 0.2);
+  border-color: rgba(128, 189, 255, 0.34);
+}
+
+.shotflow-image-viewer-nav.is-prev {
+  left: 18px;
+}
+
+.shotflow-image-viewer-nav.is-next {
+  right: 18px;
+}
+
+.shotflow-image-viewer:has(.shotflow-image-viewer-info) .shotflow-image-viewer-nav.is-next {
+  right: 358px;
+}
+
+.shotflow-image-viewer-counter {
+  min-width: 54px !important;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #dbe6f2 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.shotflow-image-viewer-toolbar button.is-on {
+  background: rgba(128, 189, 255, 0.2);
+  border-color: rgba(128, 189, 255, 0.34);
+}
+
+.shotflow-image-viewer-toolbar button.is-done {
+  background: rgba(96, 214, 148, 0.22);
+  border-color: rgba(96, 214, 148, 0.4);
+}
+
+.shotflow-image-viewer-toolbar button.is-failed {
+  background: rgba(255, 138, 128, 0.2);
+  border-color: rgba(255, 138, 128, 0.4);
+}
+
+.shotflow-image-viewer-info {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 340px;
+  box-sizing: border-box;
+  padding: 72px 18px 20px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(24, 28, 33, 0.98), rgba(11, 13, 16, 0.99));
+  overflow-y: auto;
+}
+
+.shotflow-image-viewer-info h2 {
+  margin: 0 0 18px;
+  font-size: 18px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.shotflow-image-viewer-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+}
+
+.shotflow-image-viewer-info-row span {
+  color: #7f8b98;
+}
+
+.shotflow-image-viewer-info-row strong {
+  color: #dce5ed;
+  text-align: right;
+  font-weight: 650;
+  word-break: break-all;
+}
+
+/* 提示词是长文本，塞不进上面那种左右对齐的一行里，单独一块。
+   原来它排在最末、又是暗色，用户根本没发现它在，所以现在给底色和左侧色条，明确成一块内容。 */
+.shotflow-image-viewer-prompt {
+  margin: 10px 0 4px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border-left: 2px solid rgba(128, 189, 255, 0.55);
+  background: rgba(128, 189, 255, 0.07);
+  font-size: 12px;
+}
+
+.shotflow-image-viewer-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shotflow-image-viewer-prompt span {
+  color: #9fb2c4;
+  font-weight: 650;
+}
+
+.shotflow-image-viewer-prompt-head button {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(128, 189, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(128, 189, 255, 0.1);
+  color: #bcd3ea;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shotflow-image-viewer-prompt-head button:hover {
+  border-color: rgba(128, 189, 255, 0.5);
+  color: #ffffff;
+}
+
+.shotflow-image-viewer-prompt-head button.is-done {
+  border-color: rgba(96, 214, 148, 0.45);
+  background: rgba(96, 214, 148, 0.16);
+  color: #8fe3b4;
+}
+
+.shotflow-image-viewer-prompt p {
+  margin: 6px 0 0;
+  max-height: 210px;
+  overflow-y: auto;
+  color: #f2f6fa;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.shotflow-image-viewer-prompt p.is-empty {
+  color: #78838f;
+  font-style: normal;
+}
+
+.shotflow-image-viewer-info > button {
+  width: 100%;
+  height: 36px;
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #dce5ed;
+  cursor: pointer;
+}
+
+.shotflow-image-viewer-info > button:hover {
+  background: rgba(128, 189, 255, 0.14);
+}
+
+.shotflow-image-viewer-info p {
+  margin: 18px 0 0;
+  color: #68737f;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* 窄屏：信息栏改到底部抽屉，工具栏横向滚动 */
+@media (max-width: 800px) {
+  .shotflow-image-viewer-stage.has-info {
+    right: 0;
+    bottom: 240px;
+  }
+
+  /* 窄屏信息栏在底部，缩略图轨道和箭头不用给右侧让位 */
+  .shotflow-image-viewer-strip,
+  .shotflow-image-viewer-strip.has-info {
+    left: 50%;
+    max-width: calc(100vw - 24px);
+  }
+
+  .shotflow-image-viewer:has(.shotflow-image-viewer-info) .shotflow-image-viewer-nav.is-next {
+    right: 18px;
+  }
+
+  .shotflow-image-viewer-nav {
+    width: 36px;
+    height: 60px;
+  }
+
+  .shotflow-image-viewer-info {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: 240px;
+    padding: 18px;
+  }
+
+  .shotflow-image-viewer-toolbar {
+    left: 12px;
+    right: 12px;
+    transform: none;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+}
+
+/* 细节放大镜。此前这个类在源码和线上都没有任何样式，元素是 0×0 的 static 元素，
+   left/top 不生效，所以工具栏上的放大镜按钮点了没有任何可见效果。
+   z-index 取 2：低于工具栏(3)，避免跟随鼠标时盖住控件。 */
+.shotflow-image-viewer-loupe {
+  position: fixed;
+  z-index: 2;
+  width: 240px;
+  height: 240px;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  background-color: #07080a;
+  background-repeat: no-repeat;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.58), inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/*
+  左上角操作条。工具栏那排是图标，一眼看不出是什么；主操作用带文字的按钮单独放，
+  位置在缩略图轨道下方、图片左上角外侧，不挡图。
+*/
+.shotflow-image-viewer-actions {
+  position: absolute;
+  /* 工具栏在 top:16 高约 44，收起缩略图时贴它下面；left 由 JS 按图片实际左边缘给 */
+  top: 64px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 缩略图轨道展开时（top:66 + 62 的缩略图 + 内边距 ≈ 到 146），让操作条落到它下面 */
+.shotflow-image-viewer:has(.shotflow-image-viewer-strip)
+  .shotflow-image-viewer-actions {
+  top: 156px;
+}
+
+.shotflow-image-viewer-actions button {
+  height: 38px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(28, 33, 40, 0.96);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  color: #f2f6fb;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+/* 主操作：实心强调色，一眼能看见 */
+.shotflow-image-viewer-actions button.is-primary {
+  border-color: rgba(121, 184, 255, 0.85);
+  background: linear-gradient(180deg, #3d8ae0, #2f6fbe);
+  box-shadow:
+    0 12px 30px rgba(30, 86, 152, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.shotflow-image-viewer-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(150, 200, 255, 0.9);
+  background: rgba(50, 74, 106, 0.98);
+}
+
+.shotflow-image-viewer-actions button.is-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #4c9bf0, #3a7ecd);
+}
+
+.shotflow-image-viewer-actions button:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.shotflow-image-viewer-actions button.is-done {
+  border-color: rgba(120, 220, 160, 0.7);
+  background: rgba(26, 58, 42, 0.96);
+  color: #9ce8bd;
+}
+
+.shotflow-image-viewer-actions button.is-failed {
+  border-color: rgba(255, 176, 92, 0.7);
+  background: rgba(58, 42, 26, 0.96);
+  color: #ffbe74;
+}
+
+
+
+
+/*
+  大图上方的节点功能按钮（裁剪 / 白板标注 / 局部重绘 / 抠像 / 灯光 / 氛围迁移 /
+  九宫格 / 全景 / 下载）。图标 + 文字，跟上面那排「设为主图 / 复制图片」左对齐，
+  排在它下面一行；按钮多、文字长，允许换行。
+*/
+.shotflow-image-viewer-node-actions {
+  position: absolute;
+  /* 上一行操作条在 top:64 高 38，这里贴在它下面；轨道展开时整体下移见下面那条 */
+  top: 110px;
+  z-index: 3;
+  display: flex;
+  /* 这些功能要排在一行。宽度不够时横向滚动，不换行 —— 换行会把整块顶到图片中间 */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  /* max-width 由 JS 按"操作条左边缘到视口右边"实测给（见 actionsMaxWidth） */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.shotflow-image-viewer-node-actions::-webkit-scrollbar {
+  height: 0;
+}
+
+.shotflow-image-viewer:has(.shotflow-image-viewer-strip)
+  .shotflow-image-viewer-node-actions {
+  top: 202px;
+}
+
+.shotflow-image-viewer-node-actions button {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: rgba(20, 24, 30, 0.9);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+  color: #e7edf5;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.shotflow-image-viewer-node-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9fc6f0;
+}
+
+.shotflow-image-viewer-node-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(150, 200, 255, 0.72);
+  background: rgba(44, 66, 96, 0.95);
+}
+
+.shotflow-image-viewer-node-actions button.is-active {
+  border-color: rgba(150, 200, 255, 0.72);
+  background: rgba(52, 84, 128, 0.95);
+  color: #fff;
+}
+
+.shotflow-image-viewer-node-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shotflow-image-viewer-node-actions button:disabled .shotflow-image-viewer-node-action-icon {
+  color: #7d8794;
+}

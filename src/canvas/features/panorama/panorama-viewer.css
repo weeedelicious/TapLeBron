@@ -1,0 +1,308 @@
+.panorama-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(2, 3, 7, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.panorama-viewer-shell {
+  position: relative;
+  width: min(1520px, calc(100vw - 36px));
+  height: min(900px, calc(100vh - 36px));
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(173, 198, 255, 0.22);
+  border-radius: 14px;
+  background: #05070c;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.68);
+}
+
+.panorama-viewer-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(22, 27, 38, 0.98), rgba(10, 13, 20, 0.96));
+  color: #f7f8ff;
+}
+
+.panorama-viewer-header > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.panorama-viewer-header strong {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.panorama-viewer-header span {
+  overflow: hidden;
+  color: #8f98ab;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panorama-viewer-readout {
+  display: flex;
+  gap: 8px;
+}
+
+.panorama-viewer-readout b {
+  min-width: 72px;
+  padding: 5px 8px;
+  border: 1px solid rgba(160, 190, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(95, 125, 190, 0.08);
+  color: #aebbd3;
+  font: 700 10px/1 system-ui, sans-serif;
+  text-align: center;
+}
+
+.panorama-viewer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.panorama-viewer-actions button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #dbe2ef;
+  cursor: pointer;
+}
+
+.panorama-viewer-actions button:hover,
+.panorama-viewer-actions button.is-active {
+  border-color: rgba(142, 183, 255, 0.46);
+  background: rgba(119, 159, 229, 0.16);
+  color: #fff;
+}
+
+.panorama-viewer-actions button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.panorama-viewer-exposure {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.panorama-viewer-exposure button {
+  width: 28px;
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.panorama-viewer-exposure b {
+  min-width: 42px;
+  color: #dbe2ef;
+  font-size: 9px;
+  text-align: center;
+}
+
+.panorama-viewer-host {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #030407;
+}
+
+.panorama-viewer-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.panorama-viewer-canvas.is-dragging {
+  cursor: grabbing;
+}
+
+.panorama-viewer-flat-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #030407;
+  user-select: none;
+}
+
+.panorama-viewer-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, transparent 33.2%, rgba(255,255,255,0.28) 33.33%, transparent 33.46%, transparent 66.53%, rgba(255,255,255,0.28) 66.66%, transparent 66.8%),
+    linear-gradient(to bottom, transparent 33.2%, rgba(255,255,255,0.28) 33.33%, transparent 33.46%, transparent 66.53%, rgba(255,255,255,0.28) 66.66%, transparent 66.8%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16);
+}
+
+.panorama-viewer-state {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  background: rgba(3, 4, 7, 0.84);
+  color: #cdd7e9;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.panorama-viewer-state.is-error {
+  color: #ff9eab;
+}
+
+.panorama-viewer-help {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 2;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.panorama-viewer-state .is-spinning,
+.panorama-viewer-capture-bar .is-spinning {
+  animation: spin 1s linear infinite;
+}
+
+.panorama-viewer-capture-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 13px;
+  background: rgba(18, 24, 25, 0.9);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(10px);
+}
+
+.panorama-viewer-capture-bar button,
+.panorama-viewer-capture-bar select {
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #e8efef;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.panorama-viewer-capture-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.panorama-viewer-capture-bar select {
+  min-width: 92px;
+  padding: 0 28px 0 10px;
+  cursor: pointer;
+}
+
+.panorama-viewer-capture-bar select option {
+  color: #eef3f3;
+  background: #1c2223;
+}
+
+.panorama-viewer-capture-bar button:hover:not(:disabled),
+.panorama-viewer-capture-bar select:hover:not(:disabled) {
+  border-color: rgba(168, 220, 218, 0.42);
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.panorama-viewer-capture-bar button.is-primary {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: #eef5f4;
+  color: #151a1a;
+}
+
+.panorama-viewer-capture-bar button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.panorama-viewer-capture-message {
+  position: absolute;
+  left: 50%;
+  bottom: 76px;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(9, 13, 14, 0.84);
+  color: #d6e6e4;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.panorama-viewer-shell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+@media (max-width: 960px) {
+  .panorama-viewer-capture-bar {
+    max-width: calc(100% - 24px);
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .panorama-viewer-backdrop { padding: 8px; }
+  .panorama-viewer-shell { width: calc(100vw - 16px); height: calc(100vh - 16px); }
+  .panorama-viewer-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .panorama-viewer-readout { display: none; }
+  .panorama-viewer-header span { display: none; }
+}

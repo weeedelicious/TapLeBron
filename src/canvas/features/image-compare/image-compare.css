@@ -1,0 +1,776 @@
+/* 图片对比节点 + 全屏查看器。配色沿用 panorama-viewer-node.css 的深色卡片语言。 */
+
+/* ── 画布上的紧凑节点 ─────────────────────────────────────────────── */
+
+.image-compare-node {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(135, 176, 255, 0.28);
+  border-radius: 12px;
+  background: #070a10;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.35);
+  color: #edf3ff;
+}
+
+.image-compare-node.is-selected {
+  border-color: rgba(142, 190, 255, 0.82);
+  box-shadow:
+    0 0 0 2px rgba(102, 154, 255, 0.18),
+    0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.image-compare-node-handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #07101d;
+  background: #79b8ff;
+}
+
+/*
+  两个 handle 各自对齐它那一行槽位的垂直中心（header 40 + padding 10 + 行高 64）。
+  槽位刻意做成上下两行而不是左右并排：两个 handle 都在左边缘，左右并排的话 B 的接口在
+  左下、槽位在右边，连线时指不明白。
+*/
+.image-compare-node-handle-a {
+  top: 82px;
+}
+
+.image-compare-node-handle-b {
+  top: 154px;
+}
+
+/* 拼接图产出走右侧这个输出口 */
+.image-compare-node-output-handle {
+  top: 118px;
+  background: #8fd7ff;
+}
+
+.image-compare-spin {
+  animation: image-compare-spin 0.9s linear infinite;
+}
+
+@keyframes image-compare-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-compare-spin {
+    animation-duration: 2.4s;
+  }
+}
+
+.image-compare-node-header {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(24, 31, 45, 0.98),
+    rgba(11, 15, 23, 0.98)
+  );
+}
+
+.image-compare-node-header > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-compare-node-header strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.image-compare-node-header span {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(113, 163, 255, 0.12);
+  color: #8fa9d1;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.image-compare-node-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.image-compare-node-actions button {
+  width: 27px;
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c9d8ed;
+  cursor: pointer;
+}
+
+.image-compare-node-actions button:hover:not(:disabled) {
+  border-color: rgba(121, 184, 255, 0.55);
+  background: rgba(92, 151, 225, 0.16);
+  color: #fff;
+}
+
+.image-compare-node-actions button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.image-compare-node-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+/* 一行 = 字母徽标 + 缩略图 + 标题/尺寸，行高 64 与左侧 handle 对齐 */
+.image-compare-slot {
+  height: 64px;
+  display: grid;
+  grid-template-columns: 20px 104px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.image-compare-slot-letter {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(113, 163, 255, 0.12);
+  color: #9dc0f2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.image-compare-slot.has-image .image-compare-slot-letter {
+  background: rgba(121, 184, 255, 0.22);
+  color: #d8e8ff;
+}
+
+.image-compare-slot img,
+.image-compare-slot-empty {
+  width: 104px;
+  height: 64px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.image-compare-slot img {
+  object-fit: cover;
+  display: block;
+}
+
+.image-compare-slot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #5d6b83;
+  font-size: 11px;
+}
+
+.image-compare-slot.has-image .image-compare-slot-meta strong {
+  color: #dce8fb;
+}
+
+.image-compare-slot-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.image-compare-slot-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8fa3bf;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.image-compare-slot-meta small {
+  color: #64738c;
+  font-size: 9px;
+}
+
+.image-compare-node-footer {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 0 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(11, 15, 23, 0.96);
+  color: #71809a;
+  font-size: 10px;
+}
+
+.image-compare-node-footer span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-compare-node-footer b {
+  flex: 0 0 auto;
+  color: #91a6c5;
+  font-size: 9px;
+}
+
+.image-compare-node-footer i {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 176, 92, 0.16);
+  color: #ffbe74;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  cursor: help;
+}
+
+/* ── 全屏查看器 ───────────────────────────────────────────────────── */
+
+/* 遮罩 + 居中的窗口，不再铺满整屏；F 或按钮可切到最大化 */
+.image-compare-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: rgba(3, 5, 8, 0.74);
+  color: #e8eef8;
+}
+
+.image-compare-viewer-shell {
+  width: min(1760px, 96vw);
+  height: min(1180px, 93vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: #05070b;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62);
+}
+
+.image-compare-viewer.is-maximized {
+  padding: 0;
+}
+
+.image-compare-viewer.is-maximized .image-compare-viewer-shell {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
+/*
+  工具栏必须在图片交互层之上。交接文档 §7 的已知回归就是滑杆 range 铺满全屏、
+  把模式切换 / 重置 / 关闭全都挡住了。
+*/
+.image-compare-viewer-toolbar {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 14, 21, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+.image-compare-viewer-identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.image-compare-viewer-identity > span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(113, 163, 255, 0.14);
+  color: #8fb4ee;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.image-compare-viewer-identity strong {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.image-compare-viewer-identity em {
+  color: #5f6d84;
+  font-style: normal;
+  font-size: 11px;
+}
+
+.image-compare-viewer-modes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-compare-viewer-modes button {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c4d3e8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.image-compare-viewer-modes button.is-active,
+.image-compare-viewer-modes button:hover {
+  border-color: rgba(121, 184, 255, 0.6);
+  background: rgba(92, 151, 225, 0.18);
+  color: #fff;
+}
+
+.image-compare-viewer-modes kbd {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.36);
+  color: #8fa3bf;
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.image-compare-viewer-warn {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 176, 92, 0.16);
+  color: #ffbe74;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  cursor: help;
+}
+
+.image-compare-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8fa3bf;
+  font-size: 11px;
+}
+
+.image-compare-viewer-actions button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c9d8ed;
+  cursor: pointer;
+}
+
+.image-compare-viewer-actions button.is-text {
+  width: auto;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.image-compare-viewer-actions button:hover:not(:disabled),
+.image-compare-viewer-actions button.is-active {
+  border-color: rgba(121, 184, 255, 0.55);
+  background: rgba(92, 151, 225, 0.16);
+  color: #fff;
+}
+
+.image-compare-viewer-actions button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.image-compare-viewer-zoom {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.image-compare-viewer-zoom button {
+  width: 24px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.image-compare-viewer-zoom b {
+  min-width: 44px;
+  text-align: center;
+  color: #9dc0f2;
+  font-size: 10px;
+}
+
+/* 每种模式自己的参数放这一行，别把主工具栏挤爆 */
+.image-compare-viewer-subbar {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(10, 14, 21, 0.86);
+  font-size: 11px;
+}
+
+.image-compare-viewer-subbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-compare-viewer-subbar label > span {
+  color: #7d8da3;
+}
+
+.image-compare-viewer-subbar input[type="range"] {
+  width: 190px;
+  accent-color: #79b8ff;
+}
+
+.image-compare-viewer-subbar b {
+  min-width: 38px;
+  color: #9dc0f2;
+  font-size: 10px;
+}
+
+.image-compare-viewer-subbar button {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c4d3e8;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.image-compare-viewer-subbar button:hover,
+.image-compare-viewer-subbar button.is-active {
+  border-color: rgba(121, 184, 255, 0.55);
+  background: rgba(92, 151, 225, 0.16);
+  color: #fff;
+}
+
+.image-compare-viewer-note {
+  color: #6f7d93;
+}
+
+.image-compare-viewer-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.image-compare-viewer-stage:active {
+  cursor: grabbing;
+}
+
+/* 差异模式底色必须是纯黑：difference 混合模式下"完全一致"就是黑 */
+.image-compare-viewer-stage.is-difference {
+  background: #000;
+}
+
+/* 看 PNG 透明区域用的棋盘格 */
+.image-compare-viewer-stage.is-checker {
+  background-color: #2a2f38;
+  background-image:
+    linear-gradient(45deg, #1b1f26 25%, transparent 25%),
+    linear-gradient(-45deg, #1b1f26 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1b1f26 75%),
+    linear-gradient(-45deg, transparent 75%, #1b1f26 75%);
+  background-size: 18px 18px;
+  background-position:
+    0 0,
+    0 9px,
+    9px -9px,
+    -9px 0;
+}
+
+/*
+  自适应铺满：用 width/height:100% + object-fit:contain，小图也会放大到贴边，
+  而不是 max-width 那样只会缩小、小图永远缩在中间一小块。
+*/
+.image-compare-viewer-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.image-compare-viewer-side-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.image-compare-viewer-side {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/*
+  左右对比时两张图要在中缝**贴在一起**，方便看接缝。
+  竖图用 contain 会左右留白，靠 object-position 把 A 推到右边、B 推到左边，
+  这样不管什么比例，两张图都紧挨着中线。
+*/
+/*
+  transform-origin 也钉在中缝上：A 以右边缘为轴、B 以左边缘为轴。
+  用默认的 center 的话，两张图各自朝自己那半边的中心涨，一放大中缝就被拉开、
+  接缝对不上——缩放轴心必须是"两张图中间"那条线。
+*/
+.image-compare-viewer-side:first-child .image-compare-viewer-image {
+  object-position: right center;
+  transform-origin: right center;
+}
+
+.image-compare-viewer-side:last-child .image-compare-viewer-image {
+  object-position: left center;
+  transform-origin: left center;
+}
+
+.image-compare-viewer-side + .image-compare-viewer-side {
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* 上下并排：同样让两张图贴住中缝，缩放轴心也钉在中缝上 */
+.image-compare-viewer-side-grid.is-vertical {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.image-compare-viewer-side-grid.is-vertical
+  .image-compare-viewer-side:first-child
+  .image-compare-viewer-image {
+  object-position: center bottom;
+  transform-origin: center bottom;
+}
+
+.image-compare-viewer-side-grid.is-vertical
+  .image-compare-viewer-side:last-child
+  .image-compare-viewer-image {
+  object-position: center top;
+  transform-origin: center top;
+}
+
+.image-compare-viewer-side-grid.is-vertical
+  .image-compare-viewer-side
+  + .image-compare-viewer-side {
+  border-left: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.image-compare-viewer-side > span {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(5, 7, 11, 0.72);
+  color: #9dc0f2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.image-compare-viewer-side > small {
+  position: absolute;
+  bottom: 10px;
+  left: 12px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(5, 7, 11, 0.66);
+  color: #6f7d93;
+  font-size: 10px;
+}
+
+/* 滑杆 / 透明度模式：两张图必须严丝合缝地重叠，且都铺满舞台 */
+.image-compare-viewer-stack {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.image-compare-viewer-stack .image-compare-viewer-image {
+  position: absolute;
+  inset: 0;
+  /* 两张图完全重叠，共同中心就是舞台中心 —— 显式写出来，别依赖默认值 */
+  transform-origin: center center;
+}
+
+.image-compare-viewer-wipe-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* B 叠在 A 上做差异：黑 = 一致，越亮差异越大 */
+.image-compare-viewer-image-overlay.is-difference {
+  mix-blend-mode: difference;
+}
+
+.image-compare-viewer-wipe-axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.image-compare-viewer-wipe-axis.is-vertical {
+  top: auto;
+  bottom: auto;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 2px;
+  margin-left: 0;
+  margin-top: -1px;
+}
+
+.image-compare-viewer-wipe-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(10, 14, 21, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #fff;
+  font-size: 13px;
+}
+
+/*
+  滑杆输入只占舞台中间一条 72px 高的横带 —— 不是 inset: 0。
+  这条约束是硬要求：全屏透明 range 会把工具栏上的按钮全部挡死（交接文档 §7）。
+  也不能改用 pointer-events: none，那样滑杆本身就拖不动了；办法是限制命中区。
+*/
+.image-compare-viewer-wipe-range {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 72px;
+  transform: translateY(-50%);
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+}
+
+/* 上下滑动时把这条带竖起来，同样只占分割线附近 72px */
+.image-compare-viewer-wipe-range.is-vertical {
+  writing-mode: vertical-lr;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  right: auto;
+  width: 72px;
+  height: auto;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.image-compare-viewer-stack-tags {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.image-compare-viewer-stack-tags b {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(5, 7, 11, 0.72);
+  color: #9dc0f2;
+  font-size: 11px;
+}
+
+.image-compare-viewer-hint {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: 7px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(10, 14, 21, 0.9);
+  color: #5f6d84;
+  font-size: 10px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-compare-viewer-image {
+    will-change: auto;
+  }
+}

@@ -1,0 +1,770 @@
+/* AI 出片页。跟画布管理页同一套深色底色，不做主题切换（画布主题只管画布内）。 */
+
+.studio-page {
+  min-height: 100vh;
+  background: #0e0e0e;
+  color: #e7e2f4;
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-topbar {
+  flex: 0 0 auto;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid #1d182a;
+  background: #121019;
+}
+
+.studio-topbar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: #f2edff;
+}
+
+.studio-stage {
+  font-size: 12px;
+  color: #7b7396;
+}
+
+.studio-topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio-back,
+.studio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid #2b2440;
+  border-radius: 8px;
+  background: #171322;
+  color: #d6cef0;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.studio-back:hover,
+.studio-btn:hover:not(:disabled) {
+  border-color: #453363;
+  background: #1e1830;
+}
+
+.studio-btn.is-primary {
+  border-color: transparent;
+  background: linear-gradient(180deg, #6d54c8, #573fae);
+  color: #fff;
+  font-weight: 600;
+}
+
+.studio-btn.is-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #7b62d6, #6349bd);
+}
+
+.studio-btn.is-mini {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+.studio-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.studio-spin {
+  animation: studio-spin 1s linear infinite;
+}
+
+@keyframes studio-spin {
+  to { transform: rotate(360deg); }
+}
+
+.studio-notice { font-size: 12px; color: #8fe0b4; }
+.studio-error { font-size: 12px; color: #ff9b9b; }
+.studio-hint { font-size: 12px; color: #7b7396; }
+
+.studio-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+}
+
+/* ── 左侧项目库 ── */
+.studio-projects {
+  border-right: 1px solid #1d182a;
+  background: #100e17;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.studio-projects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #cdc4e8;
+}
+
+.studio-projects-head em {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: #7b7396;
+}
+
+.studio-project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.studio-project-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.studio-project {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid #221c31;
+  border-radius: 9px;
+  background: #14111d;
+  color: #ddd5f2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-project:hover { border-color: #372a52; }
+
+.studio-project.is-active {
+  border-color: #6d54c8;
+  background: #1b1630;
+}
+
+.studio-project strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.studio-project small {
+  font-size: 11px;
+  color: #837aa0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.studio-project-del {
+  flex: 0 0 auto;
+  width: 28px;
+  border: 1px solid #221c31;
+  border-radius: 8px;
+  background: #14111d;
+  color: #8d84ab;
+  cursor: pointer;
+}
+
+.studio-project-del:hover {
+  border-color: rgba(220, 38, 38, 0.5);
+  color: #ff9b9b;
+}
+
+/* ── 右侧主区 ── */
+.studio-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.studio-main-empty {
+  place-content: center;
+  color: #7b7396;
+}
+
+.studio-card {
+  border: 1px solid #201a2e;
+  border-radius: 12px;
+  background: #121019;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.studio-card.is-later { color: #7b7396; }
+.studio-card.is-later p { margin: 0; font-size: 12.5px; }
+
+.studio-card h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: #efe9ff;
+}
+
+.studio-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.studio-card-head h2 { margin-right: auto; }
+
+.studio-total {
+  font-size: 12px;
+  color: #8fe0b4;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-total.is-off { color: #ffbe74; }
+
+.studio-empty {
+  padding: 18px;
+  border: 1px dashed #2b2440;
+  border-radius: 10px;
+  color: #7b7396;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ── 表单 ── */
+.studio-field {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #b3a9d0;
+}
+
+.studio-field.is-block {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.studio-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.studio-field input,
+.studio-field select,
+.studio-field textarea,
+.studio-ref-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #2b2440;
+  border-radius: 8px;
+  background: #171322;
+  color: #ece7fa;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.studio-field textarea { resize: vertical; line-height: 1.6; }
+
+/* 一览列：角色 / 场景 / 道具 三格竖排，标签窄、输入框吃满剩下的宽度 */
+.studio-inventory {
+  display: grid;
+  gap: 4px;
+}
+
+.studio-inventory-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #8d84ab;
+}
+
+.studio-inventory-item .studio-cell {
+  padding: 3px 6px;
+  font-size: 11.5px;
+}
+
+/* 缺画布的警示条。橙色不是红色：这是"还差一步"，不是"坏了"，而且一键就能修 */
+.studio-canvas-missing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 176, 87, 0.32);
+  border-radius: 9px;
+  background: rgba(255, 176, 87, 0.1);
+  color: #ffcf9b;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.studio-canvas-missing > div { flex: 1 1 auto; min-width: 0; }
+.studio-canvas-missing strong { color: #ffe0bd; }
+.studio-canvas-missing .studio-btn { flex: 0 0 auto; }
+
+/* 项目名称：输入框吃满剩余宽度，「确定」贴在后面不被压缩 */
+.studio-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.studio-name-row input { flex: 1 1 auto; }
+.studio-name-row .studio-btn { flex: 0 0 auto; }
+
+.studio-field input:focus,
+.studio-field select:focus,
+.studio-field textarea:focus,
+.studio-ref-row input:focus {
+  border-color: #6d54c8;
+}
+
+.studio-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.studio-chip {
+  padding: 5px 10px;
+  border: 1px solid #2b2440;
+  border-radius: 999px;
+  background: #171322;
+  color: #b3a9d0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.studio-chip:hover { border-color: #453363; }
+
+.studio-chip.is-on {
+  border-color: #6d54c8;
+  background: rgba(109, 84, 200, 0.24);
+  color: #f0eaff;
+}
+
+/* ── 参考资料 ── */
+.studio-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.studio-ref-group {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #221c31;
+  border-radius: 10px;
+  background: #14111d;
+}
+
+.studio-ref-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #cdc4e8;
+}
+
+.studio-ref-empty { font-size: 11.5px; color: #6f6790; font-style: normal; }
+
+.studio-ref-tip {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: #6f6790;
+}
+
+.studio-ref-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 分组是拖放和粘贴的靶子。tabIndex 让它能拿焦点（点一下再 Ctrl+V），
+   所以要自己画选中态 —— 默认的 outline 在这套深色里几乎看不见。 */
+.studio-ref-group {
+  outline: none;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+}
+
+.studio-ref-group.is-armed {
+  border-color: #4a3a72;
+  box-shadow: inset 0 0 0 1px rgba(109, 84, 200, 0.35);
+}
+
+.studio-ref-group.is-drop {
+  border-color: #6d54c8;
+  background: rgba(109, 84, 200, 0.16);
+  box-shadow: 0 0 0 1px rgba(109, 84, 200, 0.5), 0 10px 26px rgba(109, 84, 200, 0.18);
+}
+
+.studio-ref-uploading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: #b3a9d0;
+}
+
+.studio-ref-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 26px;
+  gap: 6px;
+  align-items: center;
+}
+
+/* 有地址的行前面多一格缩略图。用 has-thumb 而不是永远留一格，
+   免得只填了称呼、还没有地址的行前面空一块。 */
+.studio-ref-row.has-thumb {
+  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.4fr) 26px;
+}
+
+.studio-ref-thumb {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #2b2440;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #0f0d16;
+}
+
+.studio-ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.studio-ref-thumb-video {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #b3a9d0;
+  font-size: 13px;
+}
+
+.studio-ref-del {
+  border: 1px solid #221c31;
+  border-radius: 7px;
+  background: #171322;
+  color: #8d84ab;
+  cursor: pointer;
+}
+
+.studio-ref-del:hover { border-color: rgba(220, 38, 38, 0.5); color: #ff9b9b; }
+
+/* ── 分镜表 ── */
+.studio-table-wrap { overflow-x: auto; }
+
+.studio-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.studio-table th {
+  padding: 8px 8px;
+  border-bottom: 1px solid #241d34;
+  background: #16121f;
+  color: #a79dc6;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.studio-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #1c1728;
+  vertical-align: top;
+}
+
+.studio-cell {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #171322;
+  color: #ece7fa;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+}
+
+.studio-cell:focus { border-color: #6d54c8; }
+.studio-cell.is-content { resize: vertical; line-height: 1.55; }
+.studio-cell.is-shot,
+.studio-cell.is-seconds { font-variant-numeric: tabular-nums; }
+
+.studio-row-actions {
+  display: flex;
+  gap: 4px;
+  padding-top: 10px;
+}
+
+.studio-row-actions button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #2b2440;
+  border-radius: 7px;
+  background: #171322;
+  color: #cdc4e8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.studio-row-actions button:hover { border-color: #6d54c8; color: #fff; }
+
+.studio-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── 概念图（第二阶段）─────────────────────────────────────────────────── */
+
+.studio-concept-table td { vertical-align: top; }
+
+/* 失败那一行整行压暗一点，扫一眼就知道哪几条没成 */
+.studio-concept-table tr.is-failed td { background: rgba(255, 108, 108, 0.05); }
+
+.studio-concept-table input[type='checkbox'],
+.studio-concept-table th input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 8px 0 0;
+  accent-color: #7c5cfc;
+  cursor: pointer;
+}
+
+.studio-concept-result a {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+}
+
+.studio-concept-result img {
+  width: 100%;
+  max-width: 104px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid #2a2338;
+  background: #131020;
+}
+
+.studio-concept-result em {
+  font-style: normal;
+  font-size: 11px;
+  color: #7b7396;
+}
+
+.studio-concept-failed { font-size: 12px; color: #ff8f8f; cursor: help; }
+.studio-concept-idle { font-size: 12px; color: #6b6386; }
+
+.studio-concept-error {
+  margin-top: 6px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: rgba(255, 108, 108, 0.08);
+  border: 1px solid rgba(255, 108, 108, 0.22);
+  color: #ffb4b4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 「重画已有的」是会重复花钱的开关，给个描边让它看起来像个需要留意的选择，
+   而不是普通的排版复选框 */
+.studio-concept-redraw {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #2a2338;
+  border-radius: 999px;
+  color: #b7aed4;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.studio-concept-redraw:hover { border-color: #6d54c8; color: #ece7fa; }
+.studio-concept-redraw input { accent-color: #ffbe74; cursor: pointer; }
+
+@media (max-width: 900px) {
+  .studio-body { grid-template-columns: minmax(0, 1fr); }
+  .studio-projects { border-right: none; border-bottom: 1px solid #1d182a; max-height: 210px; }
+  .studio-field { grid-template-columns: minmax(0, 1fr); align-items: start; }
+}
+
+/* ── 右侧资产库 / 共享空间停靠栏 ────────────────────────────────────────────
+   复用画布上那套 .shotflow-asset-dock（面板组件、内部样式都不动），只做两件事：
+   1. 开着的时候让 studio-body 多一列，面板占掉布局的一条 —— 不盖在内容上；
+   2. 描边从右边换到左边（画布那份是靠左的停靠栏）。
+   宽度交给 grid 决定，所以要把 .is-open 写死的 width 覆盖掉。 */
+.studio-body:has(.studio-asset-dock) {
+  grid-template-columns: 268px minmax(0, 1fr) clamp(320px, 26vw, 420px);
+}
+
+.studio-asset-dock.is-open {
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  border-right: 0;
+  border-left: 1px solid #1d182a;
+  background: #100e17;
+}
+
+.studio-btn.is-active {
+  border-color: rgba(154, 129, 255, 0.55);
+  background: rgba(124, 92, 252, 0.18);
+  color: #e7ddff;
+}
+
+/* ── 分镜绘制（第三阶段）────────────────────────────────────────────── */
+
+/* 分镜画表复用概念图表的结果格样式，这里只补它没有的东西 */
+.studio-board-table tr.is-failed td { background: rgba(255, 108, 108, 0.05); }
+
+/* 绘制方法 chip 上的「22 张」角标：直接把要花的钱写在选项上 */
+.studio-chip-note {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+
+/* 只读格（镜号、类型）：跟输入框一样的行高，但不要输入框的边框 */
+.studio-cell.is-static {
+  display: inline-block;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: #ddd5f2;
+}
+
+/* 「改构图 / 改透视 …」快捷词，贴在提示词下面 */
+.studio-tweaks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.studio-tweak {
+  padding: 1px 7px;
+  border: 1px solid #2b2440;
+  border-radius: 999px;
+  background: #171322;
+  color: #8d84ab;
+  font-size: 10.5px;
+  line-height: 1.7;
+  cursor: pointer;
+}
+
+.studio-tweak:hover { border-color: #6d54c8; color: #ddd5f2; }
+
+/* 画风参考图：小方块横排，右上角一个移除按钮 */
+.studio-board-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.studio-board-ref {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  border: 1px solid #2b2440;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #12101c;
+}
+
+.studio-board-ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.studio-board-ref > button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(9, 7, 13, 0.78);
+  color: #ffd7d7;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* 「＋」那一格是个 label 包着隐藏的 file input */
+.studio-board-ref.is-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: #8d84ab;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.studio-board-ref.is-add:hover { border-color: #6d54c8; color: #ddd5f2; }
+
+/* ── 动态分镜 / 成片（第四、五阶段）────────────────────────────────── */
+
+/* 首帧缩略图。小方块就够 —— 它只是让人确认"这一镜是从哪张图动起来的" */
+.studio-video-frame {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #2b2440;
+  display: block;
+}
+
+/* 结果格里的视频缩略图，跟概念图那边的 img 一样大小 */
+.studio-concept-result video {
+  width: 100%;
+  max-width: 96px;
+  border-radius: 6px;
+  display: block;
+  background: #08070d;
+}
+
+.studio-muted { font-size: 11.5px; color: #7b7396; display: inline-flex; align-items: center; gap: 4px; }

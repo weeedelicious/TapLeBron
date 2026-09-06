@@ -1,0 +1,769 @@
+/* 三维空间编辑器。配色和灯光台 / 抠像那几个全屏编辑器保持一致，
+   免得同一个画布里几个编辑器长得像三个产品。 */
+
+/* 全屏，不留边。3D 视区能给多大就给多大 —— 摆机位和拖关节都吃可视面积，
+   居中卡片式在 1520×920 上限之外白白浪费掉两侧的屏幕。
+   代价是没有「点外面关闭」的空白区了，所以关闭只剩 Esc 和右上角按钮，两个都在。 */
+.director-stage-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: rgba(6, 6, 10, 0.68);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.director-stage-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+  background: linear-gradient(180deg, #1a1725 0%, #121019 100%);
+  color: #f2effa;
+  overflow: hidden;
+}
+
+.director-stage-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(124, 92, 252, 0.16);
+  flex-shrink: 0;
+}
+
+.director-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.director-stage-title-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(124, 92, 252, 0.2);
+  color: #d9ccff;
+  flex-shrink: 0;
+}
+
+.director-stage-title strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.director-stage-title small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #9c92bb;
+}
+
+.director-stage-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: #b7acd6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.director-stage-close:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.director-stage-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.director-stage-view {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: #0d0c12;
+}
+
+.director-stage-viewport {
+  position: absolute;
+  inset: 0;
+}
+
+/* three 自己建的 canvas。touch-action:none 是 OrbitControls 在触屏上能用的前提 */
+.director-stage-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+
+.director-stage-viewhint,
+.director-stage-viewmeta {
+  position: absolute;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(10, 9, 15, 0.66);
+  border: 1px solid rgba(124, 92, 252, 0.16);
+  font-size: 11.5px;
+  color: #a79ec4;
+  pointer-events: none;
+}
+
+.director-stage-viewhint {
+  left: 12px;
+  bottom: 12px;
+}
+
+.director-stage-viewmeta {
+  right: 12px;
+  top: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #c9c0e6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.director-stage-handle-toggle {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(124, 92, 252, 0.28);
+  background: rgba(22, 19, 32, 0.88);
+  color: #ded6f6;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.director-stage-handle-toggle:hover {
+  border-color: rgba(124, 92, 252, 0.5);
+  background: rgba(36, 30, 54, 0.94);
+}
+
+.director-stage-handle-scale {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 132px;
+}
+
+.director-stage-handle-scale span {
+  font-size: 10.5px;
+  color: #9e94bd;
+  font-variant-numeric: tabular-nums;
+}
+
+.director-stage-handle-scale input[type='range'] {
+  width: 100%;
+  cursor: pointer;
+}
+
+.director-stage-panel {
+  display: flex;
+  flex-direction: column;
+  width: 316px;
+  flex-shrink: 0;
+  border-left: 1px solid rgba(124, 92, 252, 0.16);
+  background: #16131f;
+}
+
+.director-stage-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 10px 10px 8px;
+  flex-shrink: 0;
+}
+
+.director-stage-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
+  border-radius: 9px;
+  border: 1px solid rgba(124, 92, 252, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  color: #a297c2;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.director-stage-tabs button.is-active {
+  border-color: #b9a4ff;
+  background: rgba(124, 92, 252, 0.24);
+  color: #fff;
+}
+
+.director-stage-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 12px;
+}
+
+.director-stage-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 12px 0 7px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #cec4ee;
+  letter-spacing: 0.02em;
+}
+
+.director-stage-section-title em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8d83ab;
+}
+
+.director-stage-row {
+  display: block;
+  margin-bottom: 9px;
+}
+
+.director-stage-row-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: #a79ec4;
+}
+
+.director-stage-row-label em {
+  font-style: normal;
+  color: #e6dffb;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.director-stage-row input[type='range'] {
+  width: 100%;
+  accent-color: #7c5cfc;
+}
+
+.director-stage-row input[type='color'] {
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.director-stage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.director-stage-chips.is-block button {
+  flex: 1;
+}
+
+.director-stage-chips button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  color: #a297c2;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.director-stage-chips button.is-active {
+  border-color: #b9a4ff;
+  background: rgba(124, 92, 252, 0.24);
+  color: #fff;
+}
+
+.director-stage-chips button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.director-stage-hint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #857b9f;
+}
+
+.director-stage-hint strong {
+  color: #b7a9e0;
+}
+
+/* ── 参考图分析（2026-08-26）───────────────────────────────────────────────── */
+
+.director-stage-reference {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(124, 92, 252, 0.18);
+  background: rgba(124, 92, 252, 0.06);
+}
+
+.director-stage-reference img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #0f0d17;
+  display: block;
+}
+
+.director-stage-reference-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.director-stage-reference-body strong {
+  font-size: 12px;
+  font-weight: 800;
+  color: #e6dffb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.director-stage-reference-body em {
+  font-size: 11px;
+  font-style: normal;
+  color: #e0a37a;
+  line-height: 1.4;
+}
+
+/* 侧栏里的按钮不需要占满整行那么壮 */
+.director-stage-primary.is-compact,
+.director-stage-ghost.is-compact {
+  width: auto;
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+  align-self: flex-start;
+}
+
+/* 分析成功的回执：说清摆了几处、漏了几处 */
+.director-stage-note {
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid rgba(122, 214, 165, 0.26);
+  background: rgba(74, 214, 165, 0.09);
+  color: #9fe0c4;
+}
+
+.director-stage-warn {
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 120, 120, 0.28);
+  background: rgba(255, 90, 90, 0.1);
+  color: #f0b4b4;
+}
+
+.director-stage-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  font-size: 12px;
+  color: #bdb3d8;
+  cursor: pointer;
+}
+
+.director-stage-check input {
+  accent-color: #7c5cfc;
+}
+
+.director-stage-joints {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.director-stage-joint-group > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  color: #7d7397;
+  font-weight: 700;
+}
+
+.director-stage-joint-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.director-stage-joint-group button {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(124, 92, 252, 0.16);
+  background: rgba(255, 255, 255, 0.025);
+  color: #9e94bd;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* 调过的关节留个记号：调完一圈之后想找回来改哪个，靠这个 */
+.director-stage-joint-group button.is-posed {
+  border-color: rgba(74, 214, 165, 0.5);
+  color: #cfe9df;
+}
+
+.director-stage-joint-group button.is-active {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.16);
+  color: #fff;
+}
+
+.director-stage-proplist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.director-stage-proplist > div {
+  display: flex;
+  gap: 4px;
+}
+
+.director-stage-proplist > div > button:first-child {
+  flex: 1;
+  text-align: left;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 92, 252, 0.16);
+  background: rgba(255, 255, 255, 0.025);
+  color: #a79ec4;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.director-stage-proplist > div.is-active > button:first-child {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.14);
+  color: #fff;
+}
+
+.director-stage-proplist .is-remove {
+  width: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 120, 120, 0.24);
+  background: rgba(255, 90, 90, 0.08);
+  color: #e79a9a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.director-stage-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  color: #b3a8d2;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.director-stage-ghost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.director-stage-footer {
+  flex-shrink: 0;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(124, 92, 252, 0.16);
+  background: #141120;
+}
+
+.director-stage-outsize {
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #8d83ab;
+  font-variant-numeric: tabular-nums;
+}
+
+.director-stage-error {
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 120, 120, 0.28);
+  background: rgba(255, 90, 90, 0.1);
+  color: #f0b4b4;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.director-stage-primary {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: #ffffff;
+  color: #131120;
+  font-size: 13px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.director-stage-primary:disabled {
+  background: #3a3157;
+  color: #9d93bb;
+  cursor: default;
+}
+
+.director-stage-spin {
+  animation: director-stage-spin 1s linear infinite;
+}
+
+@keyframes director-stage-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 标题栏右侧的撤销 / 重做 */
+.director-stage-history {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 6px;
+}
+.director-stage-history button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 92, 252, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  color: #a79ec4;
+  cursor: pointer;
+}
+.director-stage-history button:hover:not(:disabled) {
+  border-color: rgba(124, 92, 252, 0.45);
+  color: #e6dffb;
+}
+.director-stage-history button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+/* 参考图那块里的勾选项（「连手指一起推」） */
+.director-stage-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: #8d83ab;
+  cursor: pointer;
+}
+.director-stage-check input {
+  width: 12px;
+  height: 12px;
+  accent-color: #7c5cfc;
+  cursor: pointer;
+}
+
+/* ── 手指 ─────────────────────────────────────────────────────────────────── */
+
+.director-stage-hand-side {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 7px;
+}
+.director-stage-hand-side button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-height: 28px;
+  border-radius: 7px;
+  border: 1px solid rgba(124, 92, 252, 0.16);
+  background: rgba(255, 255, 255, 0.025);
+  color: #9e94bd;
+  font-size: 11.5px;
+  cursor: pointer;
+  justify-content: center;
+}
+.director-stage-hand-side button.is-active {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.16);
+  color: #fff;
+}
+/* 那只手调过东西的小圆点 —— 切到另一只手时也知道这只手不是静止的 */
+.director-stage-hand-side button i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #4ad6a5;
+}
+
+.director-stage-hand-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 9px;
+}
+.director-stage-hand-presets button {
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(124, 92, 252, 0.16);
+  background: rgba(255, 255, 255, 0.025);
+  color: #9e94bd;
+  font-size: 11px;
+  cursor: pointer;
+}
+.director-stage-hand-presets button:hover {
+  border-color: rgba(124, 92, 252, 0.42);
+  color: #ded6f6;
+}
+
+.director-stage-finger-block {
+  margin-bottom: 10px;
+}
+.director-stage-finger-block.is-selected {
+  outline: 1px solid rgba(110, 200, 255, 0.45);
+  border-radius: 8px;
+  padding: 4px 4px 6px;
+  background: rgba(110, 200, 255, 0.06);
+}
+
+/* 一行 = 手指名 + 整根弯曲 + 张开。下面再摊近 / 中 / 远三节。 */
+.director-stage-finger-row {
+  display: grid;
+  grid-template-columns: 40px 1fr 1fr;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.director-stage-finger-detail {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding-left: 46px;
+}
+
+.director-stage-finger-detail label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.director-stage-finger-detail em {
+  font-style: normal;
+  font-size: 10px;
+  color: #8d83ab;
+  font-variant-numeric: tabular-nums;
+}
+
+.director-stage-finger-detail input[type='range'] {
+  width: 100%;
+}
+.director-stage-finger-row > span {
+  font-size: 11px;
+  color: #a79ec4;
+}
+.director-stage-finger-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.director-stage-finger-row em {
+  font-style: normal;
+  font-size: 10px;
+  color: #8d83ab;
+  font-variant-numeric: tabular-nums;
+}
+.director-stage-finger-row input[type='range'] {
+  width: 100%;
+}
+
+/* 窄屏（笔记本 / 分屏）时面板窄一点，别把 3D 视图挤没了 */
+@media (max-width: 1180px) {
+  .director-stage-panel { width: 268px; }
+  /* 268px 宽放不下「名字 + 两根滑杆」，张开挪到第二行 */
+  .director-stage-finger-row {
+    grid-template-columns: 40px 1fr;
+  }
+  .director-stage-finger-row label:last-child {
+    grid-column: 2;
+  }
+  .director-stage-finger-detail {
+    grid-template-columns: 1fr;
+    padding-left: 46px;
+  }
+}

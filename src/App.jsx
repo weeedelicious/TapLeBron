@@ -25,12 +25,15 @@ import {
   Plus,
   Shield,
   Trash2,
+  UserPlus,
   UserRound,
   Users,
   Video,
   X
 } from 'lucide-react';
 import CanvasApp from './canvas/App';
+import ErrorLibraryPage from './ErrorLibraryPage';
+import { getAdminPath, getAppHomePath, isAdminPath, isErrorLibraryPath } from './shared/routes';
 
 const kindMeta = {
   input: { label: '输入', tone: 'teal' },
@@ -71,7 +74,7 @@ const seedanceModes = [
 ];
 
 const seedanceRatios = ['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16', '21:9'];
-const seedanceResolutions = ['480p', '720p'];
+const seedanceResolutions = ['720p', '1080p', '4k'];
 
 function defaultNodeConfig(kind) {
   if (kind === 'image') {
@@ -185,6 +188,144 @@ function formatLastUsedAt(value) {
     minute: '2-digit',
     hour12: false
   }).format(date);
+}
+
+const adminProjectStatusOptions = [
+  { value: 'not_started', label: '未开始' },
+  { value: 'in_progress', label: '进行中' },
+  { value: 'completed', label: '已完成' }
+];
+
+function projectStatusLabel(status) {
+  return adminProjectStatusOptions.find((item) => item.value === status)?.label || '未开始';
+}
+
+const usagePeriodOptions = [
+  { value: 'day', label: '按天' },
+  { value: 'week', label: '按周' },
+  { value: 'month', label: '按月' },
+  { value: 'year', label: '按年' }
+];
+
+const usageTypeOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+  { value: 'text', label: '文字' }
+];
+
+const usageStatusOptions = [
+  { value: 'all', label: '全部状态' },
+  { value: 'submitted', label: '提交中' },
+  { value: 'succeeded', label: '成功' },
+  { value: 'failed', label: '失败' },
+  { value: 'cancelled', label: '已取消' }
+];
+
+function todayDateKey() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
+function usageTypeLabel(value) {
+  return usageTypeOptions.find((item) => item.value === value)?.label || value || '-';
+}
+
+function usageStatusLabel(value) {
+  return usageStatusOptions.find((item) => item.value === value)?.label || value || '-';
+}
+
+function formatUsageTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(date);
+}
+
+function formatUsageResolution(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = text.toUpperCase();
+  if (normalized === '720P' || normalized === '768P' || normalized === '1080P' || normalized === '480P') return normalized;
+  if (normalized === '4K' || normalized === '2K' || normalized === '1K') return normalized;
+  return text;
+}
+
+function formatUsageDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  return `${Number.isInteger(seconds) ? seconds : Number(seconds.toFixed(1))}s`;
+}
+
+function usageRecordSettingChips(record) {
+  const settings = record?.settings && typeof record.settings === 'object' ? record.settings : {};
+  const chips = [];
+  const resolution = formatUsageResolution(settings.resolution || settings.quality || '');
+  if (resolution && (record.operationType === 'image' || record.operationType === 'video')) {
+    chips.push(`清晰度 ${resolution}`);
+  }
+  const duration = formatUsageDuration(settings.duration || settings.durationSec || settings.seconds || '');
+  if (duration && record.operationType === 'video') {
+    chips.push(`秒数 ${duration}`);
+  }
+  return chips;
+}
+
+function usageVideoTaskStatusLabel(status) {
+  if (status === 'running') return '运行中';
+  return usageStatusLabel(status);
+}
+
+function usageTaskText(value, max = 36) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function usageVideoTaskParams(task) {
+  if (!task) return [];
+  const params = [];
+  if (task.model) params.push(`模型 ${task.model}`);
+  if (task.mode) params.push(`模式 ${task.mode}`);
+  if (task.ratio) params.push(`比例 ${task.ratio}`);
+  if (task.resolution) params.push(`清晰度 ${formatUsageResolution(task.resolution)}`);
+  if (task.durationSec) params.push(`秒数 ${formatUsageDuration(task.durationSec)}`);
+  if (task.quantity) params.push(`数量 ${task.quantity}`);
+  const enableSound = task.submissionParams?.enableSound;
+  if (enableSound) params.push(enableSound === 'off' ? '无声' : '有声');
+  return params;
+}
+
+function usageVideoTaskReferenceLabels(task) {
+  const refs = Array.isArray(task?.referenceMaterials) ? task.referenceMaterials : [];
+  return refs
+    .filter((ref) => ref && ref.type)
+    .map((ref) => {
+      const typeLabel =
+        ref.type === 'image'
+          ? '图片'
+          : ref.type === 'video'
+            ? '视频'
+            : ref.type === 'text'
+              ? '文本'
+              : ref.type === 'audio'
+                ? '音频'
+                : '提示词引用';
+      return `${typeLabel}${ref.index || ''}${ref.title ? ` · ${usageTaskText(ref.title, 26)}` : ''}`;
+    });
 }
 
 function WorkflowNode({ data, selected }) {
@@ -330,6 +471,12 @@ function Login({ onLogin }) {
   const [setupUser, setSetupUser] = useState(null);
   const [setupPassword, setSetupPassword] = useState('');
   const [setupConfirm, setSetupConfirm] = useState('');
+  // 注册（2026-08-24）。跟「设置密码」共用 setup-overlay 那套弹窗样式，不另做一套。
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [registerConfirm, setRegisterConfirm] = useState('');
+  const [registerApiKey, setRegisterApiKey] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -385,6 +532,57 @@ function Login({ onLogin }) {
     }
   }
 
+  /**
+   * 注册。成功后服务端已经把会话 cookie 下发了，所以直接 onLogin 进去，不用再登一次。
+   *
+   * 202 是个特殊情况：账号已经建在共享用户目录里了，只是本地影子行还没同步过来。
+   * 这时候**绝对不能提示重试** —— 再点一次就会建出第二个同名候选。
+   */
+  async function submitRegister(event) {
+    event.preventDefault();
+    setError('');
+
+    const name = registerName.trim();
+    if (name.length < 2 || name.length > 50) {
+      setError('账号长度需要在 2 到 50 个字符之间');
+      return;
+    }
+    if (registerPassword.length < 4) {
+      setError('密码至少 4 个字符');
+      return;
+    }
+    if (registerPassword !== registerConfirm) {
+      setError('两次输入的密码不一致');
+      return;
+    }
+    const apiKey = registerApiKey.trim();
+    if (apiKey.length < 12) {
+      setError('请填写有效的 API Key');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await api('/api/auth/register', {
+        method: 'POST',
+        body: { username: name, password: registerPassword, apiKey }
+      });
+      // 服务端的 202（账号建好了、本地影子行还没同步）**不会**走到 catch ——
+      // 202 属于 response.ok，api() 直接返回 payload。所以只能靠有没有 user 来判断。
+      if (!data.user) {
+        setRegisterOpen(false);
+        setError(data.error || '账号已创建，请回到登录页选这个账号登录');
+        await loadLoginUsers();
+        return;
+      }
+      onLogin(data.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function submitSetupPassword(event) {
     event.preventDefault();
     setError('');
@@ -412,11 +610,9 @@ function Login({ onLogin }) {
     <main className="login-page">
       <section className="login-panel" aria-label="登录">
         <div className="brand-lockup">
-          <div className="brand-mark">
-            <LayoutDashboard size={26} />
-          </div>
+          <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark" />
           <div>
-            <h1>画布工作台</h1>
+            <h1 style={{ display: 'none' }}>Shotflow</h1>
             <p>节点式创意流程</p>
           </div>
         </div>
@@ -446,13 +642,94 @@ function Login({ onLogin }) {
               <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" />
             </label>
           ) : null}
-          {error && !setupUser ? <div className="form-error">{error}</div> : null}
+          {error && !setupUser && !registerOpen ? <div className="form-error">{error}</div> : null}
           <button type="submit" className="primary-button" disabled={loading || !selectedUser}>
             <Check size={18} />
             {loading ? '处理中' : '登录'}
           </button>
+          {/* 注册入口。做成次要按钮：登录才是这个页面的主动作 */}
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              setRegisterOpen(true);
+              setRegisterName('');
+              setRegisterPassword('');
+              setRegisterConfirm('');
+              setRegisterApiKey('');
+              setError('');
+            }}
+          >
+            <UserPlus size={17} />
+            注册新账号
+          </button>
         </form>
       </section>
+      {registerOpen ? (
+        <section className="setup-overlay" aria-label="注册新账号">
+          <form className="setup-dialog" onSubmit={submitRegister}>
+            <div className="admin-header">
+              <div className="panel-title">
+                <UserPlus size={18} />
+                注册新账号
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => {
+                  setRegisterOpen(false);
+                  setError('');
+                }}
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <label className="field">
+              <span>账号</span>
+              <input
+                value={registerName}
+                onChange={(event) => setRegisterName(event.target.value)}
+                placeholder="2 到 50 个字符"
+                autoFocus
+              />
+            </label>
+            <label className="field">
+              <span>密码</span>
+              <input
+                value={registerPassword}
+                onChange={(event) => setRegisterPassword(event.target.value)}
+                type="password"
+                placeholder="至少 4 个字符"
+              />
+            </label>
+            <label className="field">
+              <span>确认密码</span>
+              <input
+                value={registerConfirm}
+                onChange={(event) => setRegisterConfirm(event.target.value)}
+                type="password"
+              />
+            </label>
+            <label className="field">
+              <span>API Key</span>
+              <input
+                value={registerApiKey}
+                onChange={(event) => setRegisterApiKey(event.target.value)}
+                type="password"
+                autoComplete="off"
+                placeholder="必填，用于出图和生成"
+              />
+            </label>
+            {error ? <div className="form-error">{error}</div> : null}
+            <button className="primary-button" type="submit" disabled={loading}>
+              <Check size={18} />
+              {loading ? '注册中' : '注册并登录'}
+            </button>
+            <p className="setup-note">注册后角色是「制作人」。API Key 走你自己的网关额度，必填。</p>
+          </form>
+        </section>
+      ) : null}
       {setupUser ? (
         <section className="setup-overlay" aria-label="设置密码">
           <form className="setup-dialog" onSubmit={submitSetupPassword}>
@@ -802,8 +1079,11 @@ function Inspector({ canvas, selectedNode, onTitleChange, onNodeChange, onDelete
 function AdminPanel({ open = true, onClose, mode = 'drawer' }) {
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', role: 'user' });
+  const [projects, setProjects] = useState([]);
+  const [projectForm, setProjectForm] = useState({ name: '', status: 'not_started' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const active = mode === 'page' || open;
 
   const loadUsers = useCallback(async () => {
@@ -820,9 +1100,27 @@ function AdminPanel({ open = true, onClose, mode = 'drawer' }) {
     }
   }, [active]);
 
+  const loadProjects = useCallback(async () => {
+    if (!active) return;
+    setProjectsLoading(true);
+    setError('');
+    try {
+      const data = await api('/api/admin/projects');
+      setProjects(data.projects);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, [active]);
+
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   async function createUser(event) {
     event.preventDefault();
@@ -852,6 +1150,28 @@ function AdminPanel({ open = true, onClose, mode = 'drawer' }) {
     try {
       await api(`/api/admin/users/${id}`, { method: 'DELETE' });
       await loadUsers();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function createProject(event) {
+    event.preventDefault();
+    setError('');
+    try {
+      await api('/api/admin/projects', { method: 'POST', body: projectForm });
+      setProjectForm({ name: '', status: 'not_started' });
+      await loadProjects();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function updateProject(id, patch) {
+    setError('');
+    try {
+      await api(`/api/admin/projects/${id}`, { method: 'PUT', body: patch });
+      await loadProjects();
     } catch (err) {
       setError(err.message);
     }
@@ -940,15 +1260,176 @@ function AdminPanel({ open = true, onClose, mode = 'drawer' }) {
           </div>
         ))}
       </div>
+
+      <div className="admin-subpanel">
+        <div className="admin-subpanel-header">
+          <div className="panel-title">
+            <LayoutDashboard size={18} />
+            项目管理
+          </div>
+        </div>
+        <form className="admin-create admin-project-create" onSubmit={createProject}>
+          <input
+            placeholder="项目名称"
+            value={projectForm.name}
+            onChange={(event) => setProjectForm((next) => ({ ...next, name: event.target.value }))}
+          />
+          <select
+            value={projectForm.status}
+            onChange={(event) => setProjectForm((next) => ({ ...next, status: event.target.value }))}
+          >
+            {adminProjectStatusOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button className="primary-button" type="submit">
+            <Plus size={17} />
+            添加项目
+          </button>
+        </form>
+        <div className="user-table admin-project-table">
+          {projectsLoading ? <div className="muted-line">加载中</div> : null}
+          {projects.map((project) => (
+            <div className="user-row admin-project-row" key={project.id}>
+              <div className="user-name">
+                <LayoutDashboard size={17} />
+                <input
+                  defaultValue={project.name}
+                  onBlur={(event) => {
+                    const name = event.currentTarget.value.trim();
+                    if (name && name !== project.name) updateProject(project.id, { name });
+                  }}
+                />
+              </div>
+              <select value={project.status} onChange={(event) => updateProject(project.id, { status: event.target.value })}>
+                {adminProjectStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className={`password-state ok admin-project-status admin-project-status-${project.status}`}>
+                {projectStatusLabel(project.status)}
+              </span>
+              <div className="last-used">
+                <span>创建时间</span>
+                <strong>{formatLastUsedAt(project.createdAt)}</strong>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
 
 function AdminPage({ user, onLogout }) {
+  const [usageFilters, setUsageFilters] = useState({
+    period: 'day',
+    date: todayDateKey(),
+    userId: 'all',
+    type: 'all',
+    model: 'all',
+    status: 'all'
+  });
+  const [usage, setUsage] = useState(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState('');
+  const [apiKeyInfo, setApiKeyInfo] = useState(null);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState('');
+  const [apiKeyMessage, setApiKeyMessage] = useState('');
+
+  const loadUsage = useCallback(async () => {
+    if (user.role !== 'admin') return;
+    setUsageLoading(true);
+    setUsageError('');
+    try {
+      const query = new URLSearchParams({
+        ...usageFilters,
+        limit: '500'
+      });
+      const data = await api(`/api/admin/usage?${query.toString()}`);
+      setUsage(data);
+    } catch (error) {
+      setUsageError(error.message || '使用记录加载失败');
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [usageFilters, user.role]);
+
+  const loadApiKeyInfo = useCallback(async () => {
+    if (user.role !== 'admin') return;
+    setApiKeyLoading(true);
+    setApiKeyError('');
+    try {
+      const data = await api('/api/admin/api-key');
+      setApiKeyInfo(data);
+    } catch (error) {
+      setApiKeyError(error.message || 'API Key 信息加载失败');
+    } finally {
+      setApiKeyLoading(false);
+    }
+  }, [user.role]);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
+
+  useEffect(() => {
+    void loadApiKeyInfo();
+  }, [loadApiKeyInfo]);
+
+  function updateUsageFilter(key, value) {
+    setUsageFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function submitApiKey(event) {
+    event.preventDefault();
+    const nextKey = apiKeyInput.trim();
+    if (!nextKey) {
+      setApiKeyError('请先填写新的 API Key');
+      return;
+    }
+    setApiKeySaving(true);
+    setApiKeyError('');
+    setApiKeyMessage('');
+    try {
+      const data = await api('/api/admin/api-key', { method: 'POST', body: { apiKey: nextKey } });
+      setApiKeyInfo(data);
+      setApiKeyInput('');
+      setApiKeyMessage('API Key 已替换，并已写入服务器配置');
+    } catch (error) {
+      setApiKeyError(error.message || 'API Key 替换失败');
+    } finally {
+      setApiKeySaving(false);
+    }
+  }
+
   async function logout() {
     await api('/api/auth/logout', { method: 'POST' });
     onLogout();
   }
+
+  const homePath = getAppHomePath(window.location.pathname);
+  const externalAdminLinks = [
+    {
+      key: 'users',
+      title: '用户管理',
+      description: '打开共享用户管理网页',
+      href: 'http://172.25.135.159:8080/sd2/users.html'
+    },
+    {
+      key: 'projects',
+      title: '项目管理',
+      description: '打开共享项目管理网页',
+      href: 'http://172.25.135.159:8080/sd2/projects.html'
+    }
+  ];
 
   if (user.role !== 'admin') {
     return (
@@ -960,7 +1441,7 @@ function AdminPage({ user, onLogout }) {
           <h1>需要管理员权限</h1>
           <p>当前账号没有进入后台管理的权限。</p>
           <div className="admin-page-actions">
-            <button className="ghost-button" onClick={() => (window.location.href = '/')}>
+            <button className="ghost-button" onClick={() => (window.location.href = homePath)}>
               <LayoutDashboard size={17} />
               回到画布
             </button>
@@ -978,18 +1459,15 @@ function AdminPage({ user, onLogout }) {
     <main className="admin-page">
       <header className="admin-page-topbar">
         <div className="app-brand">
-          <div className="brand-mark small">
-            <Users size={20} />
-          </div>
+          <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark small" />
           <div>
-            <strong>后台管理</strong>
-            <small>{user.username}</small>
+            <small>后台管理 · {user.username}</small>
           </div>
         </div>
         <div className="admin-page-actions">
-          <button className="ghost-button" onClick={() => (window.location.href = '/')}>
+          <button className="ghost-button" onClick={() => (window.location.href = homePath)}>
             <LayoutDashboard size={17} />
-            画布工作台
+            Shotflow 工作台
           </button>
           <button className="ghost-button" onClick={logout}>
             <LogOut size={17} />
@@ -997,7 +1475,267 @@ function AdminPage({ user, onLogout }) {
           </button>
         </div>
       </header>
-      <AdminPanel mode="page" />
+      <section className="admin-links-panel" aria-label="后台管理入口">
+        <div className="admin-links-head">
+          <div className="panel-title">
+            <Users size={19} />
+            后台管理
+          </div>
+          <p>这里直接跳转到统一的用户管理和项目管理网页。</p>
+        </div>
+        <div className="admin-links-grid">
+          {externalAdminLinks.map((item) => (
+            <a key={item.key} className="admin-link-card" href={item.href}>
+              <div className="admin-link-copy">
+                <strong>{item.title}</strong>
+                <span>{item.description}</span>
+                <small>{item.href}</small>
+              </div>
+              <span className="admin-link-action">
+                打开
+                <PanelRightOpen size={16} />
+              </span>
+            </a>
+          ))}
+        </div>
+      </section>
+      <section className="admin-api-key-panel" aria-label="API Key 管理">
+        <div className="admin-api-key-head">
+          <div>
+            <div className="panel-title">
+              <KeyRound size={19} />
+              API Key 管理
+            </div>
+            <p>切换网页工具使用的模型密钥，并保留替换记录。页面只显示脱敏 key，不展示完整密钥。</p>
+          </div>
+          <button className="ghost-button compact" onClick={loadApiKeyInfo} disabled={apiKeyLoading || apiKeySaving}>
+            {apiKeyLoading ? '刷新中' : '刷新'}
+          </button>
+        </div>
+
+        <div className="admin-api-key-current">
+          <span>现用 API Key</span>
+          <code>{apiKeyInfo?.current?.maskedValue || (apiKeyLoading ? '读取中...' : '未配置')}</code>
+          {apiKeyInfo?.current?.openaiSynced === false ? (
+            <em>OPENAI_API_KEY 与 LLM_API_KEY 不一致，替换后会同步成新 key</em>
+          ) : null}
+        </div>
+
+        <form className="admin-api-key-form" onSubmit={submitApiKey}>
+          <input
+            type="password"
+            value={apiKeyInput}
+            onChange={(event) => setApiKeyInput(event.target.value)}
+            placeholder="填写新的 API Key"
+            autoComplete="off"
+          />
+          <button type="submit" className="primary-button" disabled={apiKeySaving}>
+            {apiKeySaving ? '替换中' : '替换'}
+          </button>
+        </form>
+
+        {apiKeyError ? <div className="admin-usage-error">{apiKeyError}</div> : null}
+        {apiKeyMessage ? <div className="admin-api-key-message">{apiKeyMessage}</div> : null}
+
+        <div className="admin-api-key-records">
+          <h3>替换记录</h3>
+          {(apiKeyInfo?.records || []).length ? (
+            <div className="admin-api-key-record-list">
+              {apiKeyInfo.records.map((record) => (
+                <article key={record.id} className="admin-api-key-record">
+                  <div>
+                    <strong>{record.changedByName || '系统'}</strong>
+                    <span>{record.oldKeyMasked || '未配置'} → {record.newKeyMasked || '未配置'}</span>
+                  </div>
+                  <time>{formatUsageTime(record.createdAt)}</time>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="admin-usage-empty">还没有替换记录。</p>
+          )}
+        </div>
+      </section>
+      <section className="admin-usage-panel" aria-label="付费使用统计">
+        <div className="admin-usage-head">
+          <div>
+            <div className="panel-title">
+              <FileText size={19} />
+              付费使用统计
+            </div>
+            <p>从现在开始记录每个用户的视频、图片、文字付费操作，按时间由近到远查看。</p>
+          </div>
+          <button className="ghost-button compact" onClick={loadUsage} disabled={usageLoading}>
+            {usageLoading ? '刷新中' : '刷新'}
+          </button>
+        </div>
+
+        <div className="admin-usage-filters">
+          <label>
+            <span>范围</span>
+            <select value={usageFilters.period} onChange={(event) => updateUsageFilter('period', event.target.value)}>
+              {usagePeriodOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>日期</span>
+            <input type="date" value={usageFilters.date} onChange={(event) => updateUsageFilter('date', event.target.value)} />
+          </label>
+          <label>
+            <span>用户</span>
+            <select value={usageFilters.userId} onChange={(event) => updateUsageFilter('userId', event.target.value)}>
+              <option value="all">全部用户</option>
+              {(usage?.users || []).map((item) => (
+                <option key={item.userId ?? item.username} value={item.userId ?? 'all'}>{item.username}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>类型</span>
+            <select value={usageFilters.type} onChange={(event) => updateUsageFilter('type', event.target.value)}>
+              {usageTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>模型</span>
+            <select value={usageFilters.model} onChange={(event) => updateUsageFilter('model', event.target.value)}>
+              <option value="all">全部模型</option>
+              {(usage?.models || []).map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select value={usageFilters.status} onChange={(event) => updateUsageFilter('status', event.target.value)}>
+              {usageStatusOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {usageError ? <div className="admin-usage-error">{usageError}</div> : null}
+
+        <div className="admin-usage-cards">
+          <div><span>总记录</span><strong>{usage?.summary?.records || 0}</strong></div>
+          <div><span>图片</span><strong>{usage?.summary?.byType?.image?.quantity || 0}</strong></div>
+          <div><span>视频</span><strong>{usage?.summary?.byType?.video?.quantity || 0}</strong></div>
+          <div><span>文字</span><strong>{usage?.summary?.byType?.text?.quantity || 0}</strong></div>
+        </div>
+
+        <div className="admin-usage-grid">
+          <div className="admin-usage-users">
+            <h3>用户汇总</h3>
+            {(usage?.users || []).length ? (
+              <div className="admin-usage-user-list">
+                {usage.users.map((item) => {
+                  const videoSecondsByResolution = item.videoSecondsByResolution || {};
+                  return (
+                  <div key={item.userId ?? item.username} className="admin-usage-user-row">
+                    <div className="admin-usage-user-mainline">
+                      <strong>{item.username}</strong>
+                      <span>图片 {item.imageQuantity}</span>
+                      <span>视频 {item.videoQuantity}</span>
+                      <span>视频总秒数 {formatUsageDuration(item.videoSeconds) || '0s'}</span>
+                      <span>文字 {item.textQuantity}</span>
+                      <em>{item.quantity} 次</em>
+                    </div>
+                    <div className="admin-usage-user-resolution-row">
+                      {['480P', '720P', '768P', '1080P', '2K', '4K'].map((resolution) => (
+                        <span key={resolution}>
+                          {resolution} {formatUsageDuration(videoSecondsByResolution[resolution]) || '0s'}
+                        </span>
+                      ))}
+                    </div>
+                    {(item.byModel || []).length ? (
+                      <div className="admin-usage-user-resolution-row admin-usage-user-model-row">
+                        {item.byModel.map((entry) => (
+                          <span key={`${entry.model}-${entry.operationType}`}>
+                            {entry.model} {entry.quantity}次
+                            {entry.operationType === 'video' && entry.videoSeconds
+                              ? ` · ${formatUsageDuration(entry.videoSeconds)}`
+                              : ''}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="admin-usage-empty">这个范围内还没有付费记录。</p>
+            )}
+          </div>
+          <div className="admin-usage-records">
+            <h3>明细记录</h3>
+            {(usage?.records || []).length ? (
+              <div className="admin-usage-record-list">
+                {usage.records.map((record) => {
+                  const settingChips = usageRecordSettingChips(record);
+                  const videoTask = record.videoTask || null;
+                  const videoTaskParams = usageVideoTaskParams(videoTask);
+                  const videoTaskReferences = usageVideoTaskReferenceLabels(videoTask);
+                  return (
+                  <article key={record.id} className={`admin-usage-record admin-usage-record-${record.status}`}>
+                    <div className="admin-usage-record-main">
+                      <div>
+                        <strong>{record.username}</strong>
+                        <span>{usageTypeLabel(record.operationType)} · {record.model}</span>
+                      </div>
+                      <time>{formatUsageTime(record.createdAt)}</time>
+                    </div>
+                    <div className="admin-usage-record-meta">
+                      <span>{usageStatusLabel(record.status)}</span>
+                      <span>{record.quantity} 次</span>
+                      <span>结果 {record.resultCount || 0}</span>
+                      {settingChips.map((chip) => <span key={chip}>{chip}</span>)}
+                      {record.canvasTitle ? <span>{record.canvasTitle}</span> : null}
+                    </div>
+                    {record.promptPreview ? <p>{record.promptPreview}</p> : null}
+                    {record.errorMessage ? <small>{record.errorMessage}</small> : null}
+                    {videoTask ? (
+                      <div className="admin-usage-video-task">
+                        <div className="admin-usage-video-task-line">
+                          <span>任务ID <b>{usageTaskText(videoTask.internalJobId, 18)}</b></span>
+                          <span>任务状态 <b>{usageVideoTaskStatusLabel(videoTask.status)}</b></span>
+                          {(videoTask.providerJobIds || []).length ? (
+                            <span>Provider ID <b>{videoTask.providerJobIds.map((id) => usageTaskText(id, 18)).join(' / ')}</b></span>
+                          ) : null}
+                        </div>
+                        {videoTaskParams.length ? (
+                          <div className="admin-usage-video-task-line">
+                            {videoTaskParams.map((item) => <span key={item}>{item}</span>)}
+                          </div>
+                        ) : null}
+                        <div className="admin-usage-video-task-refs">
+                          <strong>参考素材</strong>
+                          {videoTaskReferences.length ? (
+                            videoTaskReferences.slice(0, 10).map((item) => <span key={item}>{item}</span>)
+                          ) : (
+                            <em>无</em>
+                          )}
+                        </div>
+                        {(videoTask.errorMessage || record.errorMessage) ? (
+                          <small>{videoTask.errorMessage || record.errorMessage}</small>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="admin-usage-empty">没有匹配的明细。</p>
+            )}
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
@@ -1345,11 +2083,8 @@ function Workbench({ user, onLogout }) {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="app-brand">
-            <div className="brand-mark small">
-              <LayoutDashboard size={21} />
-            </div>
+            <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark small" />
             <div>
-              <strong>画布工作台</strong>
               <small>{user.username}</small>
             </div>
           </div>
@@ -1362,7 +2097,7 @@ function Workbench({ user, onLogout }) {
           />
           <div className="sidebar-actions">
             {user.role === 'admin' ? (
-              <button className="ghost-button" onClick={() => (window.location.href = '/admin')}>
+              <button className="ghost-button" onClick={() => (window.location.href = getAdminPath())}>
                 <Users size={17} />
                 后台管理
               </button>
@@ -1518,13 +2253,15 @@ function Workbench({ user, onLogout }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
-  const isAdminRoute = window.location.pathname.replace(/\/+$/, '') === '/admin';
+  const isAdminRoute = isAdminPath(window.location.pathname);
+  const isErrorLibraryRoute = isErrorLibraryPath(window.location.pathname);
 
   async function handleLogout() {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setUser(null);
-    if (window.location.pathname !== '/') {
-      window.history.pushState(null, '', '/');
+    const homePath = getAppHomePath(window.location.pathname);
+    if (window.location.pathname !== homePath) {
+      window.history.pushState(null, '', homePath);
     }
   }
 
@@ -1549,6 +2286,10 @@ export default function App() {
 
   if (isAdminRoute) {
     return <AdminPage user={user} onLogout={() => setUser(null)} />;
+  }
+
+  if (isErrorLibraryRoute) {
+    return <ErrorLibraryPage user={user} onLogout={handleLogout} />;
   }
 
   return <CanvasApp user={user} onLogout={handleLogout} />;

@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "defaults": {
+    "model": "gemini-3-pro-image",
+    "ratio": "16:9",
+    "resolution": "1K",
+    "quality": "high",
+    "count": 1
+  },
+  "ratioOptions": [
+    { "value": "auto", "label": "自适应", "w": 4, "h": 3 },
+    { "value": "1:1", "label": "1:1", "w": 1, "h": 1 },
+    { "value": "9:16", "label": "9:16", "w": 9, "h": 16 },
+    { "value": "16:9", "label": "16:9", "w": 16, "h": 9 },
+    { "value": "3:4", "label": "3:4", "w": 3, "h": 4 },
+    { "value": "4:3", "label": "4:3", "w": 4, "h": 3 },
+    { "value": "3:2", "label": "3:2", "w": 3, "h": 2 },
+    { "value": "2:3", "label": "2:3", "w": 2, "h": 3 },
+    { "value": "4:5", "label": "4:5", "w": 4, "h": 5 },
+    { "value": "5:4", "label": "5:4", "w": 5, "h": 4 },
+    { "value": "21:9", "label": "21:9", "w": 21, "h": 9 },
+    { "value": "2:1", "label": "2:1", "w": 2, "h": 1 }
+  ],
+  "resolutionOptions": ["1K", "2K", "4K"],
+  "models": {
+    "gemini-3-pro-image": {
+      "label": "Nano-banana Pro",
+      "provider": "gemini-interactions",
+      "providerModel": "gemini-3-pro-image",
+      "apiStyle": "gemini-interactions",
+      "frontendSelectable": true,
+      "aliases": ["gemini-3-pro-image-preview", "nano-banana-pro", "nanobanana-pro", "nano banana pro"],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "resolutions": ["1K", "2K", "4K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "sizeStrategy": "gemini-params",
+      "resolutionFallback": {
+        "enabled": true,
+        "reason": "openai-compatible-proxy-may-return-1k",
+        "scaleFactors": {
+          "1K": 1,
+          "2K": 2,
+          "4K": 4
+        },
+        "defaultEngine": "ffmpeg-lanczos",
+        "optionalEngine": "real-esrgan"
+      }
+    },
+    "gemini-3.1-flash-image": {
+      "label": "Nano-banana Flash",
+      "provider": "gemini-interactions",
+      "providerModel": "gemini-3.1-flash-image",
+      "apiStyle": "gemini-interactions",
+      "frontendSelectable": true,
+      "aliases": [
+        "gemini-3.1-flash-image-preview",
+        "nano-banana-flash",
+        "nanobanana-flash",
+        "nano banana flash"
+      ],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "resolutions": ["1K", "2K", "4K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "sizeStrategy": "gemini-params",
+      "resolutionFallback": {
+        "enabled": true,
+        "reason": "openai-compatible-proxy-may-return-1k",
+        "scaleFactors": {
+          "1K": 1,
+          "2K": 2,
+          "4K": 4
+        },
+        "defaultEngine": "ffmpeg-lanczos",
+        "optionalEngine": "real-esrgan"
+      }
+    },
+    "gpt-image-2": {
+      "label": "GPT image 2.0",
+      "provider": "openai-compatible",
+      "providerModel": "gpt-image-2",
+      "frontendSelectable": true,
+      "aliases": ["gpt", "gpt-image", "gpt image 2.0", "gpt-image-2.0"],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "resolutions": ["1K", "2K", "4K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "sizeStrategy": "computed",
+      "computedSize": {
+        "targetAreas": {
+          "1K": 1048576,
+          "2K": 2359296,
+          "4K": 4194304
+        },
+        "fallback": "1024x1024",
+        "step": 16,
+        "maxWidth": 3840,
+        "maxHeight": 2160,
+        "maxAspectRatio": 3
+      }
+    },
+    "seedream-5-pro": {
+      "label": "Seedream 5 Pro",
+      "provider": "volcengine",
+      "providerModel": "bytedance-seed/seedream-5-pro",
+      "frontendSelectable": true,
+      "aliases": [
+        "seedream5pro",
+        "seedream5-pro",
+        "seedream 5 pro",
+        "seedream-5.0-pro",
+        "bytedance-seed/seedream-5-pro",
+        "doubao-seedream-5-0-pro",
+        "doubao-seedream-5-0-pro-260628"
+      ],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9"],
+      "resolutions": ["1K", "1.5K", "2K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "sizeStrategy": "seedream-size",
+      "nativeSizes": {
+        "1:1": { "1K": "1024x1024", "1.5K": "1536x1536", "2K": "2048x2048" },
+        "4:3": { "1K": "1152x864", "1.5K": "1792x1344", "2K": "2368x1776" },
+        "3:4": { "1K": "864x1152", "1.5K": "1344x1792", "2K": "1776x2368" },
+        "16:9": { "1K": "1424x800", "1.5K": "2048x1152", "2K": "2816x1584" },
+        "9:16": { "1K": "800x1424", "1.5K": "1152x2048", "2K": "1584x2816" },
+        "3:2": { "1K": "1248x832", "1.5K": "1872x1248", "2K": "2496x1664" },
+        "2:3": { "1K": "832x1248", "1.5K": "1248x1872", "2K": "1664x2496" },
+        "21:9": { "1K": "1568x672", "1.5K": "2352x1008", "2K": "3136x1344" }
+      }
+    },
+    "bytedance-seed/seedream-5-pro": { "extends": "seedream-5-pro" },
+    "doubao-seedream-5-0-pro-260628": { "extends": "seedream-5-pro" },
+    "gemini-3.1-flash-image-preview": { "extends": "gemini-3.1-flash-image" }
+  }
+}

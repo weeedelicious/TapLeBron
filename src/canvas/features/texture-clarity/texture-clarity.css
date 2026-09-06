@@ -1,0 +1,444 @@
+/* 精准修复 · 人物真实化（纹理清晰化）编辑器。
+   浮层态与全屏态是同一套 DOM，只在 .tc-overlay 上加 .is-expanded —— 状态只有一份。 */
+
+/* .tc-overlay 是铺满视口的遮罩层：负责把背后的画布模糊掉，并把面板居中。
+   面板尺寸按 1.5 倍：宽 1520→2280、高 560→840、左右栏 330/300→495/450。
+   字号刻意不跟着放大 —— 放大的是弹窗，不是文字。
+
+   组件用 createPortal 挂到 body，所以这里的 fixed 是真的相对视口；渲染在 React Flow
+   节点里的话，.react-flow__viewport 的 transform 会成为 fixed 的包含块，浮层就会跟着
+   画布平移和缩放。
+
+   刻意不做"点遮罩关闭"：这个弹窗里可能已经有一张生成好、还没派生成节点的修复结果，
+   误点一下就得重新花一次生图。关闭只走右上角的 × 和 Esc。 */
+.tc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9600;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(9, 7, 13, 0.44);
+  backdrop-filter: blur(10px) saturate(0.9);
+  -webkit-backdrop-filter: blur(10px) saturate(0.9);
+}
+
+.tc-shell {
+  width: min(2280px, 100%);
+  height: min(840px, 100%);
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 495px minmax(0, 1fr) 450px;
+  gap: 1px;
+  border: 1px solid var(--sf-border, #241d34);
+  border-radius: 16px;
+  background: var(--sf-border, #241d34);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58);
+  overflow: hidden;
+}
+
+/* 完整窗口：面板吃满遮罩层，遮罩本身不变（背景照旧模糊） */
+.tc-overlay.is-expanded .tc-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.tc-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--sf-panel-solid, #121019);
+  color: var(--sf-text-body, #ddd5f2);
+  overflow-y: auto;
+}
+
+.tc-col-stage { padding: 14px 14px 10px; }
+
+.tc-col-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tc-col-head h3 {
+  margin: 0;
+  margin-right: auto;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--sf-text-title, #f0eaff);
+}
+
+.tc-head-actions { display: flex; gap: 6px; }
+
+.tc-icon-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--sf-border, #2b2440);
+  border-radius: 8px;
+  background: var(--sf-control-bg, #171322);
+  color: var(--sf-text-body, #cdc4e8);
+  cursor: pointer;
+}
+
+.tc-icon-btn:hover { border-color: var(--sf-border-strong, #453363); }
+
+.tc-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.tc-tag.is-ok { background: rgba(96, 208, 148, 0.16); color: #8fe0b4; }
+
+/* ── 左栏：2x2 素材 ── */
+.tc-slot-grid {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.tc-slot { min-width: 0; }
+
+.tc-slot-thumb {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  border: 1px solid var(--sf-border, #221c31);
+  border-radius: 10px;
+  background: #0f0d16;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.tc-slot-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tc-slot-empty { font-size: 11px; color: #6f6790; }
+
+.tc-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.tc-dot.is-ok { background: #4ade80; }
+.tc-dot.is-bad { background: #f87171; }
+.tc-dot.is-idle { background: #6f6790; }
+
+.tc-slot-title { margin-top: 6px; font-size: 12px; color: var(--sf-text-body, #cdc4e8); }
+.tc-slot-status { font-size: 11px; line-height: 1.45; }
+.tc-slot-status.is-ok { color: #7dcfa6; }
+.tc-slot-status.is-bad { color: #ff9b9b; }
+.tc-slot-status.is-idle { color: #7b7396; }
+
+.tc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 11px;
+  color: var(--sf-text-muted, #a79dc6);
+}
+
+.tc-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.tc-legend-item i { width: 9px; height: 9px; border-radius: 2px; }
+.tc-legend-item em { font-style: normal; color: #7b7396; font-variant-numeric: tabular-nums; }
+
+.tc-meta { font-size: 11px; color: #7b7396; }
+
+/* ── 中栏：单图滑杆对比 ── */
+.tc-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--sf-border, #221c31);
+  border-radius: 12px;
+  background:
+    linear-gradient(45deg, #16121f 25%, transparent 25%) 0 0 / 18px 18px,
+    linear-gradient(-45deg, #16121f 25%, transparent 25%) 0 9px / 18px 18px,
+    #100e17;
+  overflow: hidden;
+  cursor: col-resize;
+  display: grid;
+  place-items: center;
+}
+
+.tc-stage-inner {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  transform-origin: center;
+  line-height: 0;
+}
+
+.tc-stage-img {
+  display: block;
+  max-width: 100%;
+  /* 舞台高度是弹性的，图片按容器高走，别把原图撑爆 */
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.tc-stage-img.is-right {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tc-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.tc-split-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #1b1630;
+  font-size: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  letter-spacing: -1px;
+}
+
+.tc-stage-tag {
+  position: absolute;
+  top: 10px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: rgba(9, 7, 13, 0.72);
+  color: #e8e2ff;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.tc-stage-tag.is-left { left: 10px; }
+.tc-stage-tag.is-right { right: 10px; }
+
+/* 对比模式：右半边看「融合结果 / 模型候选」的分段切换，放在中栏标题栏里 */
+.tc-seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--sf-border, #2b2440);
+  border-radius: 8px;
+  background: var(--sf-control-bg, #171322);
+}
+
+.tc-seg-btn {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8d84ab;
+  font-size: 11.5px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.tc-seg-btn:hover { color: var(--sf-text-body, #ddd5f2); }
+
+.tc-seg-btn.is-active {
+  background: rgba(124, 92, 252, 0.24);
+  color: #e8e2ff;
+}
+
+/* 预览加载中的角标。压在源图上，不占版面、也不把源图换成一个转圈圈 */
+.tc-stage-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: rgba(9, 7, 13, 0.78);
+  color: #cfc6f0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.tc-stage-empty,
+.tc-stage-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #8d84ab;
+}
+
+.tc-stage-busy {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  background: rgba(9, 7, 13, 0.68);
+  color: #e8e2ff;
+  backdrop-filter: blur(3px);
+}
+
+.tc-stage-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tc-zoom {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--sf-text-body, #cdc4e8);
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-gates { margin-left: auto; display: flex; gap: 12px; flex-wrap: wrap; }
+
+.tc-gate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+}
+
+.tc-gate i { width: 7px; height: 7px; border-radius: 50%; }
+.tc-gate.is-ok { color: #8fe0b4; }
+.tc-gate.is-ok i { background: #4ade80; }
+.tc-gate.is-bad { color: #ff9b9b; }
+.tc-gate.is-bad i { background: #f87171; }
+.tc-gate.is-idle { color: #7b7396; }
+
+/* ── 右栏：执行参数 ── */
+.tc-model-list { display: grid; gap: 6px; }
+
+.tc-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--sf-border, #2b2440);
+  border-radius: 9px;
+  background: var(--sf-control-bg, #171322);
+  color: var(--sf-text-body, #ddd5f2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tc-model:hover:not(.is-disabled) { border-color: var(--sf-border-strong, #453363); }
+
+.tc-model.is-active {
+  border-color: #6d54c8;
+  background: rgba(109, 84, 200, 0.2);
+  color: #f2edff;
+}
+
+.tc-model.is-disabled { opacity: 0.5; cursor: not-allowed; }
+.tc-model-name { margin-right: auto; }
+.tc-model-note { font-size: 11px; color: #8d84ab; }
+.tc-model.is-active .tc-model-note { color: #cdc4e8; }
+
+.tc-targets { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tc-target {
+  padding: 4px 9px;
+  border: 1px solid var(--sf-border, #2b2440);
+  border-radius: 7px;
+  background: var(--sf-control-bg, #171322);
+  color: var(--sf-text-muted, #a79dc6);
+  font-size: 11.5px;
+}
+
+.tc-note { font-size: 11.5px; color: #8d84ab; line-height: 1.6; }
+.tc-note-quiet { color: #6f6790; }
+.tc-hint { font-size: 11.5px; color: #ffbe74; line-height: 1.6; }
+.tc-error { font-size: 11.5px; color: #ff9b9b; line-height: 1.6; }
+
+.tc-facts { margin: 0; display: grid; gap: 6px; font-size: 12px; }
+.tc-facts > div { display: flex; align-items: baseline; gap: 10px; }
+.tc-facts dt { margin: 0; color: #8d84ab; }
+.tc-facts dd { margin: 0; margin-left: auto; color: var(--sf-text-body, #ddd5f2); text-align: right; }
+
+.tc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--sf-border, #2b2440);
+  border-radius: 9px;
+  background: var(--sf-control-bg, #171322);
+  color: var(--sf-text-body, #ddd5f2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tc-btn:hover:not(:disabled) { border-color: var(--sf-border-strong, #453363); }
+.tc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tc-btn.is-mini { min-height: 26px; padding: 0 9px; font-size: 12px; }
+/* 左栏「加载控制素材预览」：吃满一栏宽，别缩成一小块 */
+.tc-btn.is-block { width: 100%; }
+
+.tc-btn.is-primary {
+  min-height: 52px;
+  border-color: transparent;
+  background: linear-gradient(180deg, #7c5cfc, #5b3fd0);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.tc-btn.is-primary:hover:not(:disabled) { background: linear-gradient(180deg, #8b6dff, #6a4ade); }
+
+.tc-verdict {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  font-size: 12.5px;
+}
+
+.tc-verdict em { font-style: normal; font-size: 11px; opacity: 0.8; }
+.tc-verdict.is-ok { background: rgba(96, 208, 148, 0.14); color: #8fe0b4; }
+.tc-verdict.is-bad { background: rgba(248, 113, 113, 0.14); color: #ff9b9b; }
+
+.tc-diag { font-size: 11.5px; color: #8d84ab; }
+.tc-diag summary { cursor: pointer; }
+.tc-diag ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 3px; }
+
+.tc-spin { animation: spin 1s linear infinite; }
+
+/* 窄屏：三栏改成竖排，中栏优先给高度 */
+@media (max-width: 1500px) {
+  /* 遮罩仍然铺满视口（背景照旧模糊），只是留白收窄、面板吃满、三栏改竖排 */
+  .tc-overlay { padding: 10px; }
+  .tc-shell {
+    width: 100%;
+    height: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(240px, 1fr) auto;
+  }
+  .tc-slot-grid { grid-template-columns: repeat(4, 1fr); }
+}

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { NodeShell } from './NodeShell'
 import { useCanvasStore } from '@/store/canvasStore'
 import { useTasksStore } from '@/store/tasksStore'
@@ -16,20 +16,33 @@ export function AudioNode({ id, data, selected }: Props) {
   const { updateNodeData } = useCanvasStore()
   const { addTask, startPolling } = useTasksStore()
   const params = data.params ? (data.params as unknown as AudioParams) : defaultAudioParams()
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (data.taskInfo?.loading) {
+      setIsSubmitting(false)
+    }
+  }, [data.taskInfo?.loading])
 
   const setParam = useCallback(<K extends keyof AudioParams>(key: K, val: AudioParams[K]) => {
     updateNodeData(id, { params: { ...params, [key]: val } as unknown as Record<string, unknown> })
   }, [id, params, updateNodeData])
 
   const handleGenerate = useCallback(async () => {
+    if (isSubmitting || data.taskInfo?.loading) return
+    setIsSubmitting(true)
     try {
       const res = await generateApi.audio(data.projectUuid, id, params as unknown as Record<string, unknown>)
       addTask(res.jobId, id)
       startPolling(res.jobId, data.projectUuid)
-    } catch (e) { console.error(e) }
-  }, [data.projectUuid, id, params, addTask, startPolling])
+    } catch (e) {
+      setIsSubmitting(false)
+      console.error(e)
+    }
+  }, [data.projectUuid, id, params, addTask, startPolling, isSubmitting, data.taskInfo?.loading])
 
   const audioUrl = data.url?.[0]
+  const isLoading = isSubmitting || !!data.taskInfo?.loading
 
   return (
     <NodeShell nodeKey={id} data={data} selected={selected} minWidth={320} minHeight={240}>
@@ -78,8 +91,8 @@ export function AudioNode({ id, data, selected }: Props) {
             className="flex-1 text-xs py-1 rounded font-medium nodrag"
             style={{ background: '#7c5cfc', color: '#fff', border: 'none', cursor: 'pointer' }}
             onClick={handleGenerate}
-            disabled={data.taskInfo?.loading}
-          >{data.taskInfo?.loading ? '生成中…' : '生成音频'}</button>
+            disabled={isLoading}
+          >{isLoading ? '生成中…' : '生成音频'}</button>
         </div>
       </div>
     </NodeShell>

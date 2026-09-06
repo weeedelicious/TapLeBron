@@ -1,0 +1,161 @@
+.panorama-node {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(135, 176, 255, 0.28);
+  border-radius: 12px;
+  background: #070a10;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.35);
+  color: #edf3ff;
+}
+
+.panorama-node.is-selected {
+  border-color: rgba(142, 190, 255, 0.82);
+  box-shadow: 0 0 0 2px rgba(102, 154, 255, 0.18), 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.panorama-node-handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #07101d;
+  background: #79b8ff;
+}
+
+.panorama-node-output-handle {
+  border-color: #07101d;
+  background: #8fd7ff;
+}
+
+.panorama-node-header {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(24, 31, 45, 0.98), rgba(11, 15, 23, 0.98));
+}
+
+.panorama-node-header > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panorama-node-header strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.panorama-node-header span {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(113, 163, 255, 0.12);
+  color: #8fa9d1;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.panorama-node-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.panorama-node-actions button {
+  width: 27px;
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c9d8ed;
+  cursor: pointer;
+}
+
+.panorama-node-actions button:hover:not(:disabled),
+.panorama-node-actions button.is-active:not(:disabled) {
+  border-color: rgba(121, 184, 255, 0.55);
+  background: rgba(92, 151, 225, 0.16);
+  color: #fff;
+}
+
+.panorama-node-actions button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.panorama-node-viewport {
+  height: 280px;
+}
+
+.panorama-node-viewport .panorama-viewer-help {
+  bottom: 9px;
+  font-size: 10px;
+}
+
+.panorama-node-footer {
+  height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(11, 15, 23, 0.96);
+  color: #71809a;
+  font-size: 10px;
+}
+
+.panorama-node-footer span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panorama-node-footer b {
+  flex: 0 0 auto;
+  color: #91a6c5;
+  font-size: 9px;
+}
+
+.panorama-node-exposure {
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.panorama-node-exposure button {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #93a8c5;
+  cursor: pointer;
+}
+
+.panorama-node-exposure button:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(121, 184, 255, 0.13);
+}
+
+.panorama-node-exposure button:disabled {
+  cursor: default;
+  opacity: 0.32;
+}
+
+.panorama-node-exposure b {
+  min-width: 34px;
+  text-align: center;
+}

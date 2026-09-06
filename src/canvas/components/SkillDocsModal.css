@@ -1,0 +1,175 @@
+.shotflow-skill-docs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 6, 14, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.shotflow-skill-docs-modal {
+  width: min(720px, 100%);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  background: #17131f;
+  border: 1px solid #2d2040;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  color: #e9e3f5;
+}
+
+.shotflow-skill-docs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #241a35;
+}
+
+.shotflow-skill-docs-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.shotflow-skill-docs-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(255, 108, 210, 0.14);
+  color: #ff8cd6;
+  border: 1px solid rgba(255, 108, 210, 0.35);
+}
+
+.shotflow-skill-docs-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.shotflow-skill-docs-heading p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #9d92b8;
+}
+
+.shotflow-skill-docs-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9d92b8;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.shotflow-skill-docs-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e9e3f5;
+}
+
+.shotflow-skill-docs-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 12px 18px 0;
+}
+
+.shotflow-skill-docs-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 550;
+  border-radius: 9px 9px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: #9d92b8;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.shotflow-skill-docs-tab:hover {
+  color: #e9e3f5;
+}
+
+.shotflow-skill-docs-tab.is-active {
+  background: #100c18;
+  color: #ff9fdd;
+  border-color: #2d2040;
+}
+
+.shotflow-skill-docs-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px;
+  background: #100c18;
+  border-top: 1px solid #2d2040;
+}
+
+.shotflow-skill-docs-filename {
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #7f759f;
+  margin-bottom: 10px;
+}
+
+.shotflow-skill-docs-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #d8d0ea;
+}
+
+.shotflow-skill-docs-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 12px;
+  font-size: 13px;
+  color: #9d92b8;
+}
+
+.shotflow-skill-docs-state.is-error {
+  color: #ff9a9a;
+}
+
+.shotflow-skill-docs-footer {
+  padding: 11px 18px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #7f759f;
+  border-top: 1px solid #241a35;
+  background: #17131f;
+}
+
+.shotflow-skill-docs-body .is-spinning,
+.shotflow-skill-docs-state .is-spinning {
+  animation: shotflow-skill-docs-spin 0.9s linear infinite;
+}
+
+@keyframes shotflow-skill-docs-spin {
+  to { transform: rotate(360deg); }
+}

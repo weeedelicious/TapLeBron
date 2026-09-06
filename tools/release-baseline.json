@@ -1,0 +1,43 @@
+{
+  "deployedJs": "canvas-source-live-20260904-1138.js",
+  "deployedCss": "canvas-source-live-20260904-1138.css",
+  "deployedSessionScript": "canvas-exclusive-session-20260818-0010.js",
+  "sessionSha256": "c0b22c291c605ac4d9b93bf148f0b68627130b614a525f116d3afcaf3890a700",
+  "sessionBytes": 20759,
+  "jsSha256": "46f55b93a3f5c49d4db471f94ebf4cbbf3d569c2c637f8b4a464d7dc72dc07a1",
+  "cssSha256": "edede25f55c6d6bc0d56463167d14a91639fac1b9bc6f3c8c722ade21a089557",
+  "jsBytes": 4047411,
+  "cssBytes": 467482,
+  "jsMarkers": {
+    "/history-assets": 2,
+    "shotflow-image-viewer": 27,
+    "shotflow-assigned-project-picker": 1,
+    "canvas-detail-zoom": 9,
+    "shotflow.activity-log.seen.v1": 2,
+    "shotflow-image-node-main-media": 1,
+    "shotflow-repaint-mask-hard": 1,
+    "hard-mask-v0.0.1": 2,
+    "局部重绘": 19,
+    "subject-matting": 61,
+    "light-stage": 68,
+    "panorama": 106,
+    "video_merge": 24,
+    "appearanceTransfer": 3,
+    "/nodes/batch": 1,
+    "/nodes/upsert": 1,
+    "/nodes/delete-v2": 1,
+    "user_delete": 1,
+    "/node-events": 1,
+    "/tasks/recoverable": 1,
+    "/plugin-tokens": 3,
+    "/favorites": 6,
+    "/shared-assets": 6
+  },
+  "cssMarkers": {
+    "shotflow-theme=warm": 164,
+    "shotflow-node-selected-breathe": 3,
+    "canvas-history-panel": 11,
+    "shotflow-image-viewer-loupe": 1,
+    "react-flow__minimap": 13
+  }
+}

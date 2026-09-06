@@ -4,6 +4,27 @@ data/
 projects/
 server/config.json
 
+# 本地调试与发布临时目录。里面有登录 cookie、截图、抓下来的生产快照，
+# 体积也大（tmp-* 合计几百 MB），一律不进仓库。
+tmp/
+tmp-*/
+tmp-*.*
+deploy-backups/
+dist.*
+shotflow-deploy-*.tar.gz
+
+# 生产备份（画布数据、被替换掉的脚本），不进仓库。
+backups/
+
+# 线上静态资源与发布入口 HTML，靠 tools/push.py 直传生产，不走 git。
+public/
+
+# 改动前的原文件备份，只在本机有意义。
+*.bak
+*.bak-*
+*.bak.*
+*.pre-*
+
 .env
 .env.*
 !.env.example

@@ -30,11 +30,6 @@ export function Toolbox({ selectedNode }: Props) {
     run(() => toolboxApi.superResolution(projectUuid, nodeKey, imageUrl))
   }
 
-  const handlePanorama = () => {
-    if (!imageUrl || !nodeKey || !projectUuid) return
-    run(() => toolboxApi.panorama(projectUuid, nodeKey, imageUrl))
-  }
-
   const handleMultiAngle = () => {
     if (!imageUrl || !nodeKey || !projectUuid) return
     run(() => toolboxApi.multiAngle(projectUuid, nodeKey, imageUrl))
@@ -59,7 +54,6 @@ export function Toolbox({ selectedNode }: Props) {
   }
 
   const actions = [
-    { label: '全景 NEW', desc: '全景拓展', handler: handlePanorama, icon: '🔭' },
     { label: '多角度', desc: '多角度生成', handler: handleMultiAngle, icon: '📐' },
     { label: '打光', desc: '重新打光', handler: handleLighting, icon: '💡' },
     { label: '九宫格', desc: '网格拼接', handler: handleGrid, icon: '⊞' },

@@ -1,0 +1,536 @@
+.subject-matting-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 260000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background:
+    radial-gradient(circle at 24% 18%, rgba(106, 92, 255, 0.18), transparent 28%),
+    radial-gradient(circle at 76% 86%, rgba(42, 181, 170, 0.12), transparent 26%),
+    rgba(3, 5, 12, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.subject-matting-shell {
+  width: min(1480px, calc(100vw - 54px));
+  height: min(884px, calc(100vh - 54px));
+  overflow: hidden;
+  color: #f4f0ff;
+  background: linear-gradient(180deg, rgba(25, 22, 36, 0.98), rgba(15, 14, 22, 0.99));
+  border: 1px solid rgba(203, 190, 255, 0.22);
+  border-radius: 14px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.64), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.subject-matting-header {
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(36, 31, 52, 0.96), rgba(23, 20, 34, 0.92));
+}
+
+.subject-matting-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.subject-matting-title-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #b7a8ff;
+  background: linear-gradient(180deg, rgba(123, 101, 236, 0.28), rgba(72, 56, 124, 0.22));
+  border: 1px solid rgba(190, 176, 255, 0.22);
+}
+
+.subject-matting-title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.subject-matting-title p {
+  margin: 3px 0 0;
+  max-width: 520px;
+  overflow: hidden;
+  color: #9b92b3;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subject-matting-close {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #cfc7ea;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.subject-matting-body {
+  height: calc(100% - 62px);
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) 352px;
+  min-height: 0;
+}
+
+.subject-matting-subjects {
+  padding: 64px 22px 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.subject-matting-subject-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  color: #f5f2ff;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(15, 20, 32, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.subject-matting-subject-pill span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #6f85ff;
+  box-shadow: 0 0 12px rgba(111, 133, 255, 0.8);
+}
+
+.subject-matting-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    #202833;
+  background-size: 28px 28px;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.subject-matting-stage-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #bdb3e9;
+  font-size: 13px;
+}
+
+.subject-matting-canvas-wrap {
+  position: relative;
+  max-width: calc(100% - 72px);
+  max-height: calc(100% - 96px);
+  display: grid;
+  place-items: center;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.subject-matting-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 3px;
+  box-shadow: 0 18px 58px rgba(0, 0, 0, 0.45);
+  cursor: crosshair;
+  image-rendering: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.subject-matting-canvas.is-brush {
+  cursor: none;
+}
+
+.subject-matting-canvas.is-pan {
+  cursor: grab;
+}
+
+.subject-matting-canvas.is-panning {
+  cursor: grabbing;
+}
+
+.subject-matting-brush-cursor {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  border: 2px solid rgba(44, 236, 187, 0.96);
+  border-radius: 999px;
+  background: rgba(44, 236, 187, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(6, 12, 18, 0.5),
+    0 0 0 3px rgba(44, 236, 187, 0.12);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.subject-matting-brush-cursor.is-exclude {
+  border-color: rgba(255, 110, 132, 0.98);
+  background: rgba(255, 110, 132, 0.11);
+  box-shadow:
+    0 0 0 1px rgba(6, 12, 18, 0.5),
+    0 0 0 3px rgba(255, 110, 132, 0.12);
+}
+
+.subject-matting-point-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.subject-matting-point-marker {
+  position: absolute;
+  z-index: 2;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(44, 236, 187, 0.95), rgba(32, 142, 118, 0.94));
+  box-shadow: 0 0 0 3px rgba(43, 228, 181, 0.16), 0 5px 12px rgba(0, 0, 0, 0.32);
+  transform: translate(-50%, -50%) scale(var(--marker-scale, 1));
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.subject-matting-point-marker.is-exclude {
+  background: linear-gradient(180deg, rgba(255, 110, 132, 0.96), rgba(173, 45, 70, 0.94));
+  box-shadow: 0 0 0 3px rgba(255, 97, 125, 0.16), 0 5px 12px rgba(0, 0, 0, 0.32);
+}
+
+.subject-matting-point-marker:hover,
+.subject-matting-point-marker:focus-visible {
+  border-color: rgba(255, 255, 255, 0.34);
+  transform: translate(-50%, -50%) scale(var(--marker-scale, 1));
+  outline: none;
+}
+
+.subject-matting-help {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 13px;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  background: rgba(7, 10, 17, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.subject-matting-view-switch {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 2px;
+  padding: 4px;
+  background: rgba(7, 10, 17, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+.subject-matting-view-switch button,
+.subject-matting-preview-switch button,
+.subject-matting-tool-button,
+.subject-matting-chip,
+.subject-matting-mini-button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cfc7ea;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.subject-matting-view-switch button {
+  min-width: 54px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.subject-matting-view-switch button.is-active,
+.subject-matting-preview-switch button.is-active,
+.subject-matting-tool-button.is-active,
+.subject-matting-chip.is-active {
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(125, 96, 255, 0.52), rgba(89, 62, 170, 0.42));
+  border-color: rgba(204, 190, 255, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 16px rgba(124, 92, 252, 0.18);
+}
+
+.subject-matting-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(14, 13, 21, 0.94);
+}
+
+.subject-matting-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 38px;
+  padding: 0 14px;
+  color: #c8f8e9;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.subject-matting-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #36dfb6;
+  box-shadow: 0 0 13px rgba(54, 223, 182, 0.7);
+}
+
+.subject-matting-panel-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.subject-matting-section {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+.subject-matting-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: #f2edff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.subject-matting-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.subject-matting-tool-button {
+  display: flex;
+  min-height: 48px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.subject-matting-slider-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  color: #aea5c9;
+  font-size: 12px;
+}
+
+.subject-matting-slider-row input[type='range'] {
+  width: 100%;
+  accent-color: #8f72ff;
+}
+
+.subject-matting-check-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.subject-matting-chip {
+  height: 34px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.subject-matting-preview-switch {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.subject-matting-preview-switch button {
+  height: 32px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.subject-matting-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 9, 15, 0.78);
+}
+
+.subject-matting-actions button {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.subject-matting-cancel {
+  margin-left: auto;
+  color: #e4ddf8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.subject-matting-submit {
+  min-width: 154px;
+  color: #171320;
+  background: linear-gradient(90deg, #9574ff, #fff1b8);
+  border: 0;
+  box-shadow: 0 10px 28px rgba(145, 112, 255, 0.22);
+}
+
+.subject-matting-submit:disabled,
+.subject-matting-cancel:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.subject-matting-error {
+  margin: 12px 14px 0;
+  padding: 9px 11px;
+  color: #ff9c9c;
+  font-size: 12px;
+  background: rgba(120, 12, 30, 0.38);
+  border: 1px solid rgba(255, 95, 124, 0.22);
+  border-radius: 9px;
+}
+
+.subject-matting-mini-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.subject-matting-mini-button {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+}
+
+.subject-matting-rectangle-draft {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(75, 224, 181, 0.95);
+  background: rgba(75, 224, 181, 0.12);
+}
+
+.subject-matting-rectangle-draft.is-delete {
+  border-color: rgba(255, 113, 107, 0.98);
+  border-style: dashed;
+  background: rgba(255, 113, 107, 0.12);
+}
+
+
+/* 框选预览。此前只存在于线上编译产物，2026-08-14 按线上样式补回。 */
+.subject-matting-box-preview {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1.5px solid rgba(60, 232, 198, 0.96);
+  border-radius: 4px;
+  background: rgba(60, 232, 198, 0.08);
+  box-shadow: 0 0 0 1px rgba(7, 10, 17, 0.72), 0 0 18px rgba(60, 232, 198, 0.22);
+  pointer-events: none;
+}
+
+.subject-matting-box-preview.is-exclude {
+  border-color: rgba(255, 103, 126, 0.98);
+  border-style: dashed;
+  background: rgba(255, 103, 126, 0.08);
+  box-shadow: 0 0 0 1px rgba(7, 10, 17, 0.72), 0 0 18px rgba(255, 103, 126, 0.18);
+}
+
+
+/* 画笔大小指示圈。SubjectMattingModal.tsx 用到，但样式此前只存在于线上编译产物，
+   2026-08-14 按线上样式补回。 */
+.subject-matting-brush-size-preview {
+  position: fixed;
+  z-index: 260010;
+  box-sizing: border-box;
+  border: 2px solid rgba(44, 236, 187, 0.96);
+  border-radius: 999px;
+  background: rgba(44, 236, 187, 0.14);
+  box-shadow: 0 0 0 1px rgba(6, 12, 18, 0.72), 0 0 0 4px rgba(44, 236, 187, 0.14);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.subject-matting-brush-size-preview.is-exclude {
+  border-color: rgba(255, 110, 132, 0.98);
+  background: rgba(255, 110, 132, 0.13);
+  box-shadow: 0 0 0 1px rgba(6, 12, 18, 0.72), 0 0 0 4px rgba(255, 110, 132, 0.14);
+}
+
+.subject-matting-brush-size-preview span {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  padding: 3px 7px;
+  color: #fff;
+  background: rgba(8, 10, 16, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  transform: translate(-50%);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.34);
+}
