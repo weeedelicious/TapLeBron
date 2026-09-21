@@ -293,15 +293,15 @@ export function ActivityLogsModal({
 }
 
 export function TopNav({ onHome, user, onLogout }: Props) {
-  const {
-    projectName,
-    collectionName,
-    projectUuid,
-    projectShared,
-    projectCanManage,
-    isSaving,
-    isDirty,
-  } = useCanvasStore()
+  // 顶栏不能订阅整个画布 store。viewport、节点进度等高频变化会让顶栏及其弹窗
+  // 一起反复渲染，模板库打开后尤其明显。
+  const projectName = useCanvasStore(state => state.projectName)
+  const collectionName = useCanvasStore(state => state.collectionName)
+  const projectUuid = useCanvasStore(state => state.projectUuid)
+  const projectShared = useCanvasStore(state => state.projectShared)
+  const projectCanManage = useCanvasStore(state => state.projectCanManage)
+  const isSaving = useCanvasStore(state => state.isSaving)
+  const isDirty = useCanvasStore(state => state.isDirty)
   const workspaceLabel = collectionName.trim() || '我的画布'
   const [editing, setEditing] = useState(false)
   const [nameVal, setNameVal] = useState('')
@@ -405,7 +405,7 @@ export function TopNav({ onHome, user, onLogout }: Props) {
           onClick={onHome}
         >
           <img
-            src="/shotflow-mark.svg"
+            src="/shotflow-icon.svg"
             alt=""
             style={{ height: 22, width: 22, display: 'block', objectFit: 'contain' }}
           />

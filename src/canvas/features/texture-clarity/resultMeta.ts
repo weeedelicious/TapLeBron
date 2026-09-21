@@ -34,6 +34,8 @@ export interface TextureClarityNodeResult {
   outputHeight: number | null
   fusionPolicy: string | null
   semanticModelId: string | null
+  semanticMode: string | null
+  semanticFallbackReason: string | null
   sourceHash: string | null
   generationCalls: number | null
   /** 质量门禁。null = 老节点没记录，不是"没通过" */
@@ -123,6 +125,8 @@ export function readTextureClarityResult(data: CanvasNodeData | undefined): Text
       outputHeight: asNumber(meta.outputHeight),
       fusionPolicy: asText(meta.fusionPolicy),
       semanticModelId: asText(meta.semanticModelId),
+      semanticMode: asText(meta.semanticMode),
+      semanticFallbackReason: asText(meta.semanticFallbackReason),
       sourceHash: asText(meta.sourceHash),
       generationCalls: asNumber(meta.generationCalls),
       passed: typeof meta.passed === 'boolean' ? meta.passed : null,

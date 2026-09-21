@@ -1,12 +1,14 @@
 ﻿import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
-import { Camera, Copy, Crop, Download, Expand, Loader2, Lock, Scissors, SquarePen, Trash2, Unlock } from 'lucide-react'
+import { Camera, Copy, Crop, Download, Expand, Gauge, Loader2, Lock, Scissors, Sparkles, SquarePen, Trash2, Unlock } from 'lucide-react'
 import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
 import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { GenerationProgress } from '@/components/GenerationProgress'
 import { VideoCropModal } from '@/components/VideoCropModal'
 import { VideoTrimModal } from '@/components/VideoTrimModal'
+import { VideoFrameInterpolationModal, type VideoFrameInterpolationMethod } from '@/components/VideoFrameInterpolationModal'
+import { useMediaEnhance } from '@/features/media-enhance/useMediaEnhance'
 import { WhiteboardModal } from '@/components/WhiteboardModal'
 import { NodeShell } from './NodeShell'
 import { NodeTypeIcon } from './nodeTypeIcon'
@@ -66,6 +68,11 @@ import {
   resourceMetaFromUploadPayload,
   writeWhiteboardState,
 } from '@/lib/whiteboard'
+import {
+  frameNumberFromTime,
+  nextVideoFrameTime,
+  resolveVideoFps,
+} from '@/lib/videoFrame'
 
 interface Props {
   id: string
@@ -158,7 +165,13 @@ function mimeTypeFromVideoExtension(extension?: string) {
 
 function primaryVideoMeta(nodeData?: CanvasNodeData, fallbackUrl?: string): ResourceMeta | null {
   const rawItems = (nodeData?._resourceMeta?.items ?? []) as ResourceMeta[]
-  const videoMeta = rawItems.find((item) => item?.kind === 'video') ?? null
+  const matchesUrl = (item: ResourceMeta) => {
+    if (!fallbackUrl) return false
+    return item.originalUrl === fallbackUrl || item.displayUrl === fallbackUrl
+  }
+  const videoMeta = rawItems.find((item) => item?.kind === 'video' && matchesUrl(item))
+    ?? rawItems.find((item) => item?.kind === 'video')
+    ?? null
   if (videoMeta) {
     return {
       ...videoMeta,
@@ -306,15 +319,8 @@ type ConnectedMediaRef = NodeRef & {
   coverSrc?: string
 }
 
-const FRAME_STEP_SECONDS = 1 / 30
-
-function frameNumberFromTime(timeSec: number) {
-  const safeTime = Number.isFinite(timeSec) && timeSec > 0 ? timeSec : 0
-  return Math.max(1, Math.floor(safeTime / FRAME_STEP_SECONDS) + 1)
-}
-
 export function VideoNode({ id, data, selected }: Props) {
-  const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, pushHistory } = useCanvasStore()
+  const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, pushHistory, persistNodesAndWait } = useCanvasStore()
   const { addTask, startPolling, cancelTask } = useTasksStore()
   /** 真正还在轮询的任务表。进度条只信这个，不信节点上残留的 loading 标记。 */
   const liveTasks = useTasksStore(state => state.tasks)
@@ -341,8 +347,10 @@ export function VideoNode({ id, data, selected }: Props) {
    * 视频大图查看器。跟上面那个 previewUrl 分开：previewUrl 预览的是**连进来的参考图**
    * （图片，走 <img>），这个装的是本节点自己的视频。合用一个 state 就会出现
    * 拿 <img> 渲染 mp4 或者拿 <video> 渲染 png 的情况。
-   */
+  */
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null)
+  /** 同一 URL 只跑一个 ffprobe 请求；成功后结果会进入节点元数据，后续无需再探测。 */
+  const videoMetaProbeRequestsRef = useRef<Map<string, Promise<ResourceMeta | null>>>(new Map())
   const [whiteboardOpen, setWhiteboardOpen] = useState(false)
   const [whiteboardSourceFile, setWhiteboardSourceFile] = useState<File | null>(null)
   const [whiteboardPreparing, setWhiteboardPreparing] = useState(false)
@@ -351,6 +359,8 @@ export function VideoNode({ id, data, selected }: Props) {
   const [cropSubmitting, setCropSubmitting] = useState(false)
   const [trimOpen, setTrimOpen] = useState(false)
   const [trimSubmitting, setTrimSubmitting] = useState(false)
+  const [frameInterpolationOpen, setFrameInterpolationOpen] = useState(false)
+  const [frameInterpolationSubmitting, setFrameInterpolationSubmitting] = useState(false)
   const [frameMode, setFrameMode] = useState(false)
   const [frameNumber, setFrameNumber] = useState(1)
   const [frameCapturing, setFrameCapturing] = useState(false)
@@ -546,6 +556,21 @@ export function VideoNode({ id, data, selected }: Props) {
   const expandedVideoItems = galleryItems.filter((item) => item.url !== videoUrl)
   const currentVideoMeta = primaryVideoMeta(data, videoUrl)
   const displayVideoUrl = mediaPreviewUrl(data, videoUrl)
+  const currentVideoGenerationMeta = videoUrl
+    ? data._assetGenerationMeta?.[videoUrl] as AssetGenerationMeta | undefined
+    : undefined
+  // HTMLVideoElement doesn't expose FPS, so prefer the persisted ffprobe value
+  // and then the generation metadata. The modal still lets the server re-probe
+  // the real source before starting a task.
+  const sourceFpsHint = Number(
+    currentVideoMeta?.fps || currentVideoGenerationMeta?.fps || currentVideoGenerationMeta?.targetFps || 0,
+  ) || undefined
+  const frameFps = resolveVideoFps(sourceFpsHint)
+  const sourceWidthHint = Number(currentVideoMeta?.width || currentVideoMeta?.displayWidth || 0) || undefined
+  const sourceHeightHint = Number(currentVideoMeta?.height || currentVideoMeta?.displayHeight || 0) || undefined
+  const sourceDurationHint = Number(currentVideoMeta?.durationSec || currentVideoMeta?.displayDurationSec || currentVideoGenerationMeta?.durationSec || 0) || undefined
+  const frameInterpolationParams = (params as unknown as Record<string, unknown>).frameInterpolation
+  const isFrameInterpolationNode = Boolean(frameInterpolationParams && typeof frameInterpolationParams === 'object')
 
   const ratio = normalizeVideoRatioValue(model, params.settings.ratio, mode)
   const resolution = normalizeVideoResolutionValue(model, params.settings.resolution)
@@ -596,7 +621,7 @@ export function VideoNode({ id, data, selected }: Props) {
     connectedImageRefs.map((ref, i) => {
       const srcNode = nodes.find(n => n.id === ref.nodeId)
       const liveUrl = liveRefUrl(srcNode?.data as CanvasNodeData, ref.url)
-      return { ...ref, url: liveUrl, orderName: `图片${i + 1}`, previewKind: 'image' }
+      return { ...ref, url: liveUrl, orderName: `图片${i + 1}`, previewKind: 'image' as const }
     }).filter(r => r.url),
     [connectedImageRefs, nodes]
   )
@@ -633,7 +658,7 @@ export function VideoNode({ id, data, selected }: Props) {
     connectedAudioRefs.map((ref, i) => {
       const srcNode = nodes.find(n => n.id === ref.nodeId)
       const liveUrl = liveRefUrl(srcNode?.data as CanvasNodeData, ref.url)
-      return { ...ref, url: liveUrl, orderName: `音频${i + 1}`, previewKind: 'audio' }
+      return { ...ref, url: liveUrl, orderName: `音频${i + 1}`, previewKind: 'audio' as const }
     }).filter(r => r.url),
     [connectedAudioRefs, nodes]
   )
@@ -1096,7 +1121,7 @@ export function VideoNode({ id, data, selected }: Props) {
   }, [data.name])
 
   /**
-   * 双击 / 「全屏」打开大图查看器。
+   * 双击 / 「查看」打开画布内查看器。
    *
    * 以前这里是 window.open(url) —— 直接把裸视频地址扔进新标签页，没有缩略图轨道、没有翻页、
    * 没有主视频按钮、没有节点功能行，跟图片节点的查看器完全不是一个东西。现在复用
@@ -1105,6 +1130,36 @@ export function VideoNode({ id, data, selected }: Props) {
   const openVideoPreview = useCallback((url: string) => {
     if (url) setVideoPreviewUrl(url)
   }, [])
+
+  // Chromium 的原生 video controls 会自行处理双击全屏，React 的 dblclick
+  // preventDefault 在部分版本里拦不住。除了 controlsList 禁用入口，再监听
+  // Fullscreen API / Safari 旧事件兜底：一旦原生播放器尝试全屏，立即退出并
+  // 打开 Shotflow 自己的查看器。
+  useEffect(() => {
+    const video = videoRef.current as (HTMLVideoElement & {
+      webkitExitFullscreen?: () => void
+    }) | null
+    if (!video || !videoUrl) return undefined
+
+    const exitNativeFullscreen = () => {
+      openVideoPreview(videoUrl)
+      if (document.fullscreenElement === video && typeof document.exitFullscreen === 'function') {
+        const result = document.exitFullscreen()
+        if (result && typeof result.catch === 'function') void result.catch(() => undefined)
+      }
+      try { video.webkitExitFullscreen?.() } catch { /* old Safari best effort */ }
+    }
+    const handleFullscreenChange = () => {
+      if (document.fullscreenElement === video) exitNativeFullscreen()
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    video.addEventListener('webkitbeginfullscreen', exitNativeFullscreen)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      video.removeEventListener('webkitbeginfullscreen', exitNativeFullscreen)
+    }
+  }, [openVideoPreview, videoUrl])
 
   const openWhiteboard = useCallback(async () => {
     if (!videoRef.current || !videoUrl || whiteboardPreparing) return
@@ -1139,23 +1194,22 @@ export function VideoNode({ id, data, selected }: Props) {
 
   const updateFrameNumberFromVideo = useCallback((video = videoRef.current) => {
     if (!video) return
-    setFrameNumber(frameNumberFromTime(video.currentTime))
-  }, [])
+    setFrameNumber(frameNumberFromTime(video.currentTime, frameFps))
+  }, [frameFps])
 
   const seekFrame = useCallback((direction: -1 | 1) => {
     const video = videoRef.current
     if (!video || !videoUrl) return
     video.pause()
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
-    const maxTime = duration ? Math.max(0, duration - 0.001) : Number.MAX_SAFE_INTEGER
-    const nextTime = Math.max(0, Math.min(maxTime, video.currentTime + direction * FRAME_STEP_SECONDS))
+    const nextTime = nextVideoFrameTime(video.currentTime, direction, frameFps, duration)
     try {
       video.currentTime = nextTime
-      setFrameNumber(frameNumberFromTime(nextTime))
+      setFrameNumber(frameNumberFromTime(nextTime, frameFps))
     } catch {
       // ignore seek errors while metadata is still settling
     }
-  }, [videoUrl])
+  }, [frameFps, videoUrl])
 
   const toggleFrameMode = useCallback(() => {
     const video = videoRef.current
@@ -1313,6 +1367,18 @@ export function VideoNode({ id, data, selected }: Props) {
   const previewAspectH = currentVideoMeta?.displayHeight ?? videoSize?.h ?? currentVideoMeta?.height ?? currentRatioOption.h
   const previewFrame = fitFrameToAspect(previewAspectW, previewAspectH, 520, 400, 220)
   const shellWidth = previewFrame.width
+  const mediaEnhance = useMediaEnhance({
+    id,
+    data,
+    sourceUrl: videoUrl ?? '',
+    sourceName: data.name,
+    mediaType: 'video',
+    shellWidth,
+    sourceWidth: sourceWidthHint ?? videoSize?.w,
+    sourceHeight: sourceHeightHint ?? videoSize?.h,
+    sourceFps: sourceFpsHint,
+    sourceDurationSec: sourceDurationHint,
+  })
   const galleryGap = 8
   const expandedTileWidth = Math.max(1, Math.round(galleryRect?.width ?? shellWidth))
   const expandedTileHeight = Math.max(1, Math.round(galleryRect?.height ?? previewFrame.height))
@@ -1446,19 +1512,25 @@ export function VideoNode({ id, data, selected }: Props) {
 
   const persistPrimaryVideoMeta = useCallback((patch: Partial<ResourceMeta>) => {
     const currentItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
-    const currentVideoMeta = currentItems.find((item) => item?.kind === 'video') ?? null
+    const videoItems = currentItems.filter((item) => item?.kind === 'video')
+    const currentVideoMeta = videoItems.find((item) => (
+      item.originalUrl === videoUrl || item.displayUrl === videoUrl
+    )) ?? (videoItems.length === 1 ? videoItems[0] : null)
     const fallbackExtension = extensionFromUrl(videoUrl)
     const nextVideoMeta: ResourceMeta = {
       kind: 'video',
       ...currentVideoMeta,
       ...patch,
+      originalUrl: currentVideoMeta?.originalUrl || videoUrl || undefined,
       extension: patch.extension || currentVideoMeta?.extension || fallbackExtension || undefined,
       mimeType:
         patch.mimeType ||
         currentVideoMeta?.mimeType ||
         mimeTypeFromVideoExtension(patch.extension || currentVideoMeta?.extension || fallbackExtension),
     }
-    const remainingItems = currentItems.filter((item) => item?.kind !== 'video')
+    const remainingItems = currentVideoMeta
+      ? currentItems.filter((item) => item !== currentVideoMeta)
+      : currentItems
     const currentKey = JSON.stringify(currentVideoMeta ?? null)
     const nextKey = JSON.stringify(nextVideoMeta)
     if (currentKey === nextKey) return
@@ -1538,6 +1610,101 @@ export function VideoNode({ id, data, selected }: Props) {
       setCropSubmitting(false)
     }
   }, [addNodeAt, cropSubmitting, data.name, data.projectUuid, edges, id, nodes, setEdges, shellWidth, videoUrl])
+
+  const openFrameInterpolationModal = useCallback(() => {
+    if (!videoUrl || frameInterpolationSubmitting) return
+    setGenError(null)
+    setFrameInterpolationOpen(true)
+  }, [frameInterpolationSubmitting, videoUrl])
+
+  const handleFrameInterpolationAccept = useCallback(async (targetFps: number, method: VideoFrameInterpolationMethod) => {
+    if (!videoUrl || frameInterpolationSubmitting) return
+    setGenError(null)
+    setFrameInterpolationSubmitting(true)
+    let createdNodeId = ''
+    let taskStarted = false
+    try {
+      const state = useCanvasStore.getState()
+      const sourceNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 }
+      const outgoingCount = state.edges.filter((edge) => edge.source === id || edge.source === sourceNode?.id).length
+      const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+      const implementation = method === 'openflowframes'
+        ? { provider: 'openflowframes', model: 'OpenFlowFrames · RIFE 4.26', preset: 'slow' }
+        : method === 'video2x'
+          ? { provider: 'video2x', model: 'Video2X 6.4 · RIFE 4.26', preset: 'slow' }
+          : { provider: 'ffmpeg-minterpolate', model: 'FFmpeg MCI 光流', preset: 'medium' }
+      const marker = {
+        sourceFps: sourceFpsHint,
+        targetFps,
+        width: sourceWidthHint,
+        height: sourceHeightHint,
+        durationSec: sourceDurationHint,
+        qualityMode: 'quality',
+        method,
+        crf: 12,
+        preset: implementation.preset,
+        provider: implementation.provider,
+        model: implementation.model,
+      }
+      const createdNode = addNodeAt(
+        'video',
+        sourcePosition.x + shellWidth + 140,
+        sourcePosition.y + outgoingCount * 44,
+        {
+          name: `${data.name || '视频'} ${targetFps}fps`,
+          url: [],
+          action: 'image_resource',
+          sourceKind: 'frame_interpolation',
+          params: {
+            ...defaultVideoParams(),
+            modeType: 'video-edit',
+            videoList: [sourceRef],
+            mixedList: [sourceRef],
+            mixedListOrder: [id],
+            frameInterpolation: marker,
+          } as unknown as Record<string, unknown>,
+        },
+      )
+      createdNodeId = createdNode.id
+
+      // addNodeAt schedules a debounced save. Wait for the node and its
+      // reference edge to be durable before creating the server task; otherwise
+      // a fast FFmpeg run could finish before the output node exists remotely.
+      const saved = await persistNodesAndWait()
+      if (!saved) throw new Error('补帧输出节点保存失败，请刷新画布后重试')
+
+      const result = await toolboxApi.videoFrameInterpolation(
+        data.projectUuid,
+        createdNode.id,
+        videoUrl,
+        targetFps,
+        method,
+        id,
+      )
+      if (!result?.jobId) throw new Error('补帧任务未创建')
+      taskStarted = true
+      addTask(result.jobId, createdNode.id, result.generationVersion, {
+        phaseLabel: '视频补帧',
+        model: implementation.model,
+        taskKind: 'video',
+      })
+      startPolling(result.jobId, data.projectUuid)
+      setFrameInterpolationOpen(false)
+    } catch (error) {
+      const message = errorToText(error, '视频补帧失败')
+      setGenError(message)
+      // If the server task was never accepted, remove only the fresh output
+      // node so a failed save/request cannot leave an orphaned blank node.
+      if (createdNodeId && !taskStarted) {
+        const liveNode = useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)
+        if (liveNode) useCanvasStore.getState().deleteNodes([createdNodeId])
+      }
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setFrameInterpolationSubmitting(false)
+    }
+  }, [addNodeAt, addTask, data.name, data.projectUuid, frameInterpolationSubmitting, id, persistNodesAndWait, shellWidth, sourceDurationHint, sourceFpsHint, sourceHeightHint, sourceWidthHint, startPolling, videoUrl])
 
   const captureCurrentFrameToImageNode = useCallback(async () => {
     const video = videoRef.current
@@ -1638,16 +1805,81 @@ export function VideoNode({ id, data, selected }: Props) {
    * 不给 thumbUrl —— 视频没给 thumbUrl 时查看器会用 <video preload="metadata"> 取首帧，
    * 给了反而会被当图片塞进 <img>，mp4 会画成裂图。
    */
-  const videoPreviewItems = useMemo<ImagePreviewItem[]>(() => galleryItems.map((item) => ({
-    url: item.url,
-    name: data.name,
-    resourceMeta: data._resourceMeta?.items?.find(
-      (meta) => meta.originalUrl === item.url || meta.displayUrl === item.url,
-    ) as ResourceMeta | undefined,
-    generationMeta: data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined,
-    createdAtMs: data._assetCreatedAtMs?.[item.url],
-    badge: (data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined)?.resolution,
-  })), [galleryItems, data])
+  const videoPreviewItems = useMemo<ImagePreviewItem[]>(() => {
+    const resourceItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
+    const videoResourceItems = resourceItems.filter((meta) => meta?.kind === 'video')
+    return galleryItems.map((item) => ({
+      url: item.url,
+      name: data.name,
+      resourceMeta: videoResourceItems.find(
+        (meta) => meta.originalUrl === item.url || meta.displayUrl === item.url,
+      ) ?? (galleryItems.length === 1 && videoResourceItems.length === 1 ? videoResourceItems[0] : undefined),
+      generationMeta: data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined,
+      createdAtMs: data._assetCreatedAtMs?.[item.url],
+      badge: (data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined)?.resolution,
+    }))
+  }, [galleryItems, data])
+
+  const loadVideoResourceMeta = useCallback((url: string) => {
+    const sourceUrl = String(url || '').trim()
+    if (!sourceUrl.startsWith('/assets/')) return Promise.resolve(null)
+    const existing = videoMetaProbeRequestsRef.current.get(sourceUrl)
+    if (existing) return existing
+
+    let request!: Promise<ResourceMeta | null>
+    request = assetsApi.metadata(data.projectUuid, sourceUrl)
+      .then((result) => {
+        const rawMeta = result?.meta
+        if (!rawMeta || typeof rawMeta !== 'object' || String(rawMeta.kind || '') !== 'video') return null
+
+        // Read the latest store state after ffprobe returns. Multiple videos can
+        // finish probing out of order; using the render-time `data` snapshot here
+        // would let the last response overwrite metadata saved by earlier ones.
+        const state = useCanvasStore.getState()
+        const liveNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+        if (!liveNode) return null
+        const liveData = liveNode.data as CanvasNodeData
+        const currentItems = (liveData._resourceMeta?.items ?? []) as ResourceMeta[]
+        const videoItemIndexes = currentItems
+          .map((item, index) => item?.kind === 'video' ? index : -1)
+          .filter((index) => index >= 0)
+        const exactIndex = currentItems.findIndex((item) => (
+          item?.kind === 'video'
+          && (item.originalUrl === sourceUrl || item.displayUrl === sourceUrl)
+        ))
+        const liveGalleryItems = galleryItemsFromNodeData(liveData)
+        const targetIndex = exactIndex >= 0
+          ? exactIndex
+          : liveGalleryItems.length === 1 && videoItemIndexes.length === 1
+            ? videoItemIndexes[0]
+            : -1
+        const currentMeta = targetIndex >= 0 ? currentItems[targetIndex] : undefined
+        const probedCreatedAtMs = Number(rawMeta.createdAtMs)
+        const nextMeta: ResourceMeta = {
+          ...currentMeta,
+          ...(rawMeta as Partial<ResourceMeta>),
+          kind: 'video',
+          originalUrl: currentMeta?.originalUrl || sourceUrl,
+          createdAtMs: currentMeta?.createdAtMs
+            ?? (Number.isFinite(probedCreatedAtMs) && probedCreatedAtMs > 0 ? probedCreatedAtMs : undefined),
+        }
+        const nextItems = targetIndex >= 0
+          ? currentItems.map((item, index) => index === targetIndex ? nextMeta : item)
+          : [nextMeta, ...currentItems]
+        state.updateNodeData(liveNode.data.nodeKey || liveNode.id, {
+          _resourceMeta: { items: nextItems },
+        })
+        return nextMeta
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (videoMetaProbeRequestsRef.current.get(sourceUrl) === request) {
+          videoMetaProbeRequestsRef.current.delete(sourceUrl)
+        }
+      })
+    videoMetaProbeRequestsRef.current.set(sourceUrl, request)
+    return request
+  }, [data.projectUuid, id])
 
   // 提成变量是为了让大图查看器（ImagePreview kind="video"）复用同一份 —— 图片节点那边
   // 也是把 mediaToolbarActions 直接传进查看器，两边不各写一份，改一处两边都跟上。
@@ -1670,6 +1902,24 @@ export function VideoNode({ id, data, selected }: Props) {
             : <Crop size={14} strokeWidth={1.9} />,
           onClick: openCropModal,
           disabled: cropSubmitting,
+        },
+        {
+          key: 'frame-interpolation',
+          label: frameInterpolationSubmitting ? '正在补帧' : '补帧',
+          icon: frameInterpolationSubmitting
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Gauge size={14} strokeWidth={1.9} />,
+          onClick: openFrameInterpolationModal,
+          disabled: frameInterpolationSubmitting,
+        },
+        {
+          key: 'media-enhance',
+          label: mediaEnhance.submitting ? '正在创建高清增强' : 'AI 高清增强',
+          icon: mediaEnhance.submitting
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Sparkles size={14} strokeWidth={1.9} />,
+          onClick: mediaEnhance.openModal,
+          disabled: mediaEnhance.submitting,
         },
         {
           key: 'whiteboard',
@@ -1697,7 +1947,7 @@ export function VideoNode({ id, data, selected }: Props) {
         },
         {
           key: 'fullscreen',
-          label: '全屏',
+          label: '查看',
           icon: <Expand size={14} strokeWidth={1.9} />,
           onClick: () => openVideoPreview(videoUrl),
         },
@@ -1903,6 +2153,7 @@ export function VideoNode({ id, data, selected }: Props) {
               boxShadow: galleryItems.length > 1 && !expanded ? '0 20px 32px rgba(0,0,0,0.32)' : undefined,
             }}
             controls={frameMode || isPanelOpen || !isGenerateVideoNode}
+            controlsList="nofullscreen"
             playsInline
             preload="metadata"
             onError={() => {
@@ -1910,7 +2161,12 @@ export function VideoNode({ id, data, selected }: Props) {
                 setGenError('视频链接已失效，请重新生成或重新导入')
               }
             }}
-            onDoubleClick={() => openVideoPreview(videoUrl)}
+            onDoubleClickCapture={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              event.nativeEvent.stopImmediatePropagation()
+              openVideoPreview(videoUrl)
+            }}
             onLoadedMetadata={e => {
               const video = e.currentTarget
               updateFrameNumberFromVideo(video)
@@ -1996,7 +2252,28 @@ export function VideoNode({ id, data, selected }: Props) {
           <div className="flex flex-col items-center justify-center gap-2"
             style={{ height: previewFrame.height, padding: 24 }}
           >
-            {uploadInfo ? (
+            {isFrameInterpolationNode && progressRows.length > 0 ? (
+              <div
+                className="nodrag"
+                aria-label="视频补帧进度"
+                style={{
+                  width: 'min(238px, 92%)',
+                  transform: `scale(${inverseZoom})`,
+                  transformOrigin: 'center',
+                }}
+              >
+                {progressRows.map((info) => (
+                  <GenerationProgress
+                    key={info.taskId}
+                    variant="card"
+                    compact
+                    taskInfo={info}
+                    label="视频补帧"
+                    onCancel={() => cancelProgressRow(info.taskId)}
+                  />
+                ))}
+              </div>
+            ) : uploadInfo ? (
               <div
                 className="nodrag"
                 style={{
@@ -2970,6 +3247,7 @@ export function VideoNode({ id, data, selected }: Props) {
       nodeActions={mediaToolbarActions}
       onRemoveItem={removeVideoUrl}
       name={data.name}
+      loadVideoResourceMeta={loadVideoResourceMeta}
       onClose={() => setVideoPreviewUrl(null)}
     />}
     {trimOpen && videoUrl && (
@@ -2995,6 +3273,21 @@ export function VideoNode({ id, data, selected }: Props) {
         onConfirm={handleCropAccept}
       />
     )}
+    {frameInterpolationOpen && videoUrl && (
+      <VideoFrameInterpolationModal
+        url={videoUrl}
+        name={data.name || '视频'}
+        sourceFpsHint={sourceFpsHint}
+        sourceWidthHint={sourceWidthHint}
+        sourceHeightHint={sourceHeightHint}
+        durationHintSec={sourceDurationHint}
+        onCancel={() => {
+          if (!frameInterpolationSubmitting) setFrameInterpolationOpen(false)
+        }}
+        onConfirm={handleFrameInterpolationAccept}
+      />
+    )}
+    {mediaEnhance.modal}
     {whiteboardOpen && (
       <WhiteboardModal
         sourceName={data.name}

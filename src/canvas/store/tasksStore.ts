@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { generateApi, type ActiveGenerationTask } from '@/lib/api'
 import { useCanvasStore } from './canvasStore'
-import type { VideoParams, VideoHistoryItem, CanvasNodeData, ImageParams, TaskInfo, FailedGeneration } from '@/lib/types'
+import type { AssetGenerationMeta, VideoParams, VideoHistoryItem, CanvasNodeData, ImageParams, TaskInfo, FailedGeneration } from '@/lib/types'
 import { mergeAssetCreatedAtMap } from '@/lib/assetTimestamps'
 import { estimateTaskFromNodeData } from '@/lib/generationProgress'
 
@@ -17,12 +17,20 @@ interface TaskEntry {
   quantity?: number
   model?: string
   taskKind: TaskInfo['taskKind']
+  phaseLabel?: string
   error?: string
+}
+
+interface TaskStartOptions {
+  phaseLabel?: string
+  model?: string
+  taskKind?: TaskInfo['taskKind']
+  estimatedMs?: number
 }
 
 interface TasksState {
   tasks: Record<string, TaskEntry>
-  addTask: (jobId: string, nodeKey: string, generationVersion?: number) => void
+  addTask: (jobId: string, nodeKey: string, generationVersion?: number, options?: TaskStartOptions) => void
   startPolling: (jobId: string, projectUuid: string) => void
   restoreProjectTasks: (projectUuid: string) => Promise<void>
   removeTask: (jobId: string) => void
@@ -44,6 +52,7 @@ function taskInfoFromEntry(entry: TaskEntry, patch: Partial<TaskInfo> = {}): Tas
     estimatedMs: entry.estimatedMs,
     model: entry.model,
     taskKind: entry.taskKind,
+    phaseLabel: entry.phaseLabel,
     ...patch,
   }
 }
@@ -119,6 +128,134 @@ function taskKindFromType(taskType: unknown, fallback: TaskInfo['taskKind']): Ta
   return fallback ?? 'other'
 }
 
+function frameInterpolationSettings(nodeData?: CanvasNodeData): Record<string, unknown> | null {
+  const params = (nodeData?.params ?? {}) as Record<string, unknown>
+  const raw = params.frameInterpolation
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
+}
+
+function mediaEnhanceSettings(nodeData?: CanvasNodeData): Record<string, unknown> | null {
+  const params = (nodeData?.params ?? {}) as Record<string, unknown>
+  const raw = params.mediaEnhance
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
+}
+
+function mediaEnhanceMode(settings: Record<string, unknown> | null | undefined) {
+  const mode = settings?.enhanceMode
+  return mode === 'generative' || mode === 'nvidia-vsr' ? mode : 'faithful'
+}
+
+function mediaEnhanceDefaultModel(settings: Record<string, unknown> | null | undefined) {
+  const mode = mediaEnhanceMode(settings)
+  return mode === 'generative'
+    ? 'SeedVR2 7B Sharp FP8'
+    : mode === 'nvidia-vsr'
+      ? 'NVIDIA RTX Video Super Resolution'
+      : 'RealSR DF2K'
+}
+
+function mediaEnhanceDefaultLabel(settings: Record<string, unknown> | null | undefined) {
+  const mode = mediaEnhanceMode(settings)
+  return mode === 'generative'
+    ? 'AI 生成式细节'
+    : mode === 'nvidia-vsr'
+      ? 'NVIDIA RTX 视频超分'
+      : 'AI 高清增强'
+}
+
+function phaseLabelFromTask(nodeData?: CanvasNodeData, serverTask?: ActiveGenerationTask) {
+  const providerStatus = serverTask?.providerStatus
+  const serverLabel = providerStatus && typeof providerStatus.phaseLabel === 'string'
+    ? providerStatus.phaseLabel.trim()
+    : ''
+  if (serverLabel) return serverLabel
+  const nodeLabel = typeof nodeData?.taskInfo?.phaseLabel === 'string'
+    ? nodeData.taskInfo.phaseLabel.trim()
+    : ''
+  if (nodeLabel) return nodeLabel
+  const enhancement = mediaEnhanceSettings(nodeData)
+  if (enhancement) return mediaEnhanceDefaultLabel(enhancement)
+  return frameInterpolationSettings(nodeData) ? '视频补帧' : undefined
+}
+
+function positiveNumberOrUndefined(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function booleanOrUndefined(value: unknown) {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function mediaEnhanceAssetMeta(
+  settings: Record<string, unknown> | null,
+  outputMetadata: Record<string, unknown>,
+  persistedOutput: Record<string, unknown>,
+  providerStatus: Record<string, unknown>,
+): Partial<AssetGenerationMeta> {
+  const marker = settings ?? {}
+  const stringValue = (...values: unknown[]) => {
+    for (const value of values) {
+      const text = String(value ?? '').trim()
+      if (text) return text
+    }
+    return undefined
+  }
+  const rawMode = stringValue(outputMetadata.enhanceMode, marker.enhanceMode, providerStatus.enhanceMode)
+  const enhanceMode = rawMode === 'generative' || rawMode === 'nvidia-vsr' ? rawMode : 'faithful'
+  const defaultProvider = enhanceMode === 'generative'
+    ? 'seedvr2'
+    : enhanceMode === 'nvidia-vsr'
+      ? 'nvidia-vfx'
+      : 'realsr-ncnn-vulkan'
+  const defaultModel = enhanceMode === 'generative'
+    ? 'SeedVR2 7B Sharp FP8'
+    : enhanceMode === 'nvidia-vsr'
+      ? 'NVIDIA RTX Video Super Resolution'
+      : 'RealSR DF2K'
+  return {
+    mediaEnhance: true,
+    enhanceMode,
+    enhanceProvider: stringValue(outputMetadata.enhanceProvider, marker.provider, defaultProvider),
+    enhanceModel: stringValue(outputMetadata.enhanceModel, marker.model, persistedOutput.model, defaultModel),
+    generativeDetails: Boolean(outputMetadata.generativeDetails ?? marker.generativeDetails ?? enhanceMode === 'generative'),
+    scale: positiveNumberOrUndefined(outputMetadata.scale ?? providerStatus.scale ?? marker.scale),
+    sourceWidth: positiveNumberOrUndefined(outputMetadata.sourceWidth ?? marker.sourceWidth),
+    sourceHeight: positiveNumberOrUndefined(outputMetadata.sourceHeight ?? marker.sourceHeight),
+    outputWidth: positiveNumberOrUndefined(persistedOutput.width ?? outputMetadata.width ?? marker.targetWidth),
+    outputHeight: positiveNumberOrUndefined(persistedOutput.height ?? outputMetadata.height ?? marker.targetHeight),
+    sourceFps: positiveNumberOrUndefined(outputMetadata.sourceFps ?? marker.sourceFps),
+    fps: positiveNumberOrUndefined(outputMetadata.fps ?? providerStatus.fps),
+    frameCount: positiveNumberOrUndefined(outputMetadata.frameCount),
+    codecName: stringValue(outputMetadata.codecName, providerStatus.codec),
+    codecProfile: stringValue(outputMetadata.codecProfile),
+    pixelFormat: stringValue(outputMetadata.pixelFormat, providerStatus.pixelFormat),
+    audioCodecName: stringValue(outputMetadata.audioCodecName),
+    formatName: stringValue(outputMetadata.formatName),
+    boundaryFramesVerified: booleanOrUndefined(outputMetadata.boundaryFramesVerified ?? providerStatus.boundaryFramesVerified),
+    imageTta: booleanOrUndefined(outputMetadata.imageTta),
+    videoTta: booleanOrUndefined(outputMetadata.videoTta),
+    qualityMode: stringValue(outputMetadata.qualityMode, marker.qualityMode, 'quality'),
+    crf: positiveNumberOrUndefined(outputMetadata.crf ?? marker.crf),
+    preset: stringValue(outputMetadata.preset, marker.preset),
+    colorCorrection: stringValue(outputMetadata.colorCorrection, marker.colorCorrection),
+    batchSize: positiveNumberOrUndefined(outputMetadata.batchSize ?? marker.batchSize),
+    uniformBatchSize: booleanOrUndefined(outputMetadata.uniformBatchSize ?? marker.uniformBatchSize),
+    temporalOverlap: positiveNumberOrUndefined(outputMetadata.temporalOverlap ?? marker.temporalOverlap),
+    prependFrames: positiveNumberOrUndefined(outputMetadata.prependFrames ?? marker.prependFrames),
+    seedvr2Commit: stringValue(outputMetadata.seedvr2Commit, marker.seedvr2Commit),
+    nvidiaVfxVersion: stringValue(outputMetadata.nvidiaVfxVersion, marker.nvidiaVfxVersion),
+    nvidiaVsrQuality: stringValue(outputMetadata.nvidiaVsrQuality, marker.nvidiaVsrQuality),
+    contentFramesVerified: booleanOrUndefined(outputMetadata.contentFramesVerified),
+  }
+}
+
 function timeFromServer(value: unknown, fallback = Date.now()) {
   if (!value) return fallback
   const ms = Date.parse(String(value))
@@ -139,6 +276,8 @@ function recoveryOutputs(task: ActiveGenerationTask) {
 function restoredEntryFromNode(jobId: string, nodeKey: string, nodeData?: CanvasNodeData, serverTask?: ActiveGenerationTask): TaskEntry {
   const estimate = estimateTaskFromNodeData(nodeData)
   const taskInfo = nodeData?.taskInfo
+  const interpolation = frameInterpolationSettings(nodeData)
+  const enhancement = mediaEnhanceSettings(nodeData)
   const generationVersion = Math.max(
     1,
     Number(serverTask?.meta?.generationVersion || 0) ||
@@ -154,9 +293,10 @@ function restoredEntryFromNode(jobId: string, nodeKey: string, nodeData?: Canvas
     progressPercent: Math.max(0, Math.min(99, Number(serverTask?.progressPercent ?? taskInfo?.progressPercent ?? 0) || 0)),
     startedAtMs: Number(taskInfo?.startedAtMs || 0) || timeFromServer(serverTask?.meta?.createdAt),
     estimatedMs: Number(taskInfo?.estimatedMs || 0) || estimate.estimatedMs,
-    quantity: Number(serverTask?.meta?.quantity || taskInfo?.quantity || estimate.quantity || 1),
-    model: String(serverTask?.meta?.model || taskInfo?.model || estimate.model || ''),
+    quantity: Number(serverTask?.meta?.quantity || taskInfo?.quantity || (interpolation || enhancement ? 1 : estimate.quantity) || 1),
+    model: String(serverTask?.meta?.model || taskInfo?.model || (enhancement ? mediaEnhanceDefaultModel(enhancement) : interpolation ? 'ffmpeg-minterpolate' : estimate.model) || ''),
     taskKind: taskKindFromType(serverTask?.taskType, taskInfo?.taskKind ?? estimate.taskKind),
+    phaseLabel: phaseLabelFromTask(nodeData, serverTask),
     error: String(serverTask?.error || taskInfo?.error || ''),
   }
 }
@@ -164,10 +304,12 @@ function restoredEntryFromNode(jobId: string, nodeKey: string, nodeData?: Canvas
 export const useTasksStore = create<TasksState>((set, get) => ({
   tasks: {},
 
-  addTask: (jobId, nodeKey, serverGenerationVersion) => {
+  addTask: (jobId, nodeKey, serverGenerationVersion, options = {}) => {
     const store = useCanvasStore.getState()
     const node = findNodeByKey(nodeKey)
     const estimate = estimateTaskFromNodeData(node?.data as CanvasNodeData | undefined)
+    const interpolation = frameInterpolationSettings(node?.data as CanvasNodeData | undefined)
+    const enhancement = mediaEnhanceSettings(node?.data as CanvasNodeData | undefined)
     const previousVersion = Number((node?.data as CanvasNodeData | undefined)?._generationVersion || 0)
     const generationVersion = Math.max(1, Number(serverGenerationVersion || 0) || previousVersion + 1)
     const entry: TaskEntry = {
@@ -177,10 +319,11 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       status: 1,
       progressPercent: 0,
       startedAtMs: Date.now(),
-      estimatedMs: estimate.estimatedMs,
-      quantity: estimate.quantity,
-      model: estimate.model,
-      taskKind: estimate.taskKind,
+      estimatedMs: Number(options.estimatedMs || estimate.estimatedMs) || estimate.estimatedMs,
+      quantity: interpolation || enhancement ? 1 : estimate.quantity,
+      model: options.model || (enhancement ? mediaEnhanceDefaultModel(enhancement) : interpolation ? 'ffmpeg-minterpolate' : estimate.model),
+      taskKind: options.taskKind || estimate.taskKind,
+      phaseLabel: options.phaseLabel || (enhancement ? mediaEnhanceDefaultLabel(enhancement) : interpolation ? '视频补帧' : undefined),
     }
 
     set(s => ({
@@ -248,12 +391,16 @@ export const useTasksStore = create<TasksState>((set, get) => ({
         }
 
         let infoEntry: TaskEntry = current
+        const serverPhaseLabel = res.providerStatus && typeof res.providerStatus.phaseLabel === 'string'
+          ? res.providerStatus.phaseLabel.trim()
+          : ''
         set(s => {
           infoEntry = {
             ...s.tasks[jobId],
             status: res.status,
             progressPercent: res.progressPercent,
             generationVersion: Number(res.meta?.generationVersion || s.tasks[jobId]?.generationVersion || current.generationVersion),
+            ...(serverPhaseLabel ? { phaseLabel: serverPhaseLabel } : {}),
           }
           return { tasks: { ...s.tasks, [jobId]: infoEntry } }
         })
@@ -265,6 +412,7 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           error: res.error,
           generationVersion: infoEntry.generationVersion,
           applyStatus: res.meta?.applyStatus ?? 'pending',
+          phaseLabel: infoEntry.phaseLabel,
         })
         useCanvasStore.getState().updateNodeData(current.nodeKey, {
           // 只有"最新那条"才写 taskInfo —— 否则一条旧任务的进度会把最新任务的 taskInfo 顶掉。
@@ -296,6 +444,12 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
           if (node && nodeData?.type === 'video') {
             const p = (nodeData.params ?? {}) as unknown as VideoParams
+            const interpolation = frameInterpolationSettings(nodeData)
+            const enhancement = mediaEnhanceSettings(nodeData)
+            const providerStatus = objectValue(res.providerStatus)
+            const isFrameInterpolation = Boolean(interpolation)
+              || infoEntry.phaseLabel === '视频补帧'
+              || providerStatus.phaseLabel === '视频补帧'
             const historyItem: VideoHistoryItem = {
               id: uuidv4(),
               timestamp: completedAtMs,
@@ -313,17 +467,63 @@ export const useTasksStore = create<TasksState>((set, get) => ({
             // 模型 / 分辨率 / 生成时间全是「—」。比例、时长、提示词一起存，多条视频才分得清。
             const videoAssetMeta = { ...(nodeData._assetGenerationMeta ?? {}) }
             for (const [outputIndex, url] of res.urls.entries()) {
+              const persistedOutput = res.meta?.outputs?.find(output => output.index === outputIndex || output.url === url)
+              const outputMetadata = objectValue(persistedOutput?.metadata)
+              const isMediaEnhance = Boolean(enhancement)
+                || outputMetadata.mediaEnhance === true
+                || res.meta?.mode === 'media_enhance'
+              const outputFps = positiveNumberOrUndefined(
+                outputMetadata.fps
+                  ?? outputMetadata.frameRate
+                  ?? providerStatus.fps
+                  ?? providerStatus.frameRate
+                  ?? (isFrameInterpolation ? providerStatus.targetFps ?? interpolation?.targetFps : undefined),
+              )
+              const sourceFps = positiveNumberOrUndefined(
+                outputMetadata.sourceFps ?? providerStatus.sourceFps ?? interpolation?.sourceFps,
+              )
+              const targetFps = positiveNumberOrUndefined(
+                outputMetadata.targetFps ?? providerStatus.targetFps ?? interpolation?.targetFps,
+              )
+              const outputDurationSec = positiveNumberOrUndefined(
+                persistedOutput?.durationSec ?? outputMetadata.durationSec ?? interpolation?.durationSec ?? p.settings?.duration,
+              )
               videoAssetMeta[url] = {
-                model: res.meta?.model || p.model || infoEntry.model,
-                resolution: res.meta?.resolution || p.settings?.resolution,
+                model: res.meta?.model || (isFrameInterpolation ? 'ffmpeg-minterpolate' : p.model || infoEntry.model),
+                resolution: persistedOutput?.resolution || res.meta?.resolution || p.settings?.resolution,
                 ratio: p.settings?.ratio,
-                durationSec: Number(p.settings?.duration) || undefined,
+                durationSec: outputDurationSec,
                 modeType: p.modeType as string | undefined,
                 prompt: String(p.prompt ?? '').slice(0, 500) || undefined,
                 createdAtMs: completedAtMs,
                 taskId: jobId,
                 generationVersion: infoEntry.generationVersion,
                 outputIndex,
+                // Keep the real output fps for ordinary generated videos too;
+                // the node's frame-step control uses this instead of assuming
+                // every source is 30fps.
+                fps: outputFps,
+                ...(isFrameInterpolation ? {
+                  frameInterpolation: true,
+                  interpolationProvider: String(outputMetadata.interpolationProvider || providerStatus.interpolationProvider || 'ffmpeg-minterpolate'),
+                  sourceFps,
+                  targetFps,
+                  fps: outputFps || targetFps,
+                  codecName: String(outputMetadata.codecName || providerStatus.codec || '') || undefined,
+                  codecProfile: String(outputMetadata.codecProfile || '') || undefined,
+                  pixelFormat: String(outputMetadata.pixelFormat || providerStatus.pixelFormat || '') || undefined,
+                  audioCodecName: String(outputMetadata.audioCodecName || '') || undefined,
+                  formatName: String(outputMetadata.formatName || '') || undefined,
+                  qualityMode: String(outputMetadata.qualityMode || interpolation?.qualityMode || 'quality'),
+                  crf: positiveNumberOrUndefined(outputMetadata.crf ?? interpolation?.crf),
+                  preset: String(outputMetadata.preset || interpolation?.preset || 'medium'),
+                } : {}),
+                ...(isMediaEnhance ? mediaEnhanceAssetMeta(
+                  enhancement,
+                  outputMetadata,
+                  objectValue(persistedOutput),
+                  providerStatus,
+                ) : {}),
               }
             }
             store.updateNodeData(current.nodeKey, {
@@ -344,14 +544,27 @@ export const useTasksStore = create<TasksState>((set, get) => ({
             const generatedAssetMeta = { ...(nodeData._assetGenerationMeta ?? {}) }
             const submittedModel = res.meta?.model || imageParams.model || current.model
             const submittedResolution = res.meta?.resolution || imageParams.settings?.resolution || '1K'
+            const enhancement = mediaEnhanceSettings(nodeData)
+            const providerStatus = objectValue(res.providerStatus)
             for (const [outputIndex, url] of res.urls.entries()) {
+              const persistedOutput = res.meta?.outputs?.find(output => output.index === outputIndex || output.url === url)
+              const outputMetadata = objectValue(persistedOutput?.metadata)
+              const isMediaEnhance = Boolean(enhancement)
+                || outputMetadata.mediaEnhance === true
+                || res.meta?.mode === 'media_enhance'
               generatedAssetMeta[url] = {
                 model: submittedModel,
-                resolution: submittedResolution,
+                resolution: persistedOutput?.resolution || submittedResolution,
                 createdAtMs: completedAtMs,
                 taskId: jobId,
                 generationVersion: infoEntry.generationVersion,
                 outputIndex,
+                ...(isMediaEnhance ? mediaEnhanceAssetMeta(
+                  enhancement,
+                  outputMetadata,
+                  objectValue(persistedOutput),
+                  providerStatus,
+                ) : {}),
               }
             }
             store.updateNodeData(current.nodeKey, {
@@ -444,14 +657,16 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       set(s => ({
         tasks: { ...s.tasks, [entry.jobId]: entry },
       }))
-      canvasStore.updateNodeData(entry.nodeKey, {
-        taskInfo: taskInfoFromEntry(entry, {
+      const restoredInfo = taskInfoFromEntry(entry, {
           loading: true,
           status: entry.status as 0 | 1 | 2 | 3,
           progressPercent: entry.progressPercent,
           error: entry.error || nodeData?.taskInfo?.error,
           generationVersion: entry.generationVersion,
-        }),
+        })
+      canvasStore.updateNodeData(entry.nodeKey, {
+        taskInfo: restoredInfo,
+        _pendingTasks: pendingTasksWith(nodeData, entry.jobId, restoredInfo),
         _generationVersion: Math.max(
           Number(nodeData?._generationVersion || 0),
           Number(entry.generationVersion || 0)
@@ -462,9 +677,17 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
     for (const node of canvasStore.nodes) {
       const nodeData = node.data as CanvasNodeData
+      const pending = nodeData._pendingTasks
+      if (pending && typeof pending === 'object') {
+        for (const [jobId, info] of Object.entries(pending)) {
+          if (!info?.loading || !jobId) continue
+          restoreEntry(restoredEntryFromNode(jobId, node.id, nodeData), nodeData)
+        }
+      }
       const taskId = nodeData.taskInfo?.loading ? String(nodeData.taskInfo.taskId || '') : ''
-      if (!taskId) continue
-      restoreEntry(restoredEntryFromNode(taskId, node.id, nodeData), nodeData)
+      if (taskId && !restoredJobIds.has(taskId)) {
+        restoreEntry(restoredEntryFromNode(taskId, node.id, nodeData), nodeData)
+      }
     }
 
     let activeTasks: ActiveGenerationTask[] = []
@@ -505,14 +728,61 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
       const completedAtMs = timeFromServer(task.meta?.updatedAt)
       const generatedAssetMeta = { ...(nodeData._assetGenerationMeta ?? {}) }
+      const interpolation = frameInterpolationSettings(nodeData)
+      const enhancement = mediaEnhanceSettings(nodeData)
+      const providerStatus = objectValue(task.providerStatus)
+      const isFrameInterpolation = Boolean(interpolation)
+        || providerStatus.phaseLabel === '视频补帧'
+        || task.meta?.mode === 'frame_interpolation'
       for (const [outputIndex, url] of urls.entries()) {
+        const persistedOutput = task.meta?.outputs?.find(output => output.index === outputIndex || output.url === url)
+        const outputMetadata = objectValue(persistedOutput?.metadata)
+        const isMediaEnhance = Boolean(enhancement)
+          || outputMetadata.mediaEnhance === true
+          || task.meta?.mode === 'media_enhance'
+        const outputFps = positiveNumberOrUndefined(
+          outputMetadata.fps
+            ?? outputMetadata.frameRate
+            ?? providerStatus.fps
+            ?? providerStatus.frameRate
+            ?? (isFrameInterpolation ? providerStatus.targetFps ?? interpolation?.targetFps : undefined),
+        )
+        const sourceFps = positiveNumberOrUndefined(
+          outputMetadata.sourceFps ?? providerStatus.sourceFps ?? interpolation?.sourceFps,
+        )
+        const targetFps = positiveNumberOrUndefined(
+          outputMetadata.targetFps ?? providerStatus.targetFps ?? interpolation?.targetFps,
+        )
         generatedAssetMeta[url] = {
-          model: String(task.meta?.model || ''),
-          resolution: String(task.meta?.resolution || ''),
+          model: String(task.meta?.model || (isMediaEnhance ? mediaEnhanceDefaultModel(enhancement) : isFrameInterpolation ? 'ffmpeg-minterpolate' : '')),
+          resolution: String(persistedOutput?.resolution || task.meta?.resolution || ''),
+          durationSec: positiveNumberOrUndefined(persistedOutput?.durationSec ?? outputMetadata.durationSec ?? interpolation?.durationSec),
           createdAtMs: completedAtMs,
           taskId: jobId,
           generationVersion: serverVersion,
           outputIndex,
+          fps: outputFps,
+          ...(isFrameInterpolation ? {
+            frameInterpolation: true,
+            interpolationProvider: String(outputMetadata.interpolationProvider || providerStatus.interpolationProvider || 'ffmpeg-minterpolate'),
+            sourceFps,
+            targetFps,
+            fps: outputFps || targetFps,
+            codecName: String(outputMetadata.codecName || providerStatus.codec || '') || undefined,
+            codecProfile: String(outputMetadata.codecProfile || '') || undefined,
+            pixelFormat: String(outputMetadata.pixelFormat || providerStatus.pixelFormat || '') || undefined,
+            audioCodecName: String(outputMetadata.audioCodecName || '') || undefined,
+            formatName: String(outputMetadata.formatName || '') || undefined,
+            qualityMode: String(outputMetadata.qualityMode || interpolation?.qualityMode || 'quality'),
+            crf: positiveNumberOrUndefined(outputMetadata.crf ?? interpolation?.crf),
+            preset: String(outputMetadata.preset || interpolation?.preset || 'medium'),
+          } : {}),
+          ...(isMediaEnhance ? mediaEnhanceAssetMeta(
+            enhancement,
+            outputMetadata,
+            objectValue(persistedOutput),
+            providerStatus,
+          ) : {}),
         }
       }
       const entry = restoredEntryFromNode(jobId, node.id, nodeData, task)

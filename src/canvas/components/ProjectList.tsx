@@ -66,7 +66,7 @@ const COLLECTION_COLLAPSE_STORAGE_KEY = 'shotflow.collection-collapse.v1'
  * 存不到就当全部收起，第一次进页面最省。
  */
 const SIDE_SECTION_STORAGE_KEY = 'shotflow.side-section-open.v1'
-type SideSectionKey = 'templates' | 'shared'
+type SideSectionKey = 'officialTemplates' | 'templates' | 'shared'
 const CANVAS_DRAG_MIME = 'application/x-shotflow-canvas'
 
 const MENU_VIEWPORT_MARGIN = 12
@@ -188,6 +188,7 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
   const [studioEnabled, setStudioEnabled] = useState(false)
   const [groups, setGroups] = useState<ProjectGroups>({
     ownCanvases: [],
+    officialTemplateCanvases: [],
     templateCanvases: [],
     sharedCanvases: [],
     personalSharedCanvases: [],
@@ -235,11 +236,11 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
   })
   // 右栏「画布模版」「共享画布」的展开状态，默认收起。
   const [sideOpen, setSideOpen] = useState<Record<SideSectionKey, boolean>>(() => {
-    const fallback = { templates: false, shared: false }
+    const fallback = { officialTemplates: false, templates: false, shared: false }
     if (typeof window === 'undefined') return fallback
     try {
       const stored = JSON.parse(window.localStorage.getItem(SIDE_SECTION_STORAGE_KEY) || '{}')
-      return { templates: Boolean(stored?.templates), shared: Boolean(stored?.shared) }
+      return { officialTemplates: Boolean(stored?.officialTemplates), templates: Boolean(stored?.templates), shared: Boolean(stored?.shared) }
     } catch {
       return fallback
     }
@@ -247,10 +248,12 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
   // 那一组的数据是否已经拿到。收起时服务端不查、返回空数组，所以"空"有两种含义：
   // 真的没有，或者压根没加载。分开记，头上的数量角标才不会在没加载时显示一个骗人的 0。
   const [sideLoaded, setSideLoaded] = useState<Record<SideSectionKey, boolean>>({
+    officialTemplates: false,
     templates: false,
     shared: false,
   })
   const [sideLoading, setSideLoading] = useState<Record<SideSectionKey, boolean>>({
+    officialTemplates: false,
     templates: false,
     shared: false,
   })
@@ -326,11 +329,12 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
   const allCanvases = useMemo(
     () => [
       ...groups.ownCanvases,
+      ...groups.officialTemplateCanvases,
       ...groups.templateCanvases,
       ...groups.sharedCanvases,
       ...(groups.personalSharedCanvases ?? []),
     ],
-    [groups.ownCanvases, groups.templateCanvases, groups.sharedCanvases, groups.personalSharedCanvases]
+    [groups.ownCanvases, groups.officialTemplateCanvases, groups.templateCanvases, groups.sharedCanvases, groups.personalSharedCanvases]
   )
 
   const selectableAssignedProjects = useMemo(
@@ -457,7 +461,8 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
     try {
       // 收起的区块直接让服务端别查（省一次查询 + 每行一次建目录 + 一次行转换）
       const open = sideOpenRef.current
-      const skip: Array<'templates' | 'shared'> = []
+      const skip: Array<'officialTemplates' | 'templates' | 'shared'> = []
+      if (!open.officialTemplates) skip.push('officialTemplates')
       if (!open.templates) skip.push('templates')
       if (!open.shared) skip.push('shared')
       const nextGroups = await projectsApi.list(ownerParam ?? undefined, skip)
@@ -467,12 +472,14 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
       const loaded = sideLoadedRef.current
       setGroups((prev) => ({
         ...nextGroups,
+        officialTemplateCanvases: open.officialTemplates ? nextGroups.officialTemplateCanvases : prev.officialTemplateCanvases,
         templateCanvases: open.templates ? nextGroups.templateCanvases : prev.templateCanvases,
         sharedCanvases: open.shared ? nextGroups.sharedCanvases : prev.sharedCanvases,
         personalSharedCanvases: nextGroups.personalSharedCanvases ?? [],
       }))
       // 已经加载过的就一直算加载过：数据还在手上，下次展开直接显示，不再发请求
       setSideLoaded({
+        officialTemplates: open.officialTemplates || loaded.officialTemplates,
         templates: open.templates || loaded.templates,
         shared: open.shared || loaded.shared,
       })
@@ -500,20 +507,22 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
     if (!opening || sideLoaded[key] || sideLoading[key]) return
     setSideLoading((prev) => ({ ...prev, [key]: true }))
     try {
-      const skip = (['templates', 'shared', 'personalShared'] as const).filter((item) => item !== key)
+      const skip = (['officialTemplates', 'templates', 'shared', 'personalShared'] as const).filter((item) => item !== key)
       const data = await projectsApi.list(
         isAdmin && selectedOwnerId ? selectedOwnerId : undefined,
         [...skip],
       )
-      setGroups((prev) => (key === 'templates'
-        ? { ...prev, templateCanvases: data.templateCanvases }
-        : { ...prev, sharedCanvases: data.sharedCanvases }))
+      setGroups((prev) => {
+        if (key === 'officialTemplates') return { ...prev, officialTemplateCanvases: data.officialTemplateCanvases }
+        if (key === 'templates') return { ...prev, templateCanvases: data.templateCanvases }
+        return { ...prev, sharedCanvases: data.sharedCanvases }
+      })
       setSideLoaded((prev) => ({ ...prev, [key]: true }))
     } catch (error) {
       console.error('load side section failed', key, error)
       // 拉失败就收回去，别让用户对着一个空区块以为"真的没有"
       setSideOpen((prev) => ({ ...prev, [key]: false }))
-      window.alert(key === 'templates' ? '画布模版加载失败，请重试' : '共享画布加载失败，请重试')
+      window.alert(key === 'officialTemplates' ? '官方画布模板加载失败，请重试' : key === 'templates' ? '画布模版加载失败，请重试' : '共享画布加载失败，请重试')
     } finally {
       setSideLoading((prev) => ({ ...prev, [key]: false }))
     }
@@ -713,6 +722,9 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
     setGroups((prev) => ({
       ...prev,
       ownCanvases: prev.ownCanvases.map((canvas) =>
+        canvas.uuid === uuid ? { ...canvas, isShared: shared } : canvas
+      ),
+      officialTemplateCanvases: prev.officialTemplateCanvases.map((canvas) =>
         canvas.uuid === uuid ? { ...canvas, isShared: shared } : canvas
       ),
       templateCanvases: prev.templateCanvases.map((canvas) =>
@@ -1086,7 +1098,7 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
           onMouseDown={(event) => event.preventDefault()}
         >
           <img
-            src="/shotflow-logo.png"
+            src="/shotflow-logo.svg"
             alt="Shotflow"
             draggable={false}
             style={{ height: 34, width: 'auto', display: 'block', objectFit: 'contain', pointerEvents: 'none' }}
@@ -1518,6 +1530,42 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
                   </div>
                 ) : (
                   <EmptyPanel title="还没有个人分享。" />
+                )}
+              </div>
+
+              <div>
+                <SectionHeader
+                  title="官方画布模板"
+                  count={sideLoaded.officialTemplates ? groups.officialTemplateCanvases.length : null}
+                  description="官方模板库的一对一源画布"
+                  collapsible
+                  open={sideOpen.officialTemplates}
+                  loading={sideLoading.officialTemplates}
+                  onToggle={() => {
+                    void toggleSideSection('officialTemplates')
+                  }}
+                />
+                {!sideOpen.officialTemplates ? null : sideLoading.officialTemplates && !sideLoaded.officialTemplates ? (
+                  <EmptyPanel title="正在加载官方画布模板…" />
+                ) : groups.officialTemplateCanvases.length ? (
+                  <div className="shotflow-project-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 1fr))', gap: 12 }}>
+                    {groups.officialTemplateCanvases.map((canvas) => (
+                      <ProjectCard
+                        key={canvas.uuid}
+                        project={canvas}
+                        showOwner
+                        primaryLabel={workingUuid === canvas.uuid ? '复制中...' : '使用模板'}
+                        primaryMode="duplicate"
+                        isBusy={workingUuid === canvas.uuid}
+                        copyProgress={workingUuid === canvas.uuid ? duplicateProgress : null}
+                        onPrimaryAction={() => {
+                          void handleDuplicate(canvas.uuid)
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyPanel title="还没有官方画布模板。" />
                 )}
               </div>
             </div>
@@ -2619,8 +2667,8 @@ function ProjectCard({
 }: {
   project: ProjectIndex
   onPrimaryAction: () => void
-  onRename: () => void
-  onMenu: (uuid: string, e: MouseEvent, mode: 'open' | 'duplicate') => void
+  onRename?: () => void
+  onMenu?: (uuid: string, e: MouseEvent, mode: 'open' | 'duplicate') => void
   onShareMenu?: (uuid: string, e: MouseEvent) => void
   showOwner: boolean
   primaryLabel: string
@@ -2633,8 +2681,8 @@ function ProjectCard({
   onDragEnd?: () => void
   isEditingName?: boolean
   isShareBusy?: boolean
-  onRenameSubmit: (name: string) => void
-  onRenameCancel: () => void
+  onRenameSubmit?: (name: string) => void
+  onRenameCancel?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [draftName, setDraftName] = useState(project.name)
@@ -2655,7 +2703,7 @@ function ProjectCard({
   }, [isEditingName, project.name])
 
   const commitRename = useCallback(() => {
-    onRenameSubmit(draftName)
+    onRenameSubmit?.(draftName)
   }, [draftName, onRenameSubmit])
 
   const showShareToggle = Boolean(onShareMenu && project.canManage)
@@ -2812,7 +2860,7 @@ function ProjectCard({
           </button>
         ) : null}
 
-        <button
+        {onMenu ? <button
           className="shotflow-project-card-menu-button"
           type="button"
           style={{
@@ -2840,12 +2888,12 @@ function ProjectCard({
           }}
         >
           ⋯
-        </button>
+        </button> : null}
       </div>
 
       <div className="shotflow-project-card-meta" style={{ marginTop: 7, paddingLeft: 2 }}>
         <div className="shotflow-project-card-title-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {isEditingName ? (
+          {isEditingName && onRenameSubmit ? (
             <input
               ref={inputRef}
               value={draftName}
@@ -2857,7 +2905,7 @@ function ProjectCard({
                 if (e.key === 'Enter') commitRename()
                 if (e.key === 'Escape') {
                   setDraftName(project.name)
-                  onRenameCancel()
+                  onRenameCancel?.()
                 }
               }}
               style={{
@@ -2890,7 +2938,7 @@ function ProjectCard({
               }}
               onClick={(e) => e.stopPropagation()}
               onDoubleClick={(e) => {
-                if (!project.canManage) return
+                if (!project.canManage || !onRename) return
                 e.preventDefault()
                 e.stopPropagation()
                 onRename()

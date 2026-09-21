@@ -30,6 +30,16 @@ export interface StageProp {
   scale: [number, number, number]
 }
 
+export interface StageModel {
+  id: string
+  name: string
+  sourceUrl: string
+  format: 'fbx' | 'glb' | 'gltf'
+  position: [number, number, number]
+  rotation: [number, number, number]
+  scale: [number, number, number]
+}
+
 export interface StageCamera {
   yaw: number
   pitch: number
@@ -51,6 +61,7 @@ export interface DirectorStageState {
   camera: StageCamera
   pose: Pose
   props: StageProp[]
+  models: StageModel[]
   scene: StageScene
   /** 出图比例（宽:高） */
   ratio: string
@@ -83,6 +94,7 @@ export const DEFAULT_DIRECTOR_STAGE_STATE: DirectorStageState = {
   },
   pose: {},
   props: [],
+  models: [],
   scene: {
     groundVisible: true,
     gridVisible: true,
@@ -201,6 +213,53 @@ export function normalizeProps(value: unknown): StageProp[] {
   return out
 }
 
+export function repairImportedModelName(value: unknown, fallback = '3ds Max 模型') {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return fallback
+  const chars = [...raw]
+  const suspicious = chars.some((char) => {
+    const code = char.charCodeAt(0)
+    return code >= 0x00c0 && code <= 0x00ff
+  })
+  if (!suspicious || chars.some((char) => char.charCodeAt(0) > 0x00ff)) return raw
+  try {
+    const bytes = Uint8Array.from(chars, (char) => char.charCodeAt(0))
+    const repaired = new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim()
+    return repaired || raw
+  } catch {
+    return raw
+  }
+}
+
+export function normalizeModels(value: unknown): StageModel[] {
+  const list = Array.isArray(value) ? value : []
+  const out: StageModel[] = []
+  const seen = new Set<string>()
+  for (const [index, item] of list.entries()) {
+    if (out.length >= 8 || !item || typeof item !== 'object') continue
+    const source = item as Record<string, unknown>
+    const sourceUrl = typeof source.sourceUrl === 'string' ? source.sourceUrl.trim() : ''
+    if (!sourceUrl || !/^\/assets\//.test(sourceUrl)) continue
+    const format = source.format === 'glb' || source.format === 'gltf' ? source.format : 'fbx'
+    const baseId = typeof source.id === 'string' && source.id.trim() ? source.id.trim().slice(0, 40) : 'model-' + (index + 1)
+    let id = baseId
+    let n = 2
+    while (seen.has(id)) id = baseId + '-' + n++
+    seen.add(id)
+    const scale = readVec3(source.scale, [1, 1, 1])
+    out.push({
+      id,
+      name: repairImportedModelName(source.name).slice(0, 120),
+      sourceUrl,
+      format,
+      position: readVec3(source.position, [0, 0, 0]),
+      rotation: readVec3(source.rotation, [0, 0, 0]),
+      scale: [Math.min(20, Math.max(0.02, scale[0])), Math.min(20, Math.max(0.02, scale[1])), Math.min(20, Math.max(0.02, scale[2]))],
+    })
+  }
+  return out
+}
+
 export function normalizeScene(value: unknown): StageScene {
   const source = (value ?? {}) as Record<string, unknown>
   const fallback = DEFAULT_DIRECTOR_STAGE_STATE.scene
@@ -221,6 +280,7 @@ export function normalizeDirectorStageState(value: unknown): DirectorStageState 
     camera: normalizeCamera(source.camera),
     pose: normalizePose(source.pose),
     props: normalizeProps(source.props),
+    models: normalizeModels(source.models),
     scene: normalizeScene(source.scene),
     ratio: normalizeRatio(source.ratio),
     resolution: normalizeResolution(source.resolution),

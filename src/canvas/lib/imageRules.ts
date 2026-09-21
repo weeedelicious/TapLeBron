@@ -16,6 +16,14 @@ interface ImageComputedSizeRule {
   maxAspectRatio?: number
 }
 
+export interface ImageProgressEstimateRule {
+  text2imageSeconds: number
+  image2imageSeconds: number
+  resolutionMultipliers?: Record<string, number>
+  extraOutputMultiplier?: number
+  extraReferenceMultiplier?: number
+}
+
 interface ImageModelRule {
   extends?: string
   label?: string
@@ -32,6 +40,7 @@ interface ImageModelRule {
   generationCounts?: number[]
   maxGenerationCount?: number
   maxReferenceImages?: number
+  progressEstimate?: ImageProgressEstimateRule
   sequential?: boolean
   maxTotalImages?: number
   sizeStrategy?: 'native-map' | 'computed' | 'gemini-params' | 'seedream-size'
@@ -106,6 +115,19 @@ export function listSelectableImageModels() {
       const rule = getImageModelRule(value)
       return { value, label: rule.label || value }
     })
+}
+
+export function getImageModelDisplayName(model?: string): string {
+  const value = String(model || '').trim()
+  if (!value) return ''
+  const canonical = aliasToModel[value.toLowerCase()]
+  if (!canonical) return value
+  const rule = getImageModelRule(canonical)
+  return rule.label || value
+}
+
+export function getImageProgressEstimate(model?: string): ImageProgressEstimateRule | undefined {
+  return getImageModelRule(model).progressEstimate
 }
 
 export function getImageRatioOptions(model?: string) {

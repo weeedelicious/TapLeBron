@@ -205,7 +205,7 @@ describe('three 运行时接线', () => {
     // 而且必须在 finally 里按当前开关恢复，否则出一次图之后再也点不到关节；
     // 用户藏了关节时也不该被出图强行打开。
     expect(capture).toContain('finally')
-    expect(capture).toContain('handle.visible = showJointHandlesRef.current')
+    expect(capture).toContain('handle.visible = stateRef.current.models.length === 0 && showJointHandlesRef.current')
   })
 
   it('焦距是真的接到相机 fov 上的（不然滑杆只是个装饰）', () => {

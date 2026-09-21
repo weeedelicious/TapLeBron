@@ -130,12 +130,14 @@
 }
 
 .tc-dot.is-ok { background: #4ade80; }
+.tc-dot.is-warn { background: #f2b84b; }
 .tc-dot.is-bad { background: #f87171; }
 .tc-dot.is-idle { background: #6f6790; }
 
 .tc-slot-title { margin-top: 6px; font-size: 12px; color: var(--sf-text-body, #cdc4e8); }
 .tc-slot-status { font-size: 11px; line-height: 1.45; }
 .tc-slot-status.is-ok { color: #7dcfa6; }
+.tc-slot-status.is-warn { color: #f2c46d; }
 .tc-slot-status.is-bad { color: #ff9b9b; }
 .tc-slot-status.is-idle { color: #7b7396; }
 

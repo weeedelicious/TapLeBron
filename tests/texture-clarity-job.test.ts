@@ -38,7 +38,7 @@ const { startTextureClarityRepair } = await import('@/features/texture-clarity/t
 
 const assets = {
   source: { url: '/assets/1/source.png', width: 1024, height: 1536, status: 'generated' },
-  semantic: { classMapUrl: '/assets/1/classmap.png', previewUrl: '/assets/1/semantic.png', status: 'generated', modelId: 'seg/x', labelSet: 'v1' },
+  semantic: { classMapUrl: '/assets/1/classmap.png', previewUrl: '/assets/1/semantic.png', status: 'generated', mode: 'parts', modelId: 'seg/x', labelSet: 'v1' },
   geometry: { depthUrl: '/assets/1/depth.png', normalUrl: '/assets/1/normal.png', status: 'generated' },
   sourceHash: 'hash-1',
   assetVersion: 3,
@@ -189,6 +189,7 @@ describe('细化纹理的准备阶段搬到节点上', () => {
     expect(repair.mock.calls[0][0]).toMatchObject({
       sourceUrl: '/assets/1/source.png',
       classMapUrl: '/assets/1/classmap.png',
+      semanticMode: 'parts',
     })
   })
 

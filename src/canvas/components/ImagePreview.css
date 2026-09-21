@@ -56,6 +56,14 @@
   background: #0b0910;
 }
 
+/* controlsList="nofullscreen" is the behavioral guard. Hide Chromium's
+   fullscreen control as well so the UI does not advertise an action that the
+   Shotflow video viewer intentionally forbids. */
+.shotflow-media-lod-video-shell > video::-webkit-media-controls-fullscreen-button,
+.shotflow-image-viewer-stage > video::-webkit-media-controls-fullscreen-button {
+  display: none !important;
+}
+
 .shotflow-image-viewer-toolbar {
   position: absolute;
   top: 16px;
@@ -325,6 +333,46 @@
   font-size: 18px;
   line-height: 1.35;
   word-break: break-all;
+}
+
+.shotflow-image-viewer-video-fps {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 4px 14px;
+  margin: -2px 0 12px;
+  padding: 13px 14px 12px;
+  border: 1px solid rgba(128, 189, 255, 0.28);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(83, 141, 255, 0.16), rgba(145, 100, 255, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  font-variant-numeric: tabular-nums;
+}
+
+.shotflow-image-viewer-video-fps span {
+  color: #a9bfd5;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.shotflow-image-viewer-video-fps strong {
+  grid-row: span 2;
+  color: #f4f8ff;
+  font-size: 24px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.shotflow-image-viewer-video-fps small {
+  color: #71859a;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.shotflow-image-viewer-video-fps.is-loading strong {
+  color: #9ebbd7;
+  font-size: 17px;
 }
 
 .shotflow-image-viewer-info-row {

@@ -9,7 +9,7 @@ const multer = require('multer');
 const express = require('express');
 const { AsyncLocalStorage } = require('async_hooks');
 const config = require('./config');
-const { getUserApiKeyByExternalId } = require('./userCatalog');
+const { getUserApiKeyByExternalId, getUserApiKeyByUser } = require('./userCatalog');
 const {
   getContentPool,
   getPool,
@@ -30,6 +30,7 @@ const {
   rescueUndeclaredNodeRemovals,
 } = require('./services/CanvasNodeDeleteGuard');
 const { isResumableGenerationTask } = require('./services/GenerationTaskRecovery');
+const { createGenerationTaskApiKeyRunner } = require('./services/GenerationTaskApiKeyContext');
 const {
   enterCanvasSession,
   leaveCanvasSession,
@@ -51,6 +52,10 @@ const panoramaService = require('./services/PanoramaService');
 const lightStageGeometryService = require('./services/LightStageGeometryService');
 const textureClarityService = require('./services/TextureClarityService');
 const subjectMattingService = require('./services/SubjectMattingService');
+const videoFrameInterpolationService = require('./services/VideoFrameInterpolationService');
+const mediaEnhanceService = require('./services/MediaEnhanceService');
+const directorStageModelService = require('./services/DirectorStageModelService');
+const officialTemplateLibraryService = require('./services/OfficialTemplateLibraryService');
 const jobService = require('./services/JobService');
 const {
   createProjectInCatalog,
@@ -116,6 +121,11 @@ const assetRouter = express.Router();
 // polling spawned within a request inherit it. Mivo calls keep the default key
 // (the sd2 api_key is an llm-proxy key and is rejected by Mivo).
 const apiKeyStore = new AsyncLocalStorage();
+const runWithGenerationTaskApiKey = createGenerationTaskApiKeyRunner({
+  getPool,
+  getUserApiKeyByUser,
+  apiKeyStore,
+});
 function currentUserApiKey() {
   const store = apiKeyStore.getStore();
   return store && store.userKey ? store.userKey : null;
@@ -133,7 +143,7 @@ apiRouter.use(async (req, res, next) => {
   apiKeyStore.run({ userKey: userKey || null }, () => next());
 });
 const DEFAULT_IMAGE_MODEL = openAIImageProvider.DEFAULT_IMAGE_MODEL;
-const MAX_VIDEO_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_BYTES = 150 * 1024 * 1024;
 const DEFAULT_SEEDANCE_MODEL_RULE = getVideoModelRule('Seedance_2_0');
 const DEFAULT_SEEDANCE_REFERENCE_RULE = DEFAULT_SEEDANCE_MODEL_RULE.referenceVideo;
 const SEEDANCE_REFERENCE_VIDEO_MAX_BYTES = DEFAULT_SEEDANCE_REFERENCE_RULE.maxBytes;
@@ -378,7 +388,17 @@ async function removeProjectStoredAssets(projectUuid) {
 }
 
 function safeOriginalName(name, fallback = 'file') {
-  const value = path.basename(String(name || '').trim());
+  let raw = path.basename(String(name || '').trim());
+  // Some multipart clients (and older versions of busboy) expose a UTF-8
+  // filename as a Latin-1 string. Keep correctly decoded names untouched,
+  // but repair the characteristic mojibake before it reaches the asset DB.
+  if (/[ÃÂâ€��]|[æçèéêëìíîïðñòóôõö÷øùúûüýþÿ]/.test(raw)) {
+    try {
+      const repaired = Buffer.from(raw, 'latin1').toString('utf8');
+      if (repaired && !repaired.includes(String.fromCharCode(0xfffd)) && repaired !== raw) raw = repaired;
+    } catch { /* keep the original filename */ }
+  }
+  const value = path.basename(raw);
   return (value || fallback).slice(0, 255);
 }
 
@@ -408,6 +428,14 @@ function mimeTypeFromName(name) {
       return 'video/x-matroska';
     case '.avi':
       return 'video/x-msvideo';
+    case '.fbx':
+      return 'application/vnd.autodesk.fbx';
+    case '.glb':
+      return 'model/gltf-binary';
+    case '.gltf':
+      return 'model/gltf+json';
+    case '.max':
+      return 'application/vnd.autodesk.max';
     case '.mp3':
       return 'audio/mpeg';
     case '.wav':
@@ -922,7 +950,7 @@ async function probeMediaMetadata(filePath, fallbackMimeType = '', fallbackName 
         [
           '-v', 'error',
           // avg_frame_rate 是给「参考视频要不要降帧」用的：源本来就 <=24fps 就不该再重采样
-          '-show_entries', 'format=duration,format_name:stream=codec_type,codec_name,profile,pix_fmt,width,height,avg_frame_rate',
+          '-show_entries', 'format=duration,format_name:stream=codec_type,codec_name,profile,pix_fmt,width,height,avg_frame_rate,duration,nb_frames',
           '-of', 'json',
           safePath,
         ],
@@ -960,6 +988,20 @@ async function probeMediaMetadata(filePath, fallbackMimeType = '', fallbackName 
         const [num, den] = String(videoStream.avg_frame_rate || '').split('/');
         const fps = Number(den) > 0 ? Number(num) / Number(den) : Number(num);
         if (Number.isFinite(fps) && fps > 0) meta.fps = Number(fps.toFixed(3));
+        const videoFrameCount = Number(videoStream.nb_frames);
+        if (Number.isInteger(videoFrameCount) && videoFrameCount > 0) {
+          meta.videoFrameCount = videoFrameCount;
+        }
+        const probedVideoDurationSec = Number(videoStream.duration);
+        const derivedVideoDurationSec = Number.isFinite(videoFrameCount) && videoFrameCount > 0 && fps > 0
+          ? videoFrameCount / fps
+          : 0;
+        const videoDurationSec = Number.isFinite(probedVideoDurationSec) && probedVideoDurationSec > 0
+          ? probedVideoDurationSec
+          : derivedVideoDurationSec;
+        if (Number.isFinite(videoDurationSec) && videoDurationSec > 0) {
+          meta.videoDurationSec = Number(videoDurationSec.toFixed(6));
+        }
       }
       const audioStream = Array.isArray(payload?.streams)
         ? payload.streams.find((stream) => stream?.codec_type === 'audio')
@@ -2077,6 +2119,11 @@ async function getSessionReadableCanvasForUser(req, res, canvasId, options = {})
 async function getSessionWritableCanvasForUser(req, res, canvasId, options = {}) {
   const row = await getWritableCanvasForUser(req, canvasId);
   if (!row) return null;
+  // Plugin requests are already authenticated by a scoped bearer token and
+  // cannot possess a browser canvas-session lease. They may generate only on
+  // their own canvas; the plugin plan + scope + idempotency gates run before
+  // this shared dispatcher is entered.
+  if (req.pluginAuth && Number(row.owner_id) === Number(req.user?.id)) return row;
   const session = await requireCanvasSession(req, res, row.id, options);
   return session ? row : null;
 }
@@ -2101,6 +2148,253 @@ async function getManageableCollectionForUser(req, collectionId) {
   );
   return rows[0] || null;
 }
+
+function requireOfficialTemplateEditor(req, res) {
+  if (req.user?.role === 'admin') return true;
+  res.status(403).json({ error: '只有管理员可以编辑官方模板库' });
+  return false;
+}
+
+const OFFICIAL_TEMPLATE_NODE_TYPES = {
+  text: 1,
+  image: 2,
+  video: 3,
+  video_merge: 4,
+  director_stage: 5,
+  audio: 6,
+  script: 7,
+  upload: 8,
+  group: 9,
+  panorama_viewer: 10,
+  image_compare: 11,
+  video_compare: 12,
+};
+let officialTemplateEnsureQueue = Promise.resolve();
+
+function officialTemplateNodeData(type, name, nodeKey, projectUuid) {
+  const common = { type, name, url: [], nodeKey, projectUuid: String(projectUuid) };
+  if (type === 'image') {
+    return {
+      ...common,
+      action: 'image_generate',
+      params: {
+        prompt: '', model: DEFAULT_IMAGE_MODEL, count: 1,
+        settings: { quality: 'high', ratio: '16:9', resolution: '1K' },
+        modeType: 'text2image', imageList: [], imageListOrder: [],
+        videoList: [], audioList: [], textList: [],
+      },
+    };
+  }
+  if (type === 'video' || type === 'video_merge') {
+    return {
+      ...common,
+      action: type === 'video_merge' ? 'video_merge' : 'video_generate',
+      params: {
+        prompt: '', model: 'Seedance_2_0', modeType: 'text2video', count: 1,
+        imageList: [], imageListOrder: [], mixedList: [], mixedListOrder: [],
+        videoList: [], audioList: [], textList: [],
+        settings: { ratio: '16:9', resolution: '720P', duration: 5, enableSound: 'on' },
+      },
+    };
+  }
+  if (type === 'text') {
+    return {
+      ...common,
+      action: 'text_node',
+      params: {
+        content: '', model: config.defaultChatModel, performanceMode: 'highest',
+        reasoningEffort: 'high', prompt: '', imageList: [], videoList: [], textList: [],
+      },
+    };
+  }
+  if (type === 'audio') {
+    return { ...common, action: 'audio_generate', params: { type: 'tts', prompt: '', model: 'tts-default', voice: 'default', speed: 1 } };
+  }
+  if (type === 'director_stage') {
+    return { ...common, action: 'director_stage', contentWidth: 420, contentHeight: 340 };
+  }
+  if (type === 'image_compare') {
+    return { ...common, action: 'image_compare', params: { compareRefA: null, compareRefB: null, compareMode: 'side-by-side' } };
+  }
+  if (type === 'video_compare') {
+    return { ...common, action: 'video_compare', params: { compareRefA: null, compareRefB: null, compareRefC: null, compareRefD: null, compareMode: 'side-by-side' } };
+  }
+  if (type === 'panorama_viewer') {
+    return { ...common, action: 'panorama_viewer', params: { panoramaRef: null } };
+  }
+  if (type === 'script') return { ...common, action: 'script_node', params: { description: '', rows: [] } };
+  if (type === 'group') return { ...common, action: 'image_resource', params: { childIds: [], color: '#252525' } };
+  return { ...common, type: 'upload', action: 'image_resource' };
+}
+
+function officialTemplateNodeList(template, projectUuid) {
+  const now = Date.now();
+  return (Array.isArray(template?.nodes) ? template.nodes : []).map((spec, index) => {
+    const type = OFFICIAL_TEMPLATE_NODE_TYPES[spec?.type] ? spec.type : 'upload';
+    const nodeKey = crypto.randomUUID();
+    const name = String(spec?.label || '节点').slice(0, 160);
+    const isStage = type === 'director_stage';
+    return {
+      nodeKey,
+      projectUuid: String(projectUuid),
+      type: OFFICIAL_TEMPLATE_NODE_TYPES[type],
+      name,
+      position: { positionX: index * 620, positionY: (index % 2) * 390 },
+      measured: { width: isStage ? 680 : 520, height: isStage ? 520 : 360 },
+      data: JSON.stringify(officialTemplateNodeData(type, name, nodeKey, projectUuid)),
+      status: 1,
+      createdAtMs: now,
+      updatedAtMs: now,
+    };
+  });
+}
+
+async function officialTemplateOwnerId(preferredOwnerId = null) {
+  if (preferredOwnerId) return Number(preferredOwnerId);
+  const [rows] = await getPool().query(
+    "SELECT id FROM users WHERE active = 1 AND role = 'admin' ORDER BY created_at ASC, id ASC LIMIT 1"
+  );
+  if (!rows[0]?.id) {
+    const error = new Error('没有可用于创建官方模板画布的管理员账号');
+    error.status = 503;
+    throw error;
+  }
+  return Number(rows[0].id);
+}
+
+async function createOfficialTemplateCanvas(template, preferredOwnerId = null) {
+  const ownerId = await officialTemplateOwnerId(preferredOwnerId);
+  const defaultCanvasProject = await getDefaultCanvasProject();
+  const title = '官方模板 · ' + String(template.title);
+  const [result] = await getPool().query(
+    "INSERT INTO canvases (owner_id, collection_id, project_id, title, data, shared, canvas_role, template_source_canvas_id, template_source_owner_id) VALUES (?, NULL, ?, ?, ?, 0, 'template', NULL, NULL)",
+    [ownerId, defaultCanvasProject?.id || null, title, JSON.stringify(projectDataFor('pending'))]
+  );
+  const projectUuid = String(result.insertId);
+  ensureProjectScaffold(projectUuid);
+  const data = projectDataFor(projectUuid, {
+    officialTemplateId: String(template.id),
+    officialTemplateTitle: String(template.title),
+    nodeList: officialTemplateNodeList(template, projectUuid),
+  });
+  await saveCanvasData(projectUuid, data, {
+    reason: 'official_template_canvas_create',
+    ownerId,
+    createdBy: ownerId,
+    cooldownMs: 0,
+  });
+  return projectUuid;
+}
+
+async function ensureOfficialTemplateCanvases(preferredOwnerId = null) {
+  const run = officialTemplateEnsureQueue.then(async () => {
+    const templates = await officialTemplateLibraryService.listTemplates();
+    const [rows] = await getPool().query(
+      "SELECT id, title, data FROM canvases WHERE canvas_role = 'template' ORDER BY created_at ASC, id ASC"
+    );
+    const byId = new Map(rows.map((row) => [String(row.id), row]));
+    const byTemplateId = new Map();
+    for (const row of rows) {
+      const marker = String(parseJsonDocument(row.data, {})?.officialTemplateId || '');
+      if (marker && !byTemplateId.has(marker)) byTemplateId.set(marker, row);
+    }
+
+    const usedCanvasIds = new Set();
+    let changed = false;
+    const nextTemplates = [];
+    for (const template of templates) {
+      const requestedId = String(template.canvasId || '');
+      let row = requestedId && !usedCanvasIds.has(requestedId) ? byId.get(requestedId) : null;
+      if (!row) {
+        const marked = byTemplateId.get(String(template.id));
+        if (marked && !usedCanvasIds.has(String(marked.id))) row = marked;
+      }
+      let canvasId = row ? String(row.id) : '';
+      if (!canvasId) canvasId = await createOfficialTemplateCanvas(template, preferredOwnerId);
+      usedCanvasIds.add(canvasId);
+      if (canvasId !== requestedId) changed = true;
+      nextTemplates.push({ ...template, canvasId });
+    }
+    return changed
+      ? officialTemplateLibraryService.replaceTemplates(nextTemplates)
+      : nextTemplates;
+  });
+  officialTemplateEnsureQueue = run.catch(() => undefined);
+  return run;
+}
+
+function scheduleOfficialTemplateCanvasRepair(attempt = 0) {
+  const timer = setTimeout(async () => {
+    try {
+      await ensureOfficialTemplateCanvases();
+      console.log('official template canvases are ready');
+    } catch (error) {
+      console.error('official template canvas repair failed:', error?.message || error);
+      if (attempt < 4) scheduleOfficialTemplateCanvasRepair(attempt + 1);
+    }
+  }, attempt === 0 ? 1200 : 5000);
+  timer.unref?.();
+}
+
+scheduleOfficialTemplateCanvasRepair();
+
+apiRouter.get('/official-templates', async (req, res, next) => {
+  try {
+    res.json({
+      items: await ensureOfficialTemplateCanvases(req.user?.role === 'admin' ? req.user.id : null),
+      canEdit: req.user?.role === 'admin',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/official-templates/:id/source', async (req, res, next) => {
+  try {
+    const templates = await ensureOfficialTemplateCanvases(req.user?.role === 'admin' ? req.user.id : null);
+    const template = templates.find((item) => item.id === String(req.params.id));
+    if (!template) return res.status(404).json({ error: '官方模板不存在' });
+    const row = await getReadableCanvasForUser(req, template.canvasId);
+    if (!row) return res.status(404).json({ error: '关联画布不存在或没有读取权限' });
+    return res.json(projectFromCanvasRowForUser(req, row));
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/official-templates', async (req, res, next) => {
+  try {
+    if (!requireOfficialTemplateEditor(req, res)) return;
+    const created = await officialTemplateLibraryService.createTemplate({ ...(req.body || {}), canvasId: '' });
+    const templates = await ensureOfficialTemplateCanvases(req.user.id);
+    const item = templates.find((candidate) => candidate.id === created.id) || created;
+    res.status(201).json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/official-templates/:id', async (req, res, next) => {
+  try {
+    if (!requireOfficialTemplateEditor(req, res)) return;
+    const existing = await officialTemplateLibraryService.findTemplate(req.params.id);
+    if (!existing) return res.status(404).json({ error: '官方模板不存在' });
+    const item = await officialTemplateLibraryService.updateTemplate(req.params.id, {
+      ...(req.body || {}),
+      canvasId: existing.canvasId,
+    });
+    if (!item) return res.status(404).json({ error: '官方模板不存在' });
+    const ensured = await ensureOfficialTemplateCanvases(req.user.id);
+    const saved = ensured.find((candidate) => candidate.id === item.id) || item;
+    await getPool().query(
+      'UPDATE canvases SET title = ? WHERE id = ? AND canvas_role = ?',
+      ['官方模板 · ' + String(saved.title), saved.canvasId, 'template']
+    );
+    return res.json({ item: saved });
+  } catch (error) {
+    next(error);
+  }
+});
 
 async function getCanvasProjectById(projectId) {
   const numericId = Number(projectId);
@@ -2594,9 +2888,21 @@ apiRouter.get('/projects', async (req, res, next) => {
         .filter(Boolean)
     );
     const ownRows = await listCanvasRowsForOwnerSortedByCreatedAt(selectedOwnerId);
-    const templateRows = skipGroups.has('templates')
-      ? []
-      : await listTemplateCanvasRowsSortedByCreatedAt();
+    const includeOfficialTemplates = !skipGroups.has('officialTemplates');
+    const includeUserTemplates = !skipGroups.has('templates');
+    const officialTemplates = includeOfficialTemplates || includeUserTemplates
+      ? await ensureOfficialTemplateCanvases(isAdmin ? req.user.id : null)
+      : [];
+    const officialTemplateIds = new Set(officialTemplates.map((item) => String(item.canvasId)));
+    const allTemplateRows = includeOfficialTemplates || includeUserTemplates
+      ? await listTemplateCanvasRowsSortedByCreatedAt()
+      : [];
+    const officialTemplateRows = includeOfficialTemplates
+      ? allTemplateRows.filter((row) => officialTemplateIds.has(String(row.id)))
+      : [];
+    const templateRows = includeUserTemplates
+      ? allTemplateRows.filter((row) => !officialTemplateIds.has(String(row.id)))
+      : [];
     const sharedRows = skipGroups.has('shared')
       ? []
       : await listSharedCanvasRowsSortedByCreatedAt();
@@ -2631,11 +2937,13 @@ apiRouter.get('/projects', async (req, res, next) => {
       sortOrder: category.sortOrder
     }));
     ownRows.forEach((row) => ensureProjectScaffold(row.id));
+    officialTemplateRows.forEach((row) => ensureProjectScaffold(row.id));
     templateRows.forEach((row) => ensureProjectScaffold(row.id));
     sharedRows.forEach((row) => ensureProjectScaffold(row.id));
     personalSharedRows.forEach((row) => ensureProjectScaffold(row.id));
     res.json({
       ownCanvases: ownRows.map((row) => projectIndexFromCanvasRowForUser(req, row)),
+      officialTemplateCanvases: officialTemplateRows.map((row) => projectIndexFromCanvasRowForUser(req, row)),
       templateCanvases: templateRows.map((row) => projectIndexFromCanvasRowForUser(req, row)),
       sharedCanvases: sharedRows.map((row) => projectIndexFromCanvasRowForUser(req, row)),
       personalSharedCanvases: personalSharedRows.map((row) => projectIndexFromCanvasRowForUser(req, row)),
@@ -4076,6 +4384,116 @@ apiRouter.post('/assets/copy', async (req, res, next) => {
   }
 });
 
+/** Convert a native Autodesk .max scene on the 4090 and store the browser-loadable FBX. */
+apiRouter.post('/director-stage/import-max', upload.single('file'), async (req, res, next) => {
+  let outputPath = '';
+  try {
+    const projectUuid = String(req.body.projectUuid || '');
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!req.file || !row) {
+      if (req.file?.path) fs.rmSync(req.file.path, { force: true });
+      res.status(400).json({ error: 'missing file or projectUuid' });
+      return;
+    }
+    if (path.extname(req.file.originalname || '').toLowerCase() !== '.max') {
+      fs.rmSync(req.file.path, { force: true });
+      res.status(400).json({ error: '只支持 .max 文件' });
+      return;
+    }
+    outputPath = path.join(tmpDir(), 'director-stage-' + randomId() + '.fbx');
+    const conversion = await directorStageModelService.convertMaxToFbx(req.file.path, {
+      serviceUrl: config.mediaEnhance.serviceUrl,
+      serviceToken: config.mediaEnhance.serviceToken,
+      timeoutMs: config.mediaEnhance.maxConvertTimeoutMs,
+      outputPath,
+    });
+    fs.rmSync(req.file.path, { force: true });
+    const stored = await persistUploadedAsset(row, {
+      path: outputPath,
+      originalname: path.basename(req.file.originalname, path.extname(req.file.originalname)) + '.fbx',
+      mimetype: 'application/vnd.autodesk.fbx',
+    }, { projectUuid, sourceType: 'director_stage_model' });
+    outputPath = '';
+    res.json({
+      ...stored,
+      sourceFormat: 'max',
+      targetFormat: 'fbx',
+      conversionJobId: conversion.jobId,
+      model: { url: stored.url, name: stored.originalName, format: 'fbx' },
+    });
+  } catch (error) {
+    if (req.file?.path) fs.rmSync(req.file.path, { force: true });
+    if (outputPath) fs.rmSync(outputPath, { force: true });
+    next(error);
+  }
+});
+
+/**
+ * Read ffprobe metadata for an existing local canvas video. Older canvas
+ * payloads did not persist FPS, so the viewer uses this endpoint on demand and
+ * then writes the result back into the node. Keep this local-asset-only: an
+ * arbitrary HTTP URL here would turn a harmless metadata lookup into SSRF.
+ */
+apiRouter.get('/media/metadata', async (req, res, next) => {
+  try {
+    const projectUuid = String(req.query?.projectUuid || '').trim();
+    const requestedUrl = String(req.query?.url || '').trim();
+    if (!projectUuid || !requestedUrl) {
+      return res.status(400).json({ error: 'projectUuid 和 url 都是必填项' });
+    }
+
+    const row = await getSessionReadableCanvasForUser(req, res, projectUuid);
+    if (!row) {
+      if (res.headersSent) return undefined;
+      return res.status(404).json({ error: '画布不存在或没有读取权限' });
+    }
+
+    if (/^https?:\/\//i.test(requestedUrl)) {
+      return res.status(400).json({ error: '只支持读取画布内的本地视频' });
+    }
+    const cleanUrl = requestedUrl.split(/[?#]/, 1)[0];
+    const parsed = parseLocalAssetUrl(cleanUrl);
+    if (!parsed) {
+      return res.status(400).json({ error: 'url 必须是 /assets/{画布}/{文件}' });
+    }
+
+    const source = await resolveLocalAssetProject(req, cleanUrl, projectUuid);
+    const storedName = String(source.storedName || '');
+    if (
+      !storedName
+      || storedName === '.'
+      || storedName === '..'
+      || path.basename(storedName) !== storedName
+    ) {
+      return res.status(400).json({ error: '视频文件名无效' });
+    }
+
+    const filePath = await ensureAssetLocalPath(source.projectUuid, storedName);
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return res.status(404).json({ error: '视频文件不存在' });
+    }
+
+    const meta = await probeMediaMetadata(
+      filePath,
+      mimeTypeFromName(storedName),
+      storedName,
+      { probeAv: true },
+    );
+    if (meta.kind !== 'video') {
+      return res.status(415).json({ error: '该资源不是视频文件' });
+    }
+
+    return res.json({
+      meta: {
+        ...meta,
+        originalUrl: cleanUrl,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 function permanentHistoryKind(mimeType, url) {
   if (String(mimeType || '').startsWith('video/') || /\.(mp4|mov|webm)(?:$|\?)/i.test(String(url || ''))) return 'video';
   if (String(mimeType || '').startsWith('image/') || /\.(png|jpe?g|webp|gif)(?:$|\?)/i.test(String(url || ''))) return 'image';
@@ -5006,6 +5424,8 @@ async function requestOpenAiMaskedImageEdit({
   formData.append('quality', quality);
   formData.append('output_format', 'png');
   formData.append('n', String(requestCount));
+  const moderation = openAIImageProvider.imageModerationForModel(model);
+  if (moderation) formData.append('moderation', moderation);
   if (size && size !== 'auto') formData.append('size', size);
   if (user) formData.append('user', user);
   formData.append('image', fs.createReadStream(sourceInput.filePath), path.basename(sourceInput.filePath));
@@ -5554,6 +5974,7 @@ async function generateOpenAiImages(params, projectUuid, canvasRow) {
   const model = normalizeImageModel(params.model);
   const providerModel = openAIImageProvider.providerModelForImage(model);
   const gptImageModel = isGptImageModel(model);
+  const imageModeration = openAIImageProvider.imageModerationForModel(model);
   const geminiImageParamModel = openAIImageProvider.isGeminiImageParamModel(model);
   const geminiInteractionsImageModel = openAIImageProvider.isGeminiInteractionsImageModel(model);
   const volcengineImageModel = openAIImageProvider.isVolcengineImageModel(model);
@@ -5767,6 +6188,7 @@ async function generateOpenAiImages(params, projectUuid, canvasRow) {
       formData.append('quality', quality);
       formData.append('output_format', outputFormat);
       formData.append('n', String(requestCount));
+      if (imageModeration) formData.append('moderation', imageModeration);
       if (gptImageModel && size && size !== 'auto') formData.append('size', size);
       if (geminiImageParams) {
         for (const [key, value] of Object.entries(geminiImageParams)) {
@@ -5801,7 +6223,8 @@ async function generateOpenAiImages(params, projectUuid, canvasRow) {
               : {}),
           output_format: outputFormat,
           n: requestCount,
-          user
+          user,
+          ...(imageModeration ? { moderation: imageModeration } : {})
         },
         {
           headers: {
@@ -6490,6 +6913,36 @@ async function resolveVideoTrimSource(url, projectUuid, req = null) {
   throw new Error('video asset does not exist; please re-import it');
 }
 
+async function resolveMediaEnhanceSource(url, projectUuid, req = null) {
+  const value = String(url || '').trim();
+  if (!value) throw new Error('缺少高清增强源素材');
+
+  if (value.startsWith('/assets/')) {
+    const source = await resolveLocalAssetProject(req, value, projectUuid);
+    const localPath = await ensureAssetLocalPath(source.projectUuid, source.storedName);
+    if (!fs.existsSync(localPath)) throw new Error('高清增强源素材不存在，请重新导入');
+    return {
+      filePath: localPath,
+      originalName: source.storedName,
+      mimeType: mimeTypeFromName(source.storedName),
+      cleanupFiles: [],
+    };
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    const tmpBase = path.join(tmpDir(), `${randomId()}-media-enhance-source`);
+    const downloaded = await downloadRemoteAsset(value, tmpBase);
+    return {
+      filePath: downloaded.filePath,
+      originalName: path.basename(safeUrlObject(value)?.pathname || downloaded.filePath),
+      mimeType: downloaded.contentType || mimeTypeFromName(downloaded.filePath),
+      cleanupFiles: [downloaded.filePath],
+    };
+  }
+
+  throw new Error('高清增强源素材不存在，请重新导入');
+}
+
 function derivedVideoOriginalName(originalName, suffix = 'trim') {
   const baseName = path.basename(String(originalName || 'video'));
   const ext = path.extname(baseName) || '.mp4';
@@ -6527,6 +6980,44 @@ async function storeDerivedVideoAsset(projectUuid, canvasRow, filePath, original
     url: `/assets/${projectUuid}/${storedName}`,
     sha1,
     meta,
+  };
+}
+
+function derivedImageOriginalName(originalName, suffix = 'enhanced') {
+  const baseName = path.basename(String(originalName || 'image'));
+  const ext = path.extname(baseName);
+  const stem = baseName.slice(0, Math.max(1, baseName.length - ext.length));
+  return `${stem}-${suffix}.png`;
+}
+
+async function storeDerivedImageAsset(projectUuid, canvasRow, filePath, originalName, suffix = 'enhanced', options = {}) {
+  const outputMimeType = 'image/png';
+  const sha1 = await sha1FileAsync(filePath);
+  const storedName = `${sha1}.png`;
+  const dest = path.join(assetsDir(projectUuid), storedName);
+
+  if (!fs.existsSync(dest)) {
+    fs.renameSync(filePath, dest);
+  } else if (path.resolve(filePath) !== path.resolve(dest)) {
+    fs.rmSync(filePath, { force: true });
+  }
+
+  await mirrorStoredAsset(projectUuid, storedName, dest, outputMimeType);
+  const stat = fs.statSync(dest);
+  await upsertAssetRecord(canvasRow, {
+    originalName: derivedImageOriginalName(originalName, suffix),
+    storedName,
+    relativePath: assetRelativePath(projectUuid, storedName),
+    mimeType: outputMimeType,
+    byteSize: stat.size,
+    sha1,
+    sourceType: options.sourceType || 'derived',
+  });
+
+  return {
+    url: `/assets/${projectUuid}/${storedName}`,
+    sha1,
+    meta: await probeMediaMetadata(dest, outputMimeType, storedName),
   };
 }
 
@@ -7505,7 +7996,7 @@ function recoveredVideoTaskCallbacks(task) {
   };
 }
 
-function resumePersistedGenerationTasks(tasks = []) {
+async function resumePersistedGenerationTasks(tasks = []) {
   if (generationRuntimeDraining) {
     return {
       resumedCount: 0,
@@ -7526,51 +8017,60 @@ function resumePersistedGenerationTasks(tasks = []) {
       continue;
     }
 
-    const providerStatus = {
-      phase: 'polling_resumed_after_restart',
-      providerJobCount: providerJobIds.length,
-      resumedAt: new Date().toISOString(),
-    };
-    jobService.setTask(task.jobId, {
-      status: 1,
-      progressPercent: 1,
-      providerJobIds,
-      providerStatus,
-    });
-    void safeUpdateVideoTaskDetail(task.videoTaskDetailId, {
-      status: 'running',
-      providerJobIds,
-      providerStatus,
-    });
+    try {
+      await runWithGenerationTaskApiKey(task, () => {
+        const providerStatus = {
+          phase: 'polling_resumed_after_restart',
+          providerJobCount: providerJobIds.length,
+          resumedAt: new Date().toISOString(),
+        };
+        jobService.setTask(task.jobId, {
+          status: 1,
+          progressPercent: 1,
+          providerJobIds,
+          providerStatus,
+        });
+        void safeUpdateVideoTaskDetail(task.videoTaskDetailId, {
+          status: 'running',
+          providerJobIds,
+          providerStatus,
+        });
 
-    const callbacks = recoveredVideoTaskCallbacks(task);
-    const resumePoll = resumeProvider === 'minimax' ? pollMinimaxResult : pollSeedanceResult;
-    if (providerJobIds.length === 1) {
-      pollAndStore(
-        providerJobIds[0],
-        task.jobId,
-        task.projectUuid,
-        resumePoll,
-        {
-          intervalMs: 10_000,
-          maxAttempts: 200,
-          ensureRvCompatibleVideos: true,
-          ...callbacks,
+        const callbacks = recoveredVideoTaskCallbacks(task);
+        const resumePoll = resumeProvider === 'minimax' ? pollMinimaxResult : pollSeedanceResult;
+        if (providerJobIds.length === 1) {
+          pollAndStore(
+            providerJobIds[0],
+            task.jobId,
+            task.projectUuid,
+            resumePoll,
+            {
+              intervalMs: 10_000,
+              maxAttempts: 200,
+              ensureRvCompatibleVideos: true,
+              ...callbacks,
+            }
+          );
+        } else {
+          pollVideoManyAndStore(
+            providerJobIds,
+            task.jobId,
+            task.projectUuid,
+            {
+              ...callbacks,
+              pollResult: resumePoll,
+              providerLabel: resumeProvider === 'minimax' ? 'MiniMax' : 'Seedance',
+            }
+          );
         }
-      );
-    } else {
-      pollVideoManyAndStore(
-        providerJobIds,
-        task.jobId,
-        task.projectUuid,
-        {
-          ...callbacks,
-          pollResult: resumePoll,
-          providerLabel: resumeProvider === 'minimax' ? 'MiniMax' : 'Seedance',
-        }
-      );
+      });
+      resumedCount += 1;
+    } catch (error) {
+      skippedCount += 1;
+      // Never serialize the resolver error: database/HTTP clients may carry
+      // authorization headers. The job id is sufficient for diagnostics.
+      console.error(`[startup] could not restore API-key context for generation task ${task.jobId}`);
     }
-    resumedCount += 1;
   }
   return {
     resumedCount,
@@ -7623,12 +8123,13 @@ apiRouter.get('/texture-clarity/service-status', async (req, res) => {
       probeWorkerHealth(mattingConfig.serviceUrl, mattingConfig.serviceToken),
       probeWorkerHealth(geometryConfig.serviceUrl, geometryConfig.serviceToken),
     ]);
-    // 语义分区是硬依赖：没有类别图就算不出融合支持区。深度/法线只是少一层约束，缺了也能生成。
+    // GPU 部位分区挂掉时，服务层还能生成本地人物轮廓类别图。它的部位精度较低，但仍能保证
+    // 融合支持区外完全不改原图，所以不能再因为 8092 探活失败把整个工具灰掉。
     const payload = {
       textureClarityStatus: {
-        semantic,
+        semantic: { ...semantic, fallbackAvailable: true },
         geometry,
-        canRepair: semantic.ok,
+        canRepair: true,
         checkedAtMs: now,
       },
     };
@@ -7693,33 +8194,42 @@ apiRouter.post('/texture-clarity/assets', async (req, res) => {
     // ---- 语义分区 ----
     const mattingConfig = config.subjectMatting || {};
     let semantic = { status: 'unavailable', reason: '语义分区服务未配置' };
-    if (mattingConfig.serviceUrl) {
-      try {
-        const parts = await textureClarityService.requestSemanticParts(normalized.buffer, {
-          serviceUrl: mattingConfig.serviceUrl,
-          serviceToken: mattingConfig.serviceToken,
-          timeoutMs: mattingConfig.timeoutMs,
-        });
-        if (parts.width !== normalized.width || parts.height !== normalized.height) {
-          throw new Error('语义图 ' + parts.width + 'x' + parts.height + ' 与规范化源图 ' + normalized.width + 'x' + normalized.height + ' 不一致');
-        }
-        const classMap = await textureClarityService.decodeClassMap(parts.classMapPng, normalized.width, normalized.height);
-        const classMapAsset = await saveAsset('classmap', parts.classMapPng);
-        const vizAsset = await saveAsset('semantic', await textureClarityService.buildSemanticVisualization(classMap, normalized.width, normalized.height));
-        semantic = {
-          status: classMapAsset.reused ? 'cached' : 'generated',
-          classMapUrl: classMapAsset.url,
-          previewUrl: vizAsset.url,
-          modelId: parts.modelId,
-          modelRevision: parts.modelRevision,
-          labelSet: parts.labelSet,
-          elapsedSec: parts.elapsedSec,
-          classes: textureClarityService.summarizeClasses(classMap),
-        };
-      } catch (error) {
-        // 语义分区失败不该让编辑器打不开：左栏照实标失败，生成按钮由前端禁用。
-        semantic = { status: 'failed', reason: errorMessageFrom(error) };
+    try {
+      // requestSemanticParts 自己负责 GPU → 本地人物轮廓的降级。即使地址没配置也要调用，
+      // 否则“未配置”会绕过兜底，和 service-status 声明的 canRepair=true 自相矛盾。
+      const parts = await textureClarityService.requestSemanticParts(normalized.buffer, {
+        serviceUrl: mattingConfig.serviceUrl,
+        serviceToken: mattingConfig.serviceToken,
+        timeoutMs: mattingConfig.timeoutMs,
+      });
+      if (parts.width !== normalized.width || parts.height !== normalized.height) {
+        throw new Error('语义图 ' + parts.width + 'x' + parts.height + ' 与规范化源图 ' + normalized.width + 'x' + normalized.height + ' 不一致');
       }
+      const classMap = await textureClarityService.decodeClassMap(parts.classMapPng, normalized.width, normalized.height);
+      // 本地轮廓和真实 ATR 部位图必须分开存。否则 8092 恢复后，saveAsset 会命中旧的兜底文件，
+      // 元数据却声称它是新的模型结果，后续一直无法自动恢复到高精度路径。
+      const assetSuffix = parts.fallback ? '-fallback' : '';
+      const classMapAsset = await saveAsset(`classmap${assetSuffix}`, parts.classMapPng);
+      const vizAsset = await saveAsset(
+        `semantic${assetSuffix}`,
+        await textureClarityService.buildSemanticVisualization(classMap, normalized.width, normalized.height),
+      );
+      semantic = {
+        status: parts.fallback ? 'fallback' : classMapAsset.reused ? 'cached' : 'generated',
+        reason: parts.fallbackReason || undefined,
+        mode: parts.fallbackKind || 'parts',
+        classMapUrl: classMapAsset.url,
+        previewUrl: vizAsset.url,
+        modelId: parts.modelId,
+        modelRevision: parts.modelRevision,
+        labelSet: parts.labelSet,
+        elapsedSec: parts.elapsedSec,
+        // 轮廓兜底只有人物 / 背景，不伪装成皮肤、头发、服装等完整部位覆盖率。
+        classes: parts.fallback ? [] : textureClarityService.summarizeClasses(classMap),
+      };
+    } catch (error) {
+      // GPU 和本地轮廓都失败才到这里；在任何付费生图之前停下。
+      semantic = { status: 'failed', reason: errorMessageFrom(error) };
     }
 
     // ---- 深度 / 法线：优先复用，查不到才生成 ----
@@ -7810,7 +8320,7 @@ apiRouter.post('/texture-clarity/repair', async (req, res) => {
   const cleanupFiles = [];
   try {
     const body = req.body || {};
-    const { projectUuid, nodeKey, model, sourceUrl, semanticUrl, classMapUrl, depthUrl, normalUrl, extraInstruction } = body;
+    const { projectUuid, nodeKey, model, sourceUrl, semanticUrl, semanticMode, classMapUrl, depthUrl, normalUrl, extraInstruction } = body;
     const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
     if (!row) return res.status(404).json({ error: 'Canvas not found or unavailable' });
     if (!sourceUrl) return res.status(400).json({ error: '精准修复需要源图' });
@@ -7838,7 +8348,7 @@ apiRouter.post('/texture-clarity/repair', async (req, res) => {
 
     // 参考图顺序即优先级：原图第一。语义/深度/法线按可用性追加，缺了也能跑（少一层约束）。
     const references = [sourceUrl, semanticUrl, depthUrl, normalUrl].filter(Boolean);
-    const prompt = textureClarityService.buildRepairPrompt({ extraInstruction });
+    const prompt = textureClarityService.buildRepairPrompt({ extraInstruction, semanticMode });
 
     const generationStartedMs = Date.now();
     const candidateUrls = await generateOpenAiImages(
@@ -10082,6 +10592,702 @@ async function safeCreateToolUsageLog(req, entry) {
     settings: entry.settings || {},
   });
 }
+
+/**
+ * Create a persistent video frame-interpolation task.  The output node is
+ * created by the client first and passed as `nodeKey`; this route only starts
+ * the render after checking that node is writable and is a video node.  The
+ * task is intentionally non-resumable: both the local FFmpeg fallback and the
+ * GPU worker upload use temporary files that cannot be reconstructed after a
+ * main-service restart.
+ */
+apiRouter.post('/toolbox/video-frame-interpolation', async (req, res) => {
+  let source = null;
+  let tempOutputPath = '';
+  let detached = false;
+  let internalId = '';
+  let abortController = null;
+
+  const cleanSource = () => {
+    for (const filePath of source?.cleanupFiles || []) {
+      try { fs.rmSync(filePath, { force: true }); } catch { /* best effort */ }
+    }
+    source = null;
+  };
+
+  try {
+    const projectUuid = String(req.body?.projectUuid || '').trim();
+    const nodeKey = String(req.body?.nodeKey || '').trim();
+    const sourceUrl = String(req.body?.sourceUrl || '').trim();
+    if (!projectUuid || !nodeKey || !sourceUrl) {
+      return res.status(400).json({
+        error: 'projectUuid、nodeKey 和 sourceUrl 都是必填项',
+        errorCode: 'VIDEO_FRAME_INTERPOLATION_REQUEST_INVALID',
+      });
+    }
+
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!row) {
+      return res.status(404).json({
+        error: '画布不存在或没有写入权限',
+        errorCode: 'CANVAS_NOT_ACCESSIBLE',
+      });
+    }
+
+    const data = readCanvasData(row);
+    const targetNode = nodeListFromData(data, projectUuid).find(
+      (item) => String(item?.nodeKey || item?.id || '') === nodeKey,
+    );
+    if (!targetNode) {
+      return res.status(404).json({ error: '补帧输出节点不存在', errorCode: 'VIDEO_FRAME_INTERPOLATION_NODE_NOT_FOUND' });
+    }
+    let targetNodeData = targetNode.data;
+    if (typeof targetNodeData === 'string') {
+      try { targetNodeData = JSON.parse(targetNodeData); } catch { targetNodeData = {}; }
+    }
+    if (String(targetNodeData?.type || '') !== 'video') {
+      return res.status(400).json({ error: '补帧输出节点必须是视频节点', errorCode: 'VIDEO_FRAME_INTERPOLATION_NODE_INVALID' });
+    }
+
+    // Resolve and probe the real local file.  The client may display a frame
+    // rate hint, but the server never trusts it for task validation.
+    source = await resolveVideoTrimSource(sourceUrl, projectUuid, req);
+    const sourceMeta = await probeMediaMetadata(
+      source.filePath,
+      source.mimeType,
+      source.originalName,
+      { probeAv: true },
+    );
+    const request = videoFrameInterpolationService.validateInterpolationRequest({
+      sourceFps: sourceMeta.fps,
+      targetFps: req.body?.targetFps,
+      method: req.body?.method,
+      // Use the video stream itself, not the container/audio duration. This is
+      // the exact boundary used to remove cloned interpolation guard frames.
+      durationSec: sourceMeta.videoDurationSec || sourceMeta.durationSec,
+    });
+
+    internalId = randomId();
+    const taskRecord = await jobService.createPersistentTask({
+      ...generationTaskBaseFromCanvas(req, row, { projectUuid, nodeKey }),
+      jobId: internalId,
+      taskType: 'video',
+      endpoint: '/toolbox/video-frame-interpolation',
+      provider: request.provider,
+      model: request.model,
+      mode: 'frame_interpolation',
+      resolution: sourceMeta.width && sourceMeta.height
+        ? `${sourceMeta.width}x${sourceMeta.height}`
+        : null,
+      durationSec: request.durationSec,
+      quantity: 1,
+      referenceMaterials: summarizeVideoReferences(
+        { videoList: [{ nodeId: req.body?.sourceNodeKey || '', url: sourceUrl }] },
+        { imageList: [], videoList: [{ nodeId: req.body?.sourceNodeKey || '', url: sourceUrl }], audioList: [] },
+      ),
+      requestParams: {
+        action: 'video_frame_interpolation',
+        sourceUrl,
+        sourceNodeKey: String(req.body?.sourceNodeKey || ''),
+        sourceFps: request.sourceFps,
+        targetFps: request.targetFps,
+        method: request.method,
+        engine: request.provider,
+        model: request.model,
+        width: sourceMeta.width,
+        height: sourceMeta.height,
+        durationSec: request.durationSec,
+        qualityMode: 'quality',
+        crf: 12,
+        preset: request.method === 'quality' ? 'medium' : 'slow',
+        outputFormat: 'mp4',
+        videoCodec: 'h264',
+        pixelFormat: 'yuv420p',
+      },
+    });
+
+    abortController = new AbortController();
+    generationAbortControllers.set(internalId, abortController);
+    tempOutputPath = path.join(tmpDir(), `${internalId}-frame-interpolation.mp4`);
+
+    const phaseLabel = '视频补帧';
+    const runPromise = (async () => {
+      try {
+        jobService.setTask(internalId, {
+          status: 1,
+          progressPercent: 1,
+          providerStatus: {
+            phase: 'running',
+            phaseLabel,
+            sourceFps: request.sourceFps,
+            targetFps: request.targetFps,
+          },
+        });
+
+        const interpolationResult = await videoFrameInterpolationService.interpolateVideo({
+          inputPath: source.filePath,
+          outputPath: tempOutputPath,
+          sourceFps: request.sourceFps,
+          targetFps: request.targetFps,
+          durationSec: request.durationSec,
+          method: request.method,
+          crf: 12,
+          preset: 'medium',
+          audioBitrateKbps: 192,
+          copyAudio: sourceMeta.audioCodecName === 'aac',
+          serviceUrl: config.mediaEnhance.serviceUrl,
+          serviceToken: config.mediaEnhance.serviceToken,
+          timeoutMs: config.mediaEnhance.videoTimeoutMs,
+          pollIntervalMs: config.mediaEnhance.pollIntervalMs,
+          signal: abortController.signal,
+          onProgress: (progressPercent) => {
+            jobService.setTask(internalId, {
+              status: 1,
+              progressPercent,
+              providerStatus: {
+                phase: 'interpolating',
+                phaseLabel,
+                sourceFps: request.sourceFps,
+                targetFps: request.targetFps,
+                method: request.method,
+                model: request.model,
+              },
+            });
+          },
+        });
+
+        jobService.setTask(internalId, {
+          status: 1,
+          progressPercent: 95,
+          providerStatus: { phase: 'validating', phaseLabel },
+        });
+        const outputMeta = await probeMediaMetadata(
+          tempOutputPath,
+          'video/mp4',
+          `${path.parse(source.originalName || 'video').name}-interpolated.mp4`,
+          { probeAv: true },
+        );
+        const validationError = videoFrameInterpolationService.validateInterpolationOutput(
+          sourceMeta,
+          outputMeta,
+          request.targetFps,
+        );
+        if (validationError) {
+          const error = new Error(validationError);
+          error.code = 'VIDEO_FRAME_INTERPOLATION_OUTPUT_INVALID';
+          error.statusCode = 502;
+          throw error;
+        }
+
+        const stored = await storeDerivedVideoAsset(
+          projectUuid,
+          row,
+          tempOutputPath,
+          source.originalName,
+          `interpolated-${request.targetFps}fps`,
+          { sourceType: 'derived' },
+        );
+        tempOutputPath = '';
+        const output = taskOutputForStoredAsset(
+          stored.url,
+          stored.meta,
+          'video/mp4',
+          {
+            frameInterpolation: true,
+            interpolationMethod: request.method,
+            interpolationProvider: request.provider,
+            interpolationModel: request.model,
+            sourceFps: request.sourceFps,
+            targetFps: request.targetFps,
+            qualityMode: 'quality',
+            crf: 12,
+            preset: request.method === 'quality' ? 'medium' : 'slow',
+            workerJobId: interpolationResult?.workerJobId || undefined,
+          },
+        );
+        await jobService.setTaskAndWait(internalId, {
+          status: 2,
+          progressPercent: 100,
+          urls: [stored.url],
+          outputs: [{
+            ...output,
+            model: request.model,
+            resolution: stored.meta?.width && stored.meta?.height
+              ? `${stored.meta.width}x${stored.meta.height}`
+              : undefined,
+            durationSec: Number(stored.meta?.durationSec || request.durationSec) || undefined,
+            isPrimary: true,
+          }],
+          providerStatus: {
+            phase: 'completed',
+            phaseLabel,
+            sourceFps: request.sourceFps,
+            targetFps: request.targetFps,
+            method: request.method,
+            model: request.model,
+            codec: stored.meta?.codecName,
+            pixelFormat: stored.meta?.pixelFormat,
+          },
+        });
+      } catch (error) {
+        const cancelled = error?.name === 'AbortError' || error?.code === 'ABORT_ERR';
+        await jobService.setTaskAndWait(internalId, {
+          status: cancelled ? 'cancelled' : 3,
+          progressPercent: 0,
+          error: error?.message || String(error),
+          providerStatus: {
+            phase: cancelled ? 'cancelled' : 'failed',
+            phaseLabel,
+            code: error?.code,
+          },
+        });
+      } finally {
+        cleanSource();
+        if (tempOutputPath) {
+          try { fs.rmSync(tempOutputPath, { force: true }); } catch { /* best effort */ }
+          tempOutputPath = '';
+        }
+        if (generationAbortControllers.get(internalId) === abortController) {
+          generationAbortControllers.delete(internalId);
+        }
+      }
+    })();
+
+    trackGenerationPromise(activeNonResumableGenerations, internalId, runPromise);
+    detached = true;
+    return res.json({
+      jobId: internalId,
+      generationVersion: taskRecord.generationVersion,
+      sourceMeta: {
+        fps: request.sourceFps,
+        width: sourceMeta.width,
+        height: sourceMeta.height,
+        durationSec: request.durationSec,
+        mimeType: sourceMeta.mimeType,
+      },
+      targetFps: request.targetFps,
+      method: request.method,
+      provider: request.provider,
+      model: request.model,
+      quality: {
+        crf: 12,
+        preset: request.method === 'quality' ? 'medium' : 'slow',
+        codec: 'h264',
+        pixelFormat: 'yuv420p',
+        container: 'mp4',
+      },
+    });
+  } catch (error) {
+    return res.status(Number(error?.statusCode) || 500).json({
+      error: error?.message || String(error),
+      errorCode: error?.code || 'VIDEO_FRAME_INTERPOLATION_FAILED',
+    });
+  } finally {
+    if (!detached) {
+      cleanSource();
+      if (tempOutputPath) {
+        try { fs.rmSync(tempOutputPath, { force: true }); } catch { /* best effort */ }
+      }
+    }
+  }
+});
+
+function mediaEnhancePhaseLabel(phase, enhanceMode = 'faithful') {
+  const generative = enhanceMode === 'generative';
+  const nvidiaVsr = enhanceMode === 'nvidia-vsr';
+  const flashVsr = enhanceMode === 'flashvsr';
+  const base = generative
+    ? 'AI 生成式细节'
+    : flashVsr
+      ? 'FlashVSR 电影级细节'
+      : nvidiaVsr
+        ? 'NVIDIA RTX 视频超分'
+        : 'AI 高清增强';
+  const suffixes = {
+    queued: '排队',
+    probing: '分析素材',
+    'extracting-frames': '拆分视频帧',
+    'ai-upscale': 'AI 超分',
+    'nvidia-vsr': '逐帧增强',
+    'loading-generative-model': '加载 SeedVR2',
+    'generative-detail': '重建皮肤、发丝、材质与光影',
+    'validating-ai-output': '检查生成式画面',
+    finishing: '输出图片',
+    'encoding-mp4': '高质量编码',
+    'validating-boundaries': '校验首尾帧',
+    'downloading-result': '保存结果',
+  };
+  const suffix = suffixes[String(phase || '')];
+  return suffix ? `${base} · ${suffix}` : base;
+}
+
+/**
+ * 图片保留 RealSR / SeedVR2；视频提供 NVIDIA RTX / SeedVR2 / FlashVSR。
+ * 旧 faithful 请求继续走 RealSR，兼容历史任务和旧客户端。
+ * 客户端先创建一个空的派生输出节点，服务端再启动持久任务；完成结果写回新节点，
+ * 绝不覆盖源节点。旧客户端未传 enhanceMode 时始终沿用 RealSR。
+ */
+apiRouter.post('/toolbox/media-enhance', async (req, res) => {
+  let source = null;
+  let tempOutputPath = '';
+  let detached = false;
+  let internalId = '';
+  let abortController = null;
+
+  const cleanSource = () => {
+    for (const filePath of source?.cleanupFiles || []) {
+      try { fs.rmSync(filePath, { force: true }); } catch { /* best effort */ }
+    }
+    source = null;
+  };
+
+  try {
+    const projectUuid = String(req.body?.projectUuid || '').trim();
+    const nodeKey = String(req.body?.nodeKey || '').trim();
+    const sourceUrl = String(req.body?.sourceUrl || '').trim();
+    const sourceNodeKey = String(req.body?.sourceNodeKey || '').trim();
+    const mediaType = String(req.body?.mediaType || '').trim().toLowerCase();
+    const scale = Number(req.body?.scale);
+    const enhanceMode = String(req.body?.enhanceMode || 'faithful').trim().toLowerCase();
+    if (!projectUuid || !nodeKey || !sourceUrl || !['image', 'video'].includes(mediaType)) {
+      return res.status(400).json({
+        error: 'projectUuid、nodeKey、sourceUrl 和 mediaType 都是必填项',
+        errorCode: 'MEDIA_ENHANCE_REQUEST_INVALID',
+      });
+    }
+    if (!config.mediaEnhance?.serviceUrl || !config.mediaEnhance?.serviceToken) {
+      return res.status(503).json({
+        error: 'AI 高清增强服务尚未配置，请联系管理员',
+        errorCode: 'MEDIA_ENHANCE_NOT_CONFIGURED',
+      });
+    }
+
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!row) {
+      return res.status(404).json({
+        error: '画布不存在或没有写入权限',
+        errorCode: 'CANVAS_NOT_ACCESSIBLE',
+      });
+    }
+
+    const data = readCanvasData(row);
+    const targetNode = nodeListFromData(data, projectUuid).find(
+      (item) => String(item?.nodeKey || item?.id || '') === nodeKey,
+    );
+    if (!targetNode) {
+      return res.status(404).json({ error: '高清增强输出节点不存在', errorCode: 'MEDIA_ENHANCE_NODE_NOT_FOUND' });
+    }
+    let targetNodeData = targetNode.data;
+    if (typeof targetNodeData === 'string') {
+      try { targetNodeData = JSON.parse(targetNodeData); } catch { targetNodeData = {}; }
+    }
+    if (String(targetNodeData?.type || '') !== mediaType) {
+      return res.status(400).json({
+        error: `高清增强输出节点必须是${mediaType === 'video' ? '视频' : '图片'}节点`,
+        errorCode: 'MEDIA_ENHANCE_NODE_INVALID',
+      });
+    }
+
+    source = await resolveMediaEnhanceSource(sourceUrl, projectUuid, req);
+    const sourceMeta = await probeMediaMetadata(
+      source.filePath,
+      source.mimeType,
+      source.originalName,
+      { probeAv: mediaType === 'video' },
+    );
+    if (String(sourceMeta.kind || '') !== mediaType) {
+      return res.status(400).json({
+        error: `源素材不是可识别的${mediaType === 'video' ? '视频' : '图片'}`,
+        errorCode: 'MEDIA_ENHANCE_SOURCE_TYPE_INVALID',
+      });
+    }
+    const request = mediaEnhanceService.validateMediaEnhanceRequest({
+      mediaType,
+      scale,
+      enhanceMode,
+      sourceMeta,
+      maxOutputPixels: config.mediaEnhance.maxOutputPixels,
+    });
+
+    internalId = randomId();
+    const taskRecord = await jobService.createPersistentTask({
+      ...generationTaskBaseFromCanvas(req, row, { projectUuid, nodeKey }),
+      jobId: internalId,
+      taskType: mediaType,
+      endpoint: '/toolbox/media-enhance',
+      provider: request.provider,
+      model: request.model,
+      mode: 'media_enhance',
+      resolution: `${request.targetWidth}x${request.targetHeight}`,
+      durationSec: mediaType === 'video'
+        ? Number(sourceMeta.videoDurationSec || sourceMeta.durationSec || 0)
+        : 0,
+      quantity: 1,
+      referenceMaterials: [{
+        type: mediaType,
+        nodeId: sourceNodeKey,
+        url: sourceUrl,
+        width: sourceMeta.width,
+        height: sourceMeta.height,
+        fps: sourceMeta.fps,
+      }],
+      requestParams: {
+        action: 'media_enhance',
+        enhanceMode: request.enhanceMode,
+        sourceUrl,
+        sourceNodeKey,
+        mediaType,
+        scale: request.scale,
+        sourceWidth: request.width,
+        sourceHeight: request.height,
+        targetWidth: request.targetWidth,
+        targetHeight: request.targetHeight,
+        sourceFps: sourceMeta.fps,
+        durationSec: sourceMeta.videoDurationSec || sourceMeta.durationSec,
+        engine: request.provider,
+        model: request.model,
+        qualityMode: 'quality',
+        generativeDetails: ['generative', 'flashvsr'].includes(request.enhanceMode),
+        ...(request.enhanceMode === 'nvidia-vsr' ? {
+          nvidiaVfxVersion: '0.1.0.1',
+          nvidiaVsrQuality: 'ULTRA',
+        } : {}),
+        ...(request.enhanceMode === 'generative' ? {
+          colorCorrection: 'lab',
+          batchSize: 5,
+          uniformBatchSize: true,
+          temporalOverlap: mediaType === 'video' ? 4 : 0,
+          prependFrames: mediaType === 'video' ? 4 : 0,
+        } : {}),
+        ...(request.enhanceMode === 'flashvsr' ? {
+          flashVsrVersion: 'v1.1',
+          flashVsrPipeline: 'tiny-long',
+          flashVsrLocalRange: 11,
+          flashVsrSparseRatio: 2,
+        } : {}),
+        outputFormat: mediaType === 'video' ? 'mp4' : 'png',
+        ...(mediaType === 'video' ? {
+          videoCodec: 'h264',
+          pixelFormat: 'yuv420p',
+          crf: 12,
+          preset: 'slow',
+        } : {
+          imageTta: true,
+        }),
+      },
+    });
+
+    abortController = new AbortController();
+    generationAbortControllers.set(internalId, abortController);
+    const extension = mediaType === 'video' ? 'mp4' : 'png';
+    tempOutputPath = path.join(tmpDir(), `${internalId}-media-enhance.${extension}`);
+    const serviceTimeoutMs = mediaType === 'video'
+      ? config.mediaEnhance.videoTimeoutMs
+      : config.mediaEnhance.imageTimeoutMs;
+
+    const runPromise = (async () => {
+      try {
+        jobService.setTask(internalId, {
+          status: 1,
+          progressPercent: 1,
+          providerStatus: {
+            phase: 'queued',
+            phaseLabel: mediaEnhancePhaseLabel('queued', request.enhanceMode),
+            mediaType,
+            enhanceMode: request.enhanceMode,
+            scale: request.scale,
+          },
+        });
+        const enhanced = await mediaEnhanceService.enhanceMedia({
+          inputPath: source.filePath,
+          outputPath: tempOutputPath,
+          mediaType,
+          scale: request.scale,
+          enhanceMode: request.enhanceMode,
+          sourceMeta,
+          maxOutputPixels: config.mediaEnhance.maxOutputPixels,
+          serviceUrl: config.mediaEnhance.serviceUrl,
+          serviceToken: config.mediaEnhance.serviceToken,
+          timeoutMs: serviceTimeoutMs,
+          pollIntervalMs: config.mediaEnhance.pollIntervalMs,
+          signal: abortController.signal,
+          onProgress: (progressPercent, workerStatus = {}) => {
+            jobService.setTask(internalId, {
+              status: 1,
+              progressPercent: Math.max(1, Math.min(99, Number(progressPercent || 0) || 1)),
+              providerJobIds: workerStatus.jobId ? [String(workerStatus.jobId)] : undefined,
+              providerStatus: {
+                phase: workerStatus.phase || 'running',
+                phaseLabel: mediaEnhancePhaseLabel(workerStatus.phase, request.enhanceMode),
+                mediaType,
+                enhanceMode: request.enhanceMode,
+                scale: request.scale,
+              },
+            });
+          },
+        });
+
+        const outputMeta = await probeMediaMetadata(
+          tempOutputPath,
+          mediaType === 'video' ? 'video/mp4' : 'image/png',
+          path.basename(tempOutputPath),
+          { probeAv: mediaType === 'video' },
+        );
+        const validationError = mediaEnhanceService.validateMediaEnhanceOutput({
+          mediaType,
+          scale: request.scale,
+          enhanceMode: request.enhanceMode,
+          sourceMeta,
+          outputMeta,
+          workerMetadata: enhanced.metadata,
+          maxOutputPixels: config.mediaEnhance.maxOutputPixels,
+        });
+        if (validationError) {
+          const error = new Error(validationError);
+          error.code = 'MEDIA_ENHANCE_OUTPUT_INVALID';
+          error.statusCode = 502;
+          throw error;
+        }
+
+        const stored = mediaType === 'video'
+          ? await storeDerivedVideoAsset(
+            projectUuid,
+            row,
+            tempOutputPath,
+            source.originalName,
+            `enhanced-${request.scale}x`,
+            { sourceType: 'derived' },
+          )
+          : await storeDerivedImageAsset(
+            projectUuid,
+            row,
+            tempOutputPath,
+            source.originalName,
+            `enhanced-${request.scale}x`,
+            { sourceType: 'derived' },
+          );
+        tempOutputPath = '';
+        const enhanceMetadata = {
+          mediaEnhance: true,
+          enhanceMode: request.enhanceMode,
+          enhanceProvider: request.provider,
+          enhanceModel: request.model,
+          generativeDetails: ['generative', 'flashvsr'].includes(request.enhanceMode),
+          scale: request.scale,
+          sourceWidth: request.width,
+          sourceHeight: request.height,
+          sourceFps: sourceMeta.fps,
+          qualityMode: 'quality',
+          imageTta: enhanced.metadata?.imageTta,
+          videoTta: enhanced.metadata?.videoTta,
+          frameCount: enhanced.metadata?.frameCount,
+          boundaryFramesVerified: enhanced.metadata?.boundaryFramesVerified,
+          crf: enhanced.metadata?.crf,
+          preset: enhanced.metadata?.preset,
+          colorCorrection: enhanced.metadata?.colorCorrection,
+          batchSize: enhanced.metadata?.batchSize,
+          uniformBatchSize: enhanced.metadata?.uniformBatchSize,
+          temporalOverlap: enhanced.metadata?.temporalOverlap,
+          prependFrames: enhanced.metadata?.prependFrames,
+          seedvr2Commit: enhanced.metadata?.seedvr2Commit,
+          nvidiaVfxVersion: enhanced.metadata?.nvidiaVfxVersion,
+          nvidiaVsrQuality: enhanced.metadata?.nvidiaVsrQuality,
+          contentFramesVerified: enhanced.metadata?.contentFramesVerified,
+        };
+        const output = taskOutputForStoredAsset(
+          stored.url,
+          stored.meta,
+          mediaType === 'video' ? 'video/mp4' : 'image/png',
+          enhanceMetadata,
+        );
+        await jobService.setTaskAndWait(internalId, {
+          status: 2,
+          progressPercent: 100,
+          urls: [stored.url],
+          outputs: [{
+            ...output,
+            model: request.model,
+            resolution: `${stored.meta?.width || request.targetWidth}x${stored.meta?.height || request.targetHeight}`,
+            durationSec: mediaType === 'video'
+              ? Number(stored.meta?.durationSec || sourceMeta.durationSec || 0) || undefined
+              : undefined,
+            isPrimary: true,
+          }],
+          providerStatus: {
+            phase: 'completed',
+            phaseLabel: mediaEnhancePhaseLabel('completed', request.enhanceMode),
+            mediaType,
+            enhanceMode: request.enhanceMode,
+            scale: request.scale,
+            fps: stored.meta?.fps,
+            codec: stored.meta?.codecName,
+            pixelFormat: stored.meta?.pixelFormat,
+            boundaryFramesVerified: enhanced.metadata?.boundaryFramesVerified,
+          },
+        });
+      } catch (error) {
+        const cancelled = isGenerationCancelled(error, abortController.signal);
+        await jobService.setTaskAndWait(internalId, {
+          status: cancelled ? 'cancelled' : 3,
+          progressPercent: 0,
+          error: error?.message || String(error),
+          providerStatus: {
+            phase: cancelled ? 'cancelled' : 'failed',
+            phaseLabel: mediaEnhancePhaseLabel('', request.enhanceMode),
+            mediaType,
+            enhanceMode: request.enhanceMode,
+            scale: request.scale,
+            code: error?.code,
+          },
+        });
+      } finally {
+        cleanSource();
+        if (tempOutputPath) {
+          try { fs.rmSync(tempOutputPath, { force: true }); } catch { /* best effort */ }
+          tempOutputPath = '';
+        }
+        if (generationAbortControllers.get(internalId) === abortController) {
+          generationAbortControllers.delete(internalId);
+        }
+      }
+    })();
+
+    trackGenerationPromise(activeNonResumableGenerations, internalId, runPromise);
+    detached = true;
+    return res.json({
+      jobId: internalId,
+      generationVersion: taskRecord.generationVersion,
+      mediaType,
+      scale: request.scale,
+      enhanceMode: request.enhanceMode,
+      sourceMeta: {
+        width: request.width,
+        height: request.height,
+        fps: sourceMeta.fps,
+        durationSec: sourceMeta.videoDurationSec || sourceMeta.durationSec,
+      },
+      outputMeta: {
+        width: request.targetWidth,
+        height: request.targetHeight,
+        format: mediaType === 'video' ? 'mp4' : 'png',
+      },
+      provider: request.provider,
+      model: request.model,
+    });
+  } catch (error) {
+    return res.status(Number(error?.statusCode) || 500).json({
+      error: error?.message || String(error),
+      errorCode: error?.code || 'MEDIA_ENHANCE_FAILED',
+    });
+  } finally {
+    if (!detached) {
+      cleanSource();
+      if (tempOutputPath) {
+        try { fs.rmSync(tempOutputPath, { force: true }); } catch { /* best effort */ }
+      }
+    }
+  }
+});
 
 apiRouter.post('/toolbox/video-trim', async (req, res) => {
   let source = null;

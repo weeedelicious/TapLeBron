@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getImageGenerationCounts,
+  getImageModelDisplayName,
   getImageRatioOptions,
   getImageResolutionOptions,
   listSelectableImageModels,
@@ -20,18 +21,22 @@ import {
 const openAIImageProvider = require('../server/providers/OpenAIImageProvider')
 
 describe('图片节点可选模型', () => {
-  it('下拉是 Nano Pro / Flash / GPT / Seedream Pro，没有 Lite', () => {
+  it('下拉包含 Nano、GPT、Image 2.5 和 Seedream Pro，没有 Lite', () => {
     const models = listSelectableImageModels()
     expect(models.map((item) => item.value)).toEqual([
       'gemini-3-pro-image',
       'gemini-3.1-flash-image',
       'gpt-image-2',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
       'seedream-5-pro',
     ])
     expect(models.map((item) => item.label)).toEqual([
       'Nano-banana Pro',
       'Nano-banana Flash',
       'GPT image 2.0',
+      'GPT image 2.5 Flare',
+      'GPT image 2.5 Sunburst',
       'Seedream 5 Pro',
     ])
   })
@@ -48,6 +53,41 @@ describe('图片节点可选模型', () => {
     expect(normalizeImageModelValue('nano-banana-flash')).toBe('gemini-3.1-flash-image')
     expect(normalizeImageModelValue('gemini-3.1-flash-image-preview')).toBe('gemini-3.1-flash-image')
     expect(openAIImageProvider.normalizeImageModel('Nano-banana Flash')).toBe('gemini-3.1-flash-image')
+  })
+})
+
+describe('Image 2.5 网关模型', () => {
+  it('下拉与生成进度统一显示 GPT 名称', () => {
+    expect(getImageModelDisplayName('gpt-image-2.5-flare')).toBe('GPT image 2.5 Flare')
+    expect(getImageModelDisplayName('openai/gpt-image-2.5-sunburst')).toBe('GPT image 2.5 Sunburst')
+    expect(getImageModelDisplayName('seedance-2.5')).toBe('seedance-2.5')
+  })
+
+  it.each([
+    ['gpt-image-2.5-flare', 'openai/gpt-image-2.5-flare'],
+    ['gpt-image-2.5-sunburst', 'openai/gpt-image-2.5-sunburst'],
+  ])('%s 保留完整 wire model id', (model, providerModel) => {
+    expect(normalizeImageModelValue(providerModel)).toBe(model)
+    expect(openAIImageProvider.normalizeImageModel(providerModel)).toBe(model)
+    expect(openAIImageProvider.providerModelForImage(model)).toBe(providerModel)
+    expect(openAIImageProvider.isGptImageModel(model)).toBe(true)
+  })
+
+  it.each(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])('%s 沿用 GPT 图片能力', (model) => {
+    expect(getImageResolutionOptions(model)).toEqual(['1K', '2K', '4K'])
+    expect(getImageRatioOptions(model).map((item) => item.value)).toEqual(
+      getImageRatioOptions('gpt-image-2').map((item) => item.value),
+    )
+    expect(getImageGenerationCounts(model)).toEqual([1, 2, 4])
+    expect(openAIImageProvider.getImageModelRule(model).sizeStrategy).toBe('computed')
+    expect(validateImageCapability({
+      model,
+      prompt: '一只猫',
+      imageCount: 10,
+      ratio: '16:9',
+      resolution: '4K',
+      count: 4,
+    })).toBe('')
   })
 })
 
@@ -183,5 +223,23 @@ describe('没被这次改动带跑的模型', () => {
   it('GPT image 2.0 仍走 computed size', () => {
     expect(openAIImageProvider.getImageModelRule('gpt-image-2').sizeStrategy).toBe('computed')
     expect(openAIImageProvider.isVolcengineImageModel('gpt-image-2')).toBe(false)
+  })
+})
+
+describe('GPT Image moderation', () => {
+  it.each([
+    'gpt-image-2',
+    'gpt-image-2.5-flare',
+    'gpt-image-2.5-sunburst',
+  ])('%s uses low moderation', (model) => {
+    expect(openAIImageProvider.imageModerationForModel(model)).toBe('low')
+  })
+
+  it.each([
+    'gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+    'seedream-5-pro',
+  ])('%s does not receive an OpenAI moderation parameter', (model) => {
+    expect(openAIImageProvider.imageModerationForModel(model)).toBe('')
   })
 })

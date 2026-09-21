@@ -260,8 +260,8 @@ describe('运行时接线（jsdom 起不了 WebGL，只能断言接线）', () =
 
   it('可以藏掉身上的关节小球（预览 / 出图构图时挡视线）', () => {
     expect(SOURCE).toContain('showJointHandles')
-    expect(SOURCE).toContain('handle.visible = showJointHandles')
-    expect(SOURCE).toContain('handle.visible = showJointHandles && tool === \'finger\'')
+    expect(SOURCE).toContain('handle.visible = !hasImportedModel && showJointHandles')
+    expect(SOURCE).toContain('handle.visible = !hasImportedModel && showJointHandles && tool === \'finger\'')
     expect(SOURCE).toContain('if (!showJointHandlesRef.current) return null')
   })
 

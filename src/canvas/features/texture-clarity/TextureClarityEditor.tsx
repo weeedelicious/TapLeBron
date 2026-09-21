@@ -77,6 +77,7 @@ function statusLabel(status: string | undefined, reason: string | undefined, loa
   switch (status) {
     case 'cached': return '已复用 · 本地缓存'
     case 'generated': return '本次生成'
+    case 'fallback': return '降级 · 本地人物轮廓'
     // 格子只有一行的宽度，塞不下整句人话。服务没起来时给一个短标签，
     // 完整原因和原始报错挂在 title 上（下面那行 tc-hint 会写全）。
     case 'failed': return describeServiceError(reason).isServiceDown
@@ -89,6 +90,7 @@ function statusLabel(status: string | undefined, reason: string | undefined, loa
 
 function statusTone(status?: string) {
   if (status === 'cached' || status === 'generated') return 'ok'
+  if (status === 'fallback') return 'warn'
   if (status === 'failed') return 'bad'
   return 'idle'
 }
@@ -129,8 +131,12 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
       .catch(() => { /* 探活挂了就当没探到，不影响使用 */ })
   }, [isResultMode])
 
-  /** 只在明确知道语义分区不可用时才算 down；未知一律当可用。 */
-  const semanticDown = serviceStatus ? !serviceStatus.semantic.ok : false
+  /**
+   * GPU 部位分区和“能不能安全生成”不是一回事：服务器有本地人物轮廓兜底。
+   * 只有连兜底都不可用时才禁用；GPU 自身故障只显示降级提示。
+   */
+  const semanticUnavailable = serviceStatus ? !serviceStatus.canRepair : false
+  const semanticWorkerDown = serviceStatus ? !serviceStatus.semantic.ok : false
 
   /**
    * 按需加载控制素材预览。**故意不放在打开时自动跑**：这一步要等 4090 的语义分区和
@@ -188,8 +194,8 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
   const canRepair = Boolean(
     sourceUrl
     && REPAIR_MODELS.find((item) => item.value === model)?.status === 'available'
-    // 探活明确说语义分区没起来时就别让人白建节点白等了
-    && !semanticDown,
+    // 只有服务器明确说连本地人物轮廓兜底也不可用时才停用
+    && !semanticUnavailable,
   )
 
   // 交给调用方去建节点 + 跑整条链，这里点完就关。等待在新节点上进行，不在弹窗里。
@@ -291,7 +297,11 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
 
           {/* 语义图例。颜色只是可视化编码，判定一律按类别 id —— 这里显示的覆盖率来自服务端按 id 统计 */}
           <div className="tc-legend">
-            {TEXTURE_CLARITY_CLASSES.filter((item) => item.repairSupport).map((item) => {
+            {assets?.semantic.mode === 'subject-silhouette' ? (
+              <span className="tc-legend-item">
+                <i style={{ background: '#8B6BE8' }} />人物轮廓（降级）
+              </span>
+            ) : TEXTURE_CLARITY_CLASSES.filter((item) => item.repairSupport).map((item) => {
               const coverage = assets?.semantic.classes?.find((c) => c.id === item.id)?.coverage
               return (
                 <span key={item.key} className="tc-legend-item">
@@ -305,8 +315,14 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
 
           {assets?.semantic.modelId ? (
             <div className="tc-meta">
-              语义分区 {assets.semantic.modelId.split('/').pop()} · {assets.semantic.labelSet}
+              {assets.semantic.mode === 'subject-silhouette' ? '人物轮廓兜底' : '语义分区'}{' '}
+              {assets.semantic.modelId.split('/').pop()} · {assets.semantic.labelSet}
               {typeof assets.semantic.elapsedSec === 'number' ? ` · ${assets.semantic.elapsedSec.toFixed(2)}s` : ''}
+            </div>
+          ) : null}
+          {assets?.semantic.status === 'fallback' ? (
+            <div className="tc-hint" title={assets.semantic.reason || undefined}>
+              GPU 部位分区当前无法推理，已自动改用本地人物轮廓。背景仍受保护，但皮肤、头发、服装的分区精度会降低。
             </div>
           ) : null}
           {assetError ? <div className="tc-error">{assetError}</div> : null}
@@ -460,7 +476,10 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
                 <div><dt>融合策略</dt><dd>{result.fusionPolicy}</dd></div>
               ) : null}
               {result.semanticModelId ? (
-                <div><dt>语义分区</dt><dd>{result.semanticModelId.split('/').pop()}</dd></div>
+                <div>
+                  <dt>语义分区</dt>
+                  <dd>{result.semanticMode === 'subject-silhouette' ? '本地人物轮廓（降级）' : result.semanticModelId.split('/').pop()}</dd>
+                </div>
               ) : null}
               {typeof result.generationCalls === 'number' ? (
                 <div><dt>生图调用</dt><dd>{result.generationCalls} 次</dd></div>
@@ -531,22 +550,27 @@ export function TextureClarityEditor({ projectUuid, nodeKey, sourceUrl, result, 
           <button type="button" className="tc-btn is-primary" disabled={!canRepair} onClick={handleGenerate}>
             <Sparkles size={14} />生成修复
           </button>
-          {/* 探活先报：服务没起来就在这儿说清楚，别等到建了节点才发现 */}
-          {semanticDown && serviceStatus ? (
+          {/* 只有连本地兜底都不可用才停用；GPU worker 单独故障时继续生成并明确标成降级。 */}
+          {semanticUnavailable && serviceStatus ? (
             <div className="tc-hint" title={describeServiceError(serviceStatus.semantic.reason).detail}>
               {describeServiceError(serviceStatus.semantic.reason).text}
               <br />
               生成已停用 —— 没有语义分区就算不出融合支持区。服务起来后重新打开这个窗口即可。
             </div>
           ) : null}
-          {!semanticDown && assets && !assets.semantic.classMapUrl ? (
+          {semanticWorkerDown && !semanticUnavailable && serviceStatus ? (
+            <div className="tc-hint" title={describeServiceError(serviceStatus.semantic.reason).detail}>
+              GPU 部位分区当前不可用；生成时会自动改用本地人物轮廓，背景仍受保护，部位精度会降低。
+            </div>
+          ) : null}
+          {!semanticUnavailable && assets && !assets.semantic.classMapUrl ? (
             <div className="tc-hint" title={describeServiceError(assets.semantic.reason).detail}>
               {describeServiceError(assets.semantic.reason).text}
               <br />
               没有语义分区就算不出融合支持区，所以这一次生成会在扣费之前直接停下。
             </div>
           ) : null}
-          {serviceStatus && serviceStatus.semantic.ok && !serviceStatus.geometry.ok ? (
+          {serviceStatus && !serviceStatus.geometry.ok ? (
             <div className="tc-hint" title={describeServiceError(serviceStatus.geometry.reason).detail}>
               深度/法线服务连不上，这次会少一层几何约束，但仍然可以生成。
             </div>

@@ -102,6 +102,20 @@ module.exports = {
     model: String(process.env.CINDY_ASSISTANT_MODEL || process.env.DEFAULT_CHAT_MODEL || 'codex/gpt-5.6-sol').trim(),
     timeoutMs: Number(process.env.CINDY_ASSISTANT_TIMEOUT_MS || 120_000),
   },
+  generation: {
+    pluginEnabled: asBool(process.env.SHOTFLOW_PLUGIN_GENERATION_ENABLED, false),
+    imageEnabled: asBool(process.env.SHOTFLOW_PLUGIN_GENERATION_IMAGE_ENABLED, true),
+    videoEnabled: asBool(process.env.SHOTFLOW_PLUGIN_GENERATION_VIDEO_ENABLED, true),
+    maxGenerationUnits: Math.max(1, Number(process.env.SHOTFLOW_PLUGIN_MAX_GENERATION_UNITS || 20) || 20),
+    planTtlSeconds: Math.max(60, Number(process.env.SHOTFLOW_PLUGIN_PLAN_TTL_SECONDS || 600) || 600),
+    maxWaitSeconds: Math.max(5, Number(process.env.SHOTFLOW_PLUGIN_MAX_WAIT_SECONDS || 90) || 90),
+    idempotencyTtlSeconds: Math.max(3600, Number(process.env.SHOTFLOW_PLUGIN_IDEMPOTENCY_TTL_SECONDS || 86400) || 86400),
+    maxCostPerRun: Math.max(0, Number(process.env.SHOTFLOW_PLUGIN_MAX_COST_PER_RUN || 0) || 0),
+    // Reserved for the shared Cindy/pipeline gates. They stay off unless explicitly enabled.
+    cindyEnabled: asBool(process.env.SHOTFLOW_CINDY_GENERATION_ENABLED, false),
+    pipelineEnabled: asBool(process.env.SHOTFLOW_PIPELINE_GENERATION_ENABLED, false),
+    mergeEnabled: asBool(process.env.SHOTFLOW_MERGE_GENERATION_ENABLED, true),
+  },
   // AI 出片（Studio）。默认只对用户 1（吴逸翔）开放，要放开就在 .env 里给
   // STUDIO_ALLOWED_USER_IDS 逗号分隔的 id 列表。
   studio: {
@@ -121,6 +135,15 @@ module.exports = {
     serviceToken: process.env.SUBJECT_MATTING_SERVICE_TOKEN || '',
     timeoutMs: Number(process.env.SUBJECT_MATTING_TIMEOUT_MS || 180_000),
     allowLocalFallback: asBool(process.env.SUBJECT_MATTING_ALLOW_LOCAL_FALLBACK, true),
+  },
+  mediaEnhance: {
+    serviceUrl: normalizeOptionalUrl(process.env.MEDIA_ENHANCE_SERVICE_URL),
+    serviceToken: process.env.MEDIA_ENHANCE_SERVICE_TOKEN || '',
+    imageTimeoutMs: Number(process.env.MEDIA_ENHANCE_IMAGE_TIMEOUT_MS || 30 * 60_000),
+    videoTimeoutMs: Number(process.env.MEDIA_ENHANCE_VIDEO_TIMEOUT_MS || 12 * 60 * 60_000),
+    pollIntervalMs: Number(process.env.MEDIA_ENHANCE_POLL_INTERVAL_MS || 1_000),
+    maxOutputPixels: Number(process.env.MEDIA_ENHANCE_MAX_OUTPUT_PIXELS || 134_217_728),
+    maxConvertTimeoutMs: Number(process.env.MEDIA_ENHANCE_MAX_CONVERT_TIMEOUT_MS || 30 * 60_000),
   },
   appearanceTransfer: {
     // Lighting-descriptor vision analysis for the atmosphere-transfer tool.

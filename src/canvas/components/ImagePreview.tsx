@@ -4,6 +4,7 @@ import type { AssetGenerationMeta, ResourceMeta } from '@/lib/types'
 import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { writeImageToClipboard, writeTextToClipboard } from '@/lib/clipboard'
 import { videoDownloadFileName } from '@/lib/videoFileName'
+import { formatVideoFps } from '@/lib/videoFrame'
 import {
   isViewerChromeTarget,
   nextPanOffset,
@@ -69,8 +70,13 @@ interface Props {
    *   · 放大镜隐藏 —— 它是靠 CSS background-image 实现的，视频元素做不到
    *   · 「复制图片」变「复制地址」—— 浏览器剪贴板放不下视频文件
    *   · 不预加载相邻项 —— 视频动辄十几 MB，预加载两个反而更慢
-   */
+  */
   kind?: 'image' | 'video'
+  /**
+   * 旧视频可能没有保存 ffprobe 元数据。查看器打开后按当前视频 URL 异步读取，
+   * 既补齐右侧信息栏，也让节点的逐帧播放拿到真实 FPS。
+   */
+  loadVideoResourceMeta?: (url: string) => Promise<ResourceMeta | null | undefined>
 }
 
 /** 这些动作不开弹窗，点完留在大图里；其余的先关大图再执行 */
@@ -80,7 +86,9 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const formatBytes = (value?: number) => !value ? '—' : value >= 1024 ** 2 ? `${(value / 1024 ** 2).toFixed(2)} MB` : `${Math.round(value / 1024)} KB`
 const formatDate = (value?: number) => !value ? '—' : new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 
-export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, resourceMeta, generationMeta, createdAtMs, items, onSetPrimary, primaryUrl, nodeActions, onRemoveItem, kind = 'image' }: Props) {
+type VideoMetaStatus = 'loading' | 'ready' | 'failed'
+
+export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, resourceMeta, generationMeta, createdAtMs, items, onSetPrimary, primaryUrl, nodeActions, onRemoveItem, kind = 'image', loadVideoResourceMeta }: Props) {
   const isVideo = kind === 'video'
   const mediaLabel = isVideo ? '视频' : '图片'
   const list = useMemo<ImagePreviewItem[]>(() => {
@@ -102,6 +110,36 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
   const active = list[Math.min(index, list.length - 1)] ?? list[0]
   const activeUrl = active.url
   const multiple = list.length > 1
+  const [loadedVideoMeta, setLoadedVideoMeta] = useState<Record<string, ResourceMeta>>({})
+  const [videoMetaStatus, setVideoMetaStatus] = useState<Record<string, VideoMetaStatus>>({})
+  const activeResourceMeta = loadedVideoMeta[activeUrl] ?? active.resourceMeta
+  const hasActualVideoFps = Number(activeResourceMeta?.fps || 0) > 0
+  const activeVideoMetaStatus = videoMetaStatus[activeUrl]
+  const resolvedVideoFps = formatVideoFps(
+    activeResourceMeta?.fps,
+    active.generationMeta?.fps,
+    active.generationMeta?.targetFps,
+  )
+  const isVideoFpsLoading = Boolean(
+    isVideo
+    && !hasActualVideoFps
+    && loadVideoResourceMeta
+    && activeVideoMetaStatus !== 'failed',
+  )
+  const videoFpsDisplay = hasActualVideoFps
+    ? resolvedVideoFps
+    : isVideoFpsLoading
+      ? '读取中…'
+      : resolvedVideoFps !== '—'
+        ? resolvedVideoFps
+        : '未读取到'
+  const videoFpsHint = hasActualVideoFps
+    ? '源视频实际帧率'
+    : isVideoFpsLoading
+      ? '正在读取源文件元数据'
+      : resolvedVideoFps !== '—'
+        ? '生成记录帧率（源文件未读取到）'
+        : '源文件未返回帧率'
 
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
@@ -129,6 +167,59 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
   // 视频时装的是 <video>。只用到 getBoundingClientRect（量左边缘给操作条对齐），两者都有。
   const imageRef = useRef<HTMLImageElement | HTMLVideoElement>(null)
   const stripRef = useRef<HTMLDivElement>(null)
+
+  // Do not let the browser's native video player replace this viewer with its
+  // own fullscreen UI. `controlsList=nofullscreen` is the primary guard; these
+  // events cover Chromium/Safari versions that still enter fullscreen on a
+  // double click inside native controls.
+  useEffect(() => {
+    if (!isVideo) return undefined
+    const video = imageRef.current as (HTMLVideoElement & {
+      webkitExitFullscreen?: () => void
+    }) | null
+    if (!video) return undefined
+
+    const exitNativeFullscreen = () => {
+      if (document.fullscreenElement === video && typeof document.exitFullscreen === 'function') {
+        const result = document.exitFullscreen()
+        if (result && typeof result.catch === 'function') void result.catch(() => undefined)
+      }
+      try { video.webkitExitFullscreen?.() } catch { /* old Safari best effort */ }
+    }
+    const handleFullscreenChange = () => {
+      if (document.fullscreenElement === video) exitNativeFullscreen()
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    video.addEventListener('webkitbeginfullscreen', exitNativeFullscreen)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      video.removeEventListener('webkitbeginfullscreen', exitNativeFullscreen)
+    }
+  }, [activeUrl, isVideo])
+
+  useEffect(() => {
+    if (!isVideo || !loadVideoResourceMeta || hasActualVideoFps || videoMetaStatus[activeUrl]) return undefined
+    let disposed = false
+    setVideoMetaStatus((current) => ({ ...current, [activeUrl]: 'loading' }))
+    void Promise.resolve()
+      .then(() => loadVideoResourceMeta(activeUrl))
+      .then((meta) => {
+        if (disposed) return
+        if (meta) setLoadedVideoMeta((current) => ({ ...current, [activeUrl]: meta }))
+        setVideoMetaStatus((current) => ({
+          ...current,
+          [activeUrl]: Number(meta?.fps || 0) > 0 ? 'ready' : 'failed',
+        }))
+      })
+      .catch(() => {
+        if (!disposed) setVideoMetaStatus((current) => ({ ...current, [activeUrl]: 'failed' }))
+      })
+    return () => { disposed = true }
+    // videoMetaStatus is deliberately read as a one-shot guard but excluded from deps:
+    // setting it to "loading" must not clean up and discard the in-flight response.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUrl, hasActualVideoFps, isVideo, loadVideoResourceMeta])
 
   const reset = useCallback(() => { setScale(1); setOffset({ x: 0, y: 0 }); setRotation(0) }, [])
   const zoom = useCallback((factor: number) => setScale(value => clamp(value * factor, 0.1, 20)), [])
@@ -318,10 +409,10 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
   }, [activeUrl, scale, rotation, offset.x, imageSize.w, imageSize.h, infoOpen, stripOpen])
 
   const meta = useMemo(() => {
-    const width = imageSize.w || active.resourceMeta?.width || 0
-    const height = imageSize.h || active.resourceMeta?.height || 0
+    const width = imageSize.w || activeResourceMeta?.width || 0
+    const height = imageSize.h || activeResourceMeta?.height || 0
     return { width, height, ratio: width && height ? (width / height).toFixed(3) : '—' }
-  }, [imageSize, active])
+  }, [imageSize, activeResourceMeta])
 
   const copy = (text?: string) => { if (text) void writeTextToClipboard(text) }
   // 视频没法进剪贴板（浏览器只收 image/png），所以复制地址。
@@ -344,7 +435,7 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
   }, [activeUrl, isVideo])
   const download = () => {
     const anchor = document.createElement('a')
-    anchor.href = active.resourceMeta?.originalUrl || activeUrl
+    anchor.href = activeResourceMeta?.originalUrl || activeUrl
     anchor.download = isVideo
       ? videoDownloadFileName(active.name || name, anchor.href)
       : active.name || name || activeUrl.split('/').pop() || 'image'
@@ -378,7 +469,7 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
         const px = clamp((event.clientX - rect.left) / rect.width, 0, 1), py = clamp((event.clientY - rect.top) / rect.height, 0, 1)
         setPointer({ x: event.clientX, y: event.clientY, px, py, visible: event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom })
       }}>
-      {/* 视频不接双击缩放：双击视频在浏览器里的既有含义是全屏，抢掉会很别扭 */}
+      {/* 图片双击缩放；视频在捕获阶段拦截双击，避免浏览器原生播放器进入全屏。 */}
       <div className={stageClass} onDoubleClick={() => { if (isVideo) return; scale > 1.05 ? reset() : setScale(2) }}>
         {isVideo ? (
           <video
@@ -386,8 +477,14 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
             ref={imageRef as React.RefObject<HTMLVideoElement>}
             src={activeUrl}
             controls
+            controlsList="nofullscreen"
             playsInline
             preload="metadata"
+            onDoubleClickCapture={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              event.nativeEvent.stopImmediatePropagation()
+            }}
             onLoadedMetadata={event => setImageSize({ w: event.currentTarget.videoWidth, h: event.currentTarget.videoHeight })}
             // 原生控件必须能点。外层 backdrop 的 mousedown 会 preventDefault 来做拖动平移，
             // 不在这里挡住的话进度条、音量、播放键全都点不动。
@@ -521,12 +618,18 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
 
       {infoOpen && <aside className="shotflow-image-viewer-info">
         <h2>{active.name || name || activeUrl.split('/').pop() || mediaLabel}</h2>
+        {isVideo && <div className={['shotflow-image-viewer-video-fps', isVideoFpsLoading ? 'is-loading' : ''].filter(Boolean).join(' ')}>
+          <span>视频帧率</span>
+          <strong>{videoFpsDisplay}</strong>
+          <small>{videoFpsHint}</small>
+        </div>}
         {multiple && <Info label="序号" value={`${index + 1} / ${list.length}`} />}
         <Info label="像素尺寸" value={meta.width && meta.height ? `${meta.width} × ${meta.height}` : '—'} />
-        {isVideo && <Info label="时长" value={active.resourceMeta?.durationSec ? `${Number(active.resourceMeta.durationSec).toFixed(1)} 秒` : '—'} />}
-        <Info label="宽高比" value={meta.ratio} /><Info label="格式" value={active.resourceMeta?.mimeType || activeUrl.split('.').pop()?.toUpperCase() || '—'} />
-        <Info label="文件大小" value={formatBytes(active.resourceMeta?.byteSize)} /><Info label="模型" value={active.generationMeta?.model || '—'} />
-        <Info label="生成分辨率" value={active.generationMeta?.resolution || '—'} /><Info label="生成时间" value={formatDate(active.generationMeta?.createdAtMs || active.createdAtMs || active.resourceMeta?.createdAtMs)} />
+        {isVideo && <Info label="时长" value={activeResourceMeta?.durationSec ? `${Number(activeResourceMeta.durationSec).toFixed(1)} 秒` : '—'} />}
+        {isVideo && <Info label="帧率" value={videoFpsDisplay} />}
+        <Info label="宽高比" value={meta.ratio} /><Info label="格式" value={activeResourceMeta?.mimeType || activeUrl.split('.').pop()?.toUpperCase() || '—'} />
+        <Info label="文件大小" value={formatBytes(activeResourceMeta?.byteSize)} /><Info label="模型" value={active.generationMeta?.model || '—'} />
+        <Info label="生成分辨率" value={active.generationMeta?.resolution || '—'} /><Info label="生成时间" value={formatDate(active.generationMeta?.createdAtMs || active.createdAtMs || activeResourceMeta?.createdAtMs)} />
         {/* 提交时的比例 / 时长 / 模式：同一个节点里多条视频往往设置不同，不显示就分不清哪条是哪条 */}
         <Info label="生成比例" value={active.generationMeta?.ratio || '—'} /><Info label="生成时长" value={active.generationMeta?.durationSec ? `${active.generationMeta.durationSec} 秒` : '—'} />
         {active.generationMeta?.modeType && <Info label="生成模式" value={active.generationMeta.modeType} />}

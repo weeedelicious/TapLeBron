@@ -65,6 +65,10 @@ function textureClarityMeta(
     requestModel: result?.requestModel ?? model,
     resolvedModel: result?.resolvedModel ?? null,
     semanticModelId: assets?.semantic.modelId || null,
+    semanticMode: assets?.semantic.mode || null,
+    semanticFallbackReason: assets?.semantic.status === 'fallback'
+      ? assets.semantic.reason || null
+      : null,
     candidateUrl: result?.candidateUrl ?? null,
     outputWidth: assets?.source.width ?? null,
     outputHeight: assets?.source.height ?? null,
@@ -173,6 +177,7 @@ export function startTextureClarityRepair(input: TextureClarityJobInput): string
         sourceUrl: ready.source.url,
         classMapUrl: ready.semantic.classMapUrl as string,
         semanticUrl: ready.semantic.previewUrl,
+        semanticMode: ready.semantic.mode,
         depthUrl: ready.geometry.depthUrl,
         normalUrl: ready.geometry.normalUrl,
       })

@@ -1,6 +1,6 @@
 const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
 const TARGET_IMAGE_UPLOAD_BYTES = 9 * 1024 * 1024
-const MAX_VIDEO_UPLOAD_BYTES = 100 * 1024 * 1024
+const MAX_VIDEO_UPLOAD_BYTES = 150 * 1024 * 1024
 const MAX_IMAGE_DIMENSION = 4096
 const MIN_IMAGE_DIMENSION = 960
 const QUALITY_STEPS = [0.92, 0.86, 0.8, 0.74, 0.68, 0.6, 0.52, 0.44]
@@ -133,7 +133,7 @@ async function compressOversizedImage(file: File) {
 
 export async function prepareAssetForUpload(file: File) {
   if (isVideoFile(file) && file.size > MAX_VIDEO_UPLOAD_BYTES) {
-    throw new Error('视频文件不能超过 100MB')
+    throw new Error('视频文件不能超过 150MB')
   }
 
   if (!canAutoCompressImage(file) || file.size <= MAX_IMAGE_UPLOAD_BYTES) {

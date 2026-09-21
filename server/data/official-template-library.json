@@ -1,0 +1,90 @@
+[
+  {
+    "id": "text-to-image",
+    "category": "image",
+    "title": "文生图",
+    "subtitle": "从一句提示词开始，生成并预览图片。",
+    "thumbnailUrl": "",
+    "method": "文本生成图片",
+    "canvasId": "",
+    "tone": "#ba8752",
+    "nodes": [{ "type": "text", "label": "提示词" }, { "type": "image", "label": "生成图片" }, { "type": "image_compare", "label": "预览" }]
+  },
+  {
+    "id": "image-to-image",
+    "category": "image",
+    "title": "图生图",
+    "subtitle": "上传参考图，用提示词进行风格或内容变换。",
+    "thumbnailUrl": "",
+    "method": "参考图生成",
+    "canvasId": "",
+    "tone": "#5b9195",
+    "nodes": [{ "type": "upload", "label": "参考图" }, { "type": "image", "label": "生成图片" }, { "type": "image_compare", "label": "预览" }]
+  },
+  {
+    "id": "image-processing",
+    "category": "image",
+    "title": "图片处理",
+    "subtitle": "从输入图片开始，进入细化、抠图或灯光处理流程。",
+    "thumbnailUrl": "",
+    "method": "图片生成 / 处理",
+    "canvasId": "",
+    "tone": "#769265",
+    "nodes": [{ "type": "upload", "label": "输入图片" }, { "type": "image", "label": "图片处理" }, { "type": "image_compare", "label": "结果" }]
+  },
+  {
+    "id": "text-to-video",
+    "category": "video",
+    "title": "文生视频",
+    "subtitle": "从文字描述开始生成视频，并保留预览节点。",
+    "thumbnailUrl": "",
+    "method": "文本生成视频",
+    "canvasId": "",
+    "tone": "#b68557",
+    "nodes": [{ "type": "text", "label": "提示词" }, { "type": "video", "label": "生成视频" }, { "type": "video_compare", "label": "预览" }]
+  },
+  {
+    "id": "video-enhance",
+    "category": "video",
+    "title": "视频高清增强",
+    "subtitle": "输入视频后使用 NVIDIA VSR、FlashVSR 等工具增强细节。",
+    "thumbnailUrl": "",
+    "method": "视频生成 / 处理",
+    "canvasId": "",
+    "tone": "#718d9d",
+    "nodes": [{ "type": "upload", "label": "输入视频" }, { "type": "video", "label": "高清增强" }, { "type": "video", "label": "输出视频" }]
+  },
+  {
+    "id": "frame-interpolation",
+    "category": "video",
+    "title": "24fps → 30fps 补帧",
+    "subtitle": "保持首尾帧和时长，将 24 帧视频补到 30 帧。",
+    "thumbnailUrl": "",
+    "method": "视频补帧",
+    "canvasId": "",
+    "tone": "#8b9b65",
+    "nodes": [{ "type": "upload", "label": "输入视频" }, { "type": "video", "label": "补帧" }, { "type": "video", "label": "输出视频" }]
+  },
+  {
+    "id": "multi-view",
+    "category": "3d",
+    "title": "3D 多视图",
+    "subtitle": "导入 3D 模型，生成多角度视图和参考图。",
+    "thumbnailUrl": "",
+    "method": "3D / 多视图",
+    "canvasId": "",
+    "tone": "#8b7660",
+    "nodes": [{ "type": "director_stage", "label": "3D 模型" }, { "type": "image", "label": "多视图" }, { "type": "image", "label": "图片输出" }]
+  },
+  {
+    "id": "stage-light",
+    "category": "3d",
+    "title": "三维空间灯光",
+    "subtitle": "在三维空间调整机位、姿态和灯光，再输出图片。",
+    "thumbnailUrl": "",
+    "method": "3D 灯光 / 多视图",
+    "canvasId": "",
+    "tone": "#687f8c",
+    "nodes": [{ "type": "director_stage", "label": "三维空间" }, { "type": "image", "label": "灯光重塑" }, { "type": "image", "label": "图片输出" }]
+  }
+]

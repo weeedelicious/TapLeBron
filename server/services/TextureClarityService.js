@@ -21,10 +21,13 @@ const sharp = require('sharp');
 
 const semantics = require('../../src/shared/texture-clarity-semantics.json');
 const fusion = require('./TextureClarityFusion');
+const subjectMattingService = require('./SubjectMattingService');
 
 /** 资产版本。改了语义映射、融合算法或规范化口径都要 +1，否则会复用到旧口径的缓存。 */
 const TEXTURE_CLARITY_ASSET_VERSION = 1;
 const SEMANTIC_LABEL_SET = 'ATR-18';
+const FALLBACK_SEMANTIC_LABEL_SET = 'SHOTFLOW-SUBJECT-1';
+const FALLBACK_FOREGROUND_ATR_ID = 4;
 
 const MAX_EDGE = Number(semantics.outputPolicy?.maxEdge || 2048);
 const FUSION_POLICY = String(semantics.fusionPolicy || 'smart-blend-multiscale-v1');
@@ -173,42 +176,121 @@ function summarizeClasses(classMap) {
   }));
 }
 
-/** 调语义分区 worker。它只回原始 ATR 类别 id 图，映射与上色都在这边做。 */
+function semanticWorkerError(error) {
+  const status = Number(error?.response?.status || 0);
+  const payload = error?.response?.data;
+  const remoteDetail = typeof payload === 'string'
+    ? payload
+    : payload?.detail || payload?.error || '';
+  const detail = String(remoteDetail || error?.message || error || '').trim();
+  if (status === 500 && (!detail || detail === 'Internal Server Error')) {
+    return '语义分区 GPU 服务返回 500，推理进程异常';
+  }
+  if (status) return `语义分区 GPU 服务返回 ${status}${detail ? `：${detail}` : ''}`;
+  return detail || '语义分区 GPU 服务不可用';
+}
+
+/**
+ * GPU 语义分区不可用时的安全兜底。
+ *
+ * 本地抠图只负责区分人物 / 背景，不能冒充 ATR-18 部位解析，所以返回单独的 labelSet 和 mode。
+ * 类别图内部仍用 ATR 的 Upper-clothes(4) 表示整个人物，原因是现有融合链只判断该像素是不是
+ * repairSupport；这样可以继续严格保证人物轮廓外的像素逐字节等于原图。
+ */
+async function buildFallbackSemanticParts(sourceBuffer, reason = '') {
+  const startedAt = Date.now();
+  const sourceMeta = await imageSize(sourceBuffer);
+  const width = Number(sourceMeta.width || 0);
+  const height = Number(sourceMeta.height || 0);
+  if (!width || !height) throw new Error('本地人物轮廓无法读取源图尺寸');
+
+  const fallback = await subjectMattingService.buildLocalFallbackSubjectMask(sourceBuffer);
+  const { data, info } = await sharp(fallback.maskBuffer, { failOn: 'none' })
+    .resize(width, height, { fit: 'fill', kernel: 'cubic' })
+    .greyscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const classMap = Buffer.alloc(width * height);
+  let foregroundPixels = 0;
+  for (let index = 0; index < classMap.length; index += 1) {
+    const selected = data[index * info.channels] > 16;
+    classMap[index] = selected ? FALLBACK_FOREGROUND_ATR_ID : 0;
+    if (selected) foregroundPixels += 1;
+  }
+  const classMapPng = await sharp(classMap, {
+    raw: { width, height, channels: 1 },
+  }).png({ compressionLevel: 9 }).toBuffer();
+
+  return {
+    classMapPng,
+    width,
+    height,
+    modelId: fallback.modelId || 'shotflow/local-subject-silhouette',
+    modelRevision: fallback.modelRevision || '1',
+    labelSet: FALLBACK_SEMANTIC_LABEL_SET,
+    labelCount: 2,
+    elapsedSec: (Date.now() - startedAt) / 1000,
+    fallback: true,
+    fallbackKind: 'subject-silhouette',
+    fallbackReason: String(reason || fallback.warning || '').trim(),
+    foregroundCoverage: foregroundPixels / Math.max(1, classMap.length),
+  };
+}
+
+/**
+ * 调语义分区 worker。正常路径回原始 ATR 类别 id 图；worker 活着但推理 500、连接失败或响应
+ * 不完整时，自动退到本地人物轮廓。兜底不是完整部位解析，调用方必须把 fallback 状态展示出来。
+ */
 async function requestSemanticParts(sourceBuffer, options = {}) {
   const serviceUrl = String(options.serviceUrl || '').trim().replace(/\/+$/, '');
   const serviceToken = String(options.serviceToken || '').trim();
-  if (!serviceUrl) throw new Error('语义分区服务未配置');
+  let workerFailure = null;
 
-  const form = new FormData();
-  form.append('file', sourceBuffer, { filename: 'source.png', contentType: 'image/png' });
+  if (serviceUrl) {
+    try {
+      const form = new FormData();
+      form.append('file', sourceBuffer, { filename: 'source.png', contentType: 'image/png' });
 
-  const headers = { ...form.getHeaders() };
-  if (serviceToken) headers.Authorization = `Bearer ${serviceToken}`;
+      const headers = { ...form.getHeaders() };
+      if (serviceToken) headers.Authorization = `Bearer ${serviceToken}`;
 
-  const response = await axios.post(`${serviceUrl}/v1/semantic-parts`, form, {
-    headers,
-    timeout: Number(options.timeoutMs || 180_000),
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-  });
+      const response = await axios.post(`${serviceUrl}/v1/semantic-parts`, form, {
+        headers,
+        timeout: Number(options.timeoutMs || 180_000),
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
 
-  const data = response.data || {};
-  const encoded = data.assets?.classMap?.data;
-  if (!encoded) throw new Error('语义分区服务没有返回类别图');
-  if (String(data.labelSet || '') !== SEMANTIC_LABEL_SET) {
-    // 标签表变了意味着映射表全部失效。宁可直接失败，也不要按旧映射算出一张错的支持区。
-    throw new Error(`语义分区标签表是 ${data.labelSet}，本地映射按 ${SEMANTIC_LABEL_SET} 写的`);
+      const data = response.data || {};
+      const encoded = data.assets?.classMap?.data;
+      if (!encoded) throw new Error('语义分区服务没有返回类别图');
+      if (String(data.labelSet || '') !== SEMANTIC_LABEL_SET) {
+        // 标签表变了意味着映射表全部失效。宁可走明确的轮廓兜底，也不要按旧映射算错支持区。
+        throw new Error(`语义分区标签表是 ${data.labelSet}，本地映射按 ${SEMANTIC_LABEL_SET} 写的`);
+      }
+      return {
+        classMapPng: Buffer.from(encoded, 'base64'),
+        width: Number(data.width || 0),
+        height: Number(data.height || 0),
+        modelId: String(data.modelId || ''),
+        modelRevision: String(data.modelRevision || ''),
+        labelSet: String(data.labelSet || ''),
+        labelCount: Number(data.labelCount || 0),
+        elapsedSec: Number(data.elapsedSec || 0),
+        fallback: false,
+        fallbackKind: 'parts',
+      };
+    } catch (error) {
+      workerFailure = error;
+    }
+  } else {
+    workerFailure = new Error('语义分区服务未配置');
   }
-  return {
-    classMapPng: Buffer.from(encoded, 'base64'),
-    width: Number(data.width || 0),
-    height: Number(data.height || 0),
-    modelId: String(data.modelId || ''),
-    modelRevision: String(data.modelRevision || ''),
-    labelSet: String(data.labelSet || ''),
-    labelCount: Number(data.labelCount || 0),
-    elapsedSec: Number(data.elapsedSec || 0),
-  };
+
+  if (options.allowLocalFallback === false) throw workerFailure;
+  const reason = semanticWorkerError(workerFailure);
+  console.warn(`[texture-clarity] ${reason}；已改用本地人物轮廓`);
+  return buildFallbackSemanticParts(sourceBuffer, reason);
 }
 
 /**
@@ -224,14 +306,17 @@ function buildRepairPrompt(context = {}) {
     .filter((item) => item.repairSupport)
     .map((item) => `${item.label}(${item.color})`)
     .join('、');
+  const semanticReference = context.semanticMode === 'subject-silhouette'
+    ? '  2. SUBJECT SILHOUETTE — a coarse editable-foreground guide. It separates the person from the background only; it does NOT identify face, hair, skin or garment parts. Never copy its colour.'
+    : '  2. SEMANTIC PARTS — a flat colour region map that only tells you which area is what'
+      + ` (${classLegend}). It is NOT a colour, style or lighting reference. Never copy its colours.`;
 
   const lines = [
     'Photorealistic detail restoration on the FIRST reference image. Do not redesign the person.',
     '',
     'Reference images, in order:',
     '  1. SOURCE — the only ground truth for identity, pose, framing, lighting and background.',
-    '  2. SEMANTIC PARTS — a flat colour region map that only tells you which area is what'
-      + ` (${classLegend}). It is NOT a colour, style or lighting reference. Never copy its colours.`,
+    semanticReference,
     '  3. Z-DEPTH — structure only. Never copy its greyscale into the picture.',
     '  4. NORMAL — surface direction only. Never copy its false colours into the picture.',
     '',
@@ -291,12 +376,14 @@ async function fuseCandidate(input) {
 
 module.exports = {
   ATR_LOOKUP,
+  FALLBACK_SEMANTIC_LABEL_SET,
   FUSION_POLICY,
   MAX_EDGE,
   SEMANTIC_LABEL_SET,
   SUPPORT_FLAGS,
   TEXTURE_CLARITY_ASSET_VERSION,
   assetName,
+  buildFallbackSemanticParts,
   buildRepairPrompt,
   buildSemanticVisualization,
   decodeClassMap,

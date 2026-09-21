@@ -9,7 +9,16 @@ function tokenHash(token) {
 }
 
 function tokenFromRequest(req) {
-  return String(req.get?.(HEADER_NAME) || req.query?.canvasSession || '').trim();
+  const raw = String(req.get?.(HEADER_NAME) || req.query?.canvasSession || '').trim();
+  if (!raw.includes(',')) return raw;
+
+  // Browsers append duplicate XHR headers as a comma-separated value. Older
+  // upload clients could therefore send "token, token" even though both values
+  // represented the same live session. Accept only identical duplicates; mixed
+  // values remain invalid and are rejected by the normal hash comparison.
+  const values = raw.split(',').map((value) => value.trim()).filter(Boolean);
+  if (values.length > 1 && values.every((value) => value === values[0])) return values[0];
+  return raw;
 }
 
 function timingSafeHexEqual(left, right) {

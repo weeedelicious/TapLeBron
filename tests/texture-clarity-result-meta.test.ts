@@ -31,6 +31,8 @@ const MODERN = node({
       requestModel: 'gemini-3-pro-image',
       resolvedModel: 'gemini-3-pro-image-002',
       semanticModelId: 'sayeed99/segformer_b3_clothes',
+      semanticMode: 'subject-silhouette',
+      semanticFallbackReason: 'GPU 服务返回 500',
       candidateUrl: '/assets/p1/candidate.png',
       outputWidth: 1024,
       outputHeight: 1536,
@@ -53,6 +55,8 @@ describe('readTextureClarityResult', () => {
     expect(r?.failures[0].message).toContain('812')
     expect(r?.outputWidth).toBe(1024)
     expect(r?.generationCalls).toBe(1)
+    expect(r?.semanticMode).toBe('subject-silhouette')
+    expect(r?.semanticFallbackReason).toContain('500')
   })
 
   it('普通图片节点不认（不该多出对比入口）', () => {

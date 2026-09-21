@@ -70,7 +70,12 @@ describe('视频产物的生成信息', () => {
       status: 2,
       progressPercent: 100,
       urls: ['/assets/1/out.mp4'],
-      meta: { generationVersion: 1, applyStatus: 'pending', model: 'Seedance_2_5' },
+      meta: {
+        generationVersion: 1,
+        applyStatus: 'pending',
+        model: 'Seedance_2_5',
+        outputs: [{ index: 0, url: '/assets/1/out.mp4', metadata: { fps: 24 } }],
+      },
     })
     useTasksStore.getState().startPolling('job-1', 'p1')
 
@@ -84,6 +89,7 @@ describe('视频产物的生成信息', () => {
     expect(meta?.resolution).toBe('1080P')
     expect(meta?.ratio).toBe('16:9')
     expect(meta?.durationSec).toBe(4)
+    expect(meta?.fps).toBe(24)
     expect(meta?.modeType).toBe('omni')
     expect(meta?.prompt).toBe('超级炫酷起飞')
     expect(meta?.taskId).toBe('job-1')

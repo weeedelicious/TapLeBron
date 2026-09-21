@@ -6499,6 +6499,10 @@ body {
 }
 
 
+.canvas-detail-template-button {
+  display: none;
+}
+
 /* Canvas controls layout 2026-08-12: merge zoom controls into the top ruler. */
 @media (min-width: 769px) {
   .react-flow__controls.canvas-zoom-controls {
@@ -6546,6 +6550,34 @@ body {
 
   .canvas-detail-zoom-button.is-fit {
     font-size: 15px;
+  }
+
+  .canvas-detail-template-button {
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 2px;
+    width: 108px;
+    height: 28px;
+    padding: 0 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 9px;
+    color: rgba(255, 255, 255, 0.9);
+    background: linear-gradient(180deg, rgba(30, 32, 36, 0.94), rgba(12, 13, 16, 0.96));
+    box-shadow: 0 7px 18px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .canvas-detail-template-button:hover {
+    color: #fff;
+    border-color: rgba(128, 189, 255, 0.34);
+    background: linear-gradient(180deg, rgba(128, 189, 255, 0.18), rgba(128, 189, 255, 0.07));
   }
 
   .canvas-favorite-side-button.is-assets,

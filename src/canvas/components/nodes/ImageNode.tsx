@@ -1,7 +1,7 @@
 import { useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
-import { Copy, Crop as CropIcon, Download, Expand, GitCompare, Globe2, Grid3X3, Lightbulb, Loader2, Lock, Paintbrush, Palette, ScanLine, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
+import { Copy, Crop as CropIcon, Download, Expand, GitCompare, Globe2, Grid3X3, Lightbulb, Loader2, Lock, Paintbrush, Palette, ScanLine, Sparkles, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
 import { MediaNodeToolbar, type MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { GenerationProgress } from '@/components/GenerationProgress'
 import { LightStageModal, type LightStageAcceptPayload } from '@/features/light-stage/LightStageModal'
@@ -12,6 +12,7 @@ import { LIGHT_STAGE_MODEL, readLightStageState } from '@/features/light-stage/t
 import { useImageRepaint } from '@/features/image-repaint/useImageRepaint'
 import { usePanoramaGeneration } from '@/features/panorama/usePanoramaGeneration'
 import { useSubjectMatting } from '@/features/subject-matting/useSubjectMatting'
+import { useMediaEnhance } from '@/features/media-enhance/useMediaEnhance'
 import { ImageGridConfirmModal } from '@/components/ImageGridConfirmModal'
 import { ImageCropModal, type ImageCropAcceptPayload } from '@/components/ImageCropModal'
 import { WhiteboardModal } from '@/components/WhiteboardModal'
@@ -874,6 +875,16 @@ export function ImageNode({ id, data, selected }: Props) {
   const expandedNodeMinWidth = Math.max(360, headerIconWidth + 180 + headerResolutionWidth + headerGap * 2 + 16)
   const shellWidth = hasImage ? imageNodeWidth : Math.max(collapsedNodeMinWidth, imageNodeWidth)
   const displayedShellWidth = shellWidth
+  const mediaEnhance = useMediaEnhance({
+    id,
+    data,
+    sourceUrl: mainImageUrl ?? '',
+    sourceName: data.name,
+    mediaType: 'image',
+    shellWidth,
+    sourceWidth: imgSize?.w,
+    sourceHeight: imgSize?.h,
+  })
   const panorama = usePanoramaGeneration({
     id,
     data,
@@ -1523,6 +1534,15 @@ export function ImageNode({ id, data, selected }: Props) {
       icon: <Wand2 size={14} strokeWidth={1.9} />,
       onClick: () => { if (mainImageUrl) setTextureClarityOpen(true) },
       disabled: !mainImageUrl,
+    },
+    {
+      key: 'media-enhance',
+      label: mediaEnhance.submitting ? '正在创建高清增强' : 'AI 高清增强',
+      icon: mediaEnhance.submitting
+        ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+        : <Sparkles size={14} strokeWidth={1.9} />,
+      onClick: mediaEnhance.openModal,
+      disabled: mediaEnhance.submitting || !mainImageUrl,
     },
     {
       key: 'lighting',
@@ -2643,6 +2663,7 @@ export function ImageNode({ id, data, selected }: Props) {
           }}
         />
       )}
+      {mediaEnhance.modal}
       {lightingOpen && mainImageUrl && (
         <LightStageModal
           sourceName={data.name}

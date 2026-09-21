@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const config = require('./config');
 const { getPool } = require('./db');
+const { normalizeShotflowRole, localRoleFromExternal } = require('./shotflowRole');
 
 const USER_SYNC_INTERVAL_MS = 5_000;
 const LEGACY_LOCAL_ONLY_USERNAMES = new Set(['\u5b9e\u4e60\u751f01']);
@@ -30,10 +31,6 @@ function qIdent(value) {
 
 function normalizeUsername(username, maxLength = 80) {
   return String(username || '').trim().slice(0, maxLength);
-}
-
-function localRoleFromExternal(row) {
-  return row?.is_admin ? 'admin' : 'user';
 }
 
 function getTables() {
@@ -71,6 +68,7 @@ function catalogUserFromRow(row) {
     username: String(row.username || ''),
     password_hash: row.password_hash || null,
     role: localRoleFromExternal(row),
+    shotflow_role: normalizeShotflowRole(row.shotflow_role),
     active: row.active == null ? true : Boolean(row.active),
     is_admin: Boolean(row.is_admin),
     is_tester: Boolean(row.is_tester),
@@ -123,6 +121,7 @@ async function listExternalCatalogUsers() {
       username: row.username,
       password_hash: row.password_hash || null,
       role: row.role || 'user',
+      shotflow_role: row.role === 'admin' ? 'admin' : 'artist',
       active: Boolean(row.active),
       is_admin: row.role === 'admin',
       is_tester: false,
@@ -140,6 +139,7 @@ async function listExternalCatalogUsers() {
        u.id,
        u.username,
        u.password_hash,
+       u.shotflow_role,
        u.is_admin,
        u.is_tester,
        u.can_4k,
@@ -452,9 +452,9 @@ async function createUserInCatalog({ username, role = 'user', active = true, api
   const { users, runtime, userProjects, projects } = getTables();
   const cleanUsername = normalizeUsername(username, 50);
   const [result] = await pool.query(
-    `INSERT INTO ${users} (username, is_admin, is_tester, can_4k, is_line_producer, api_key)
-     VALUES (?, ?, 0, 0, 0, ?)`,
-    [cleanUsername, role === 'admin' ? 1 : 0, cleanKey]
+    `INSERT INTO ${users} (username, is_admin, is_tester, can_4k, is_line_producer, shotflow_role, api_key)
+     VALUES (?, 0, 0, 0, 0, ?, ?)`,
+    [cleanUsername, role === 'admin' ? 'admin' : 'artist', cleanKey]
   );
   const catalogId = Number(result.insertId);
   await pool.query(
@@ -529,8 +529,8 @@ async function updateUserInCatalog(userId, patch = {}) {
     params.push(normalizeUsername(patch.username, 50));
   }
   if (patch.role !== undefined) {
-    updates.push('is_admin = ?');
-    params.push(patch.role === 'admin' ? 1 : 0);
+    updates.push('shotflow_role = ?');
+    params.push(patch.role === 'admin' ? 'admin' : 'artist');
   }
   if (patch.clearPassword) {
     updates.push('password_hash = NULL');

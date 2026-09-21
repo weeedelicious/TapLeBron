@@ -21,6 +21,7 @@ import {
   useViewport,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { LayoutGrid } from 'lucide-react'
 import { edgesFromNodeReferences, markNodesDeletedByUser, useCanvasStore } from '@/store/canvasStore'
 import {
   clearedImageCompareRefs,
@@ -45,6 +46,7 @@ import { HistoryAssetsPanel, collectHistoryAssets, nodeIncludesHistoryAsset, typ
 import { BottomDock } from './BottomDock'
 import { CindyAssistantPanel } from './CindyAssistantPanel'
 import { CindyModeSelector } from './CindyModeSelector'
+import { OfficialTemplateLibrary } from './OfficialTemplateLibrary'
 import { assetsApi, favoritesApi, historyAssetsApi } from '@/lib/api'
 import { PanoramaViewerModal } from '@/features/panorama/PanoramaViewerModal'
 import { isPanoramaNodeData } from '@/features/panorama/panorama'
@@ -990,6 +992,7 @@ function CanvasDetailZoomControl({
   onZoomOut,
   onZoomIn,
   onFitView,
+  onOpenTemplateLibrary,
 }: {
   zoomPercent: number
   detailActive: boolean
@@ -998,6 +1001,7 @@ function CanvasDetailZoomControl({
   onZoomOut: () => void
   onZoomIn: () => void
   onFitView: () => void
+  onOpenTemplateLibrary: () => void
 }) {
   const clampedZoomPercent = clampValue(zoomPercent, CANVAS_ZOOM_MIN_PERCENT, CANVAS_ZOOM_MAX_PERCENT)
   const rulerValue = canvasZoomToRulerValue(clampedZoomPercent / 100)
@@ -1034,6 +1038,16 @@ function CanvasDetailZoomControl({
         <span className="canvas-detail-zoom-percent">{clampedZoomPercent}%</span>
         <button type="button" className="canvas-detail-zoom-button is-plus" title="放大" aria-label="放大" onClick={onZoomIn}>+</button>
         <button type="button" className="canvas-detail-zoom-button is-fit" title="适应画布" aria-label="适应画布" onClick={onFitView}>⌗</button>
+        <button
+          type="button"
+          className="canvas-detail-template-button"
+          title="官方模板库"
+          aria-label="打开官方模板库"
+          onClick={onOpenTemplateLibrary}
+        >
+          <LayoutGrid size={15} strokeWidth={1.7} />
+          <span>模板库</span>
+        </button>
       </div>
       <div
         className={`canvas-detail-render-pill${detailActive ? '' : ' is-muted'}`}
@@ -1777,6 +1791,7 @@ export function Canvas() {
   const [canvasMenu, setCanvasMenu] = useState<CanvasMenuState | null>(null)
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null)
   const [panoramaPreview, setPanoramaPreview] = useState<{ url: string; name: string } | null>(null)
+  const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false)
   // 资产库 / 共享空间已经搬到左侧停靠栏，不再走 dockPanel（那是底部浮层用的）。
   const [dockPanel, setDockPanel] = useState<'history' | 'shortcuts' | null>(null)
   const [assetDockMode, setAssetDockMode] = useState<AssetDockMode | null>(() => readAssetDockMode())
@@ -3851,6 +3866,7 @@ export function Canvas() {
           onZoomOut={() => applyCanvasZoomPercent(canvasZoomPercent / 1.2)}
           onZoomIn={() => applyCanvasZoomPercent(canvasZoomPercent * 1.2)}
           onFitView={() => showCanvasOverview()}
+          onOpenTemplateLibrary={() => setTemplateLibraryOpen(true)}
         />
 
         <CindyModeSelector />
@@ -3997,6 +4013,10 @@ export function Canvas() {
             name={panoramaPreview.name}
             onClose={() => setPanoramaPreview(null)}
           />
+        )}
+
+        {templateLibraryOpen && (
+          <OfficialTemplateLibrary onClose={() => setTemplateLibraryOpen(false)} />
         )}
 
         {nodeMenu && (

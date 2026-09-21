@@ -125,7 +125,12 @@ function installHarness() {
       this.url = url;
     }
     setRequestHeader(name: string, value: string) {
-      xhrHeaders[name.toLowerCase()] = value;
+      const normalized = name.toLowerCase();
+      // Match browsers: setting the same XHR request header twice appends the
+      // second value instead of replacing the first one.
+      xhrHeaders[normalized] = xhrHeaders[normalized]
+        ? `${xhrHeaders[normalized]}, ${value}`
+        : value;
     }
     addEventListener() {}
     send() {
@@ -192,6 +197,33 @@ describe("令牌必须注入到全部三条网络路径", () => {
     xhr.open("POST", `/api/projects/${PROJECT}/nodes/upsert`);
     xhr.send("{}");
     expect(xhrHeaders[SESSION_HEADER]).toBe(TOKEN);
+  });
+
+  it("does not duplicate a session header already supplied by an upload request", () => {
+    loadScript(`?project=${PROJECT}`, TOKEN);
+    const xhr = new window.XMLHttpRequest();
+    xhr.open("POST", "/api/assets/upload");
+    xhr.setRequestHeader("X-Shotflow-Canvas-Session", TOKEN);
+    const body = new FormData();
+    body.set("projectUuid", PROJECT);
+    xhr.send(body);
+
+    expect(xhrHeaders[SESSION_HEADER]).toBe(TOKEN);
+    expect(xhrSends).toBe(1);
+  });
+
+  it("视频元数据请求带上会话头", async () => {
+    loadScript(`?project=${PROJECT}`, TOKEN);
+    const xhr = new window.XMLHttpRequest();
+    xhr.open(
+      "GET",
+      `/api/media/metadata?projectUuid=${PROJECT}&url=${encodeURIComponent(`/assets/${PROJECT}/video.mp4`)}`,
+    );
+    xhr.send();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(xhrHeaders[SESSION_HEADER]).toBe(TOKEN);
+    expect(xhrSends).toBe(1);
   });
 
   it("EventSource 把令牌放进 URL", () => {
@@ -273,6 +305,18 @@ describe("enter 必须串行，不能并发抢会话", () => {
     await window.fetch(`/api/projects/${PROJECT}/nodes/upsert`, { method: "POST", body: "{}" });
     expect(fetchCalls.some((entry) => entry.url.includes("/access-session/enter"))).toBe(false);
     expect(fetchCalls.some((entry) => entry.url.includes("/nodes/upsert"))).toBe(false);
+  });
+
+  it("template editor explicitly claims a fresh linked-canvas session", async () => {
+    loadScript(`?project=${PROJECT}&claimCanvasSession=1`, "stale-token");
+
+    await vi.waitFor(() => {
+      expect(fetchCalls.filter((entry) => entry.url.includes("/access-session/enter"))).toHaveLength(1);
+      expect(window.sessionStorage.getItem(STORAGE_KEY)).toBe(TOKEN);
+    });
+
+    expect(new URL(window.location.href).searchParams.get("claimCanvasSession")).toBeNull();
+    expect(document.getElementById("shotflow-canvas-blocked")).toBeNull();
   });
 });
 

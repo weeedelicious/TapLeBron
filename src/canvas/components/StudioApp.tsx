@@ -725,7 +725,7 @@ export function StudioApp({ onBack }: Props) {
 
   // ── 设定图：拖入 / 粘贴 / 点选上传 ──────────────────────────────────────
   // 三个入口都汇到 uploadReferenceFiles。文件先过 prepareAssetForUpload（跟画布上传
-  // 同一套：超大图自动压到 10MB 以内，视频超 100MB 直接拒），再上传，成功后往对应
+  // 同一套：超大图自动压到 10MB 以内，视频超 150MB 直接拒），再上传，成功后往对应
   // 分组追加一条、地址填好。
   const [refDragGroup, setRefDragGroup] = useState<string | null>(null)
   const [refFocusGroup, setRefFocusGroup] = useState<string | null>(null)

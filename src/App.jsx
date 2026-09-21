@@ -610,7 +610,7 @@ function Login({ onLogin }) {
     <main className="login-page">
       <section className="login-panel" aria-label="登录">
         <div className="brand-lockup">
-          <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark" />
+          <img src="/shotflow-logo.svg" alt="Shotflow" className="brand-wordmark" />
           <div>
             <h1 style={{ display: 'none' }}>Shotflow</h1>
             <p>节点式创意流程</p>
@@ -1459,7 +1459,7 @@ function AdminPage({ user, onLogout }) {
     <main className="admin-page">
       <header className="admin-page-topbar">
         <div className="app-brand">
-          <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark small" />
+          <img src="/shotflow-logo.svg" alt="Shotflow" className="brand-wordmark small" />
           <div>
             <small>后台管理 · {user.username}</small>
           </div>
@@ -2083,7 +2083,7 @@ function Workbench({ user, onLogout }) {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="app-brand">
-            <img src="/shotflow-logo.png" alt="Shotflow" className="brand-wordmark small" />
+            <img src="/shotflow-logo.svg" alt="Shotflow" className="brand-wordmark small" />
             <div>
               <small>{user.username}</small>
             </div>

@@ -1052,7 +1052,7 @@ app.use((error, req, res, next) => {
   }
 
   if (error.code === 'LIMIT_FILE_SIZE') {
-    res.status(413).json({ error: '视频文件不能超过 100MB' });
+    res.status(413).json({ error: '视频文件不能超过 150MB' });
     return;
   }
 
@@ -1149,7 +1149,7 @@ async function startServer() {
   }
 
   const recovery = await jobService.recoverInterruptedTasks();
-  const resumed = resumePersistedGenerationTasks(recovery.resumableTasks);
+  const resumed = await resumePersistedGenerationTasks(recovery.resumableTasks);
   if (recovery.interruptedCount > 0) {
     console.warn(
       `[startup] interrupted generation tasks: ${recovery.interruptedCount}; ` +

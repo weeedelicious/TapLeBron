@@ -69,6 +69,7 @@ export function resourceMetaFromUploadPayload(
   const displayHeight = Number(meta.displayHeight)
   const displayDurationSec = Number(meta.displayDurationSec)
   const createdAtMs = Number(meta.createdAtMs)
+  const fps = Number(meta.fps ?? meta.frameRate)
 
   return {
     kind: fallbackKind,
@@ -85,6 +86,12 @@ export function resourceMetaFromUploadPayload(
     width: Number.isFinite(width) && width > 0 ? width : undefined,
     height: Number.isFinite(height) && height > 0 ? height : undefined,
     durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : undefined,
+    fps: Number.isFinite(fps) && fps > 0 ? fps : undefined,
+    codecName: typeof meta.codecName === 'string' ? meta.codecName : undefined,
+    codecProfile: typeof meta.codecProfile === 'string' ? meta.codecProfile : undefined,
+    pixelFormat: typeof meta.pixelFormat === 'string' ? meta.pixelFormat : undefined,
+    audioCodecName: typeof meta.audioCodecName === 'string' ? meta.audioCodecName : undefined,
+    formatName: typeof meta.formatName === 'string' ? meta.formatName : undefined,
     createdAtMs: Number.isFinite(createdAtMs) && createdAtMs > 0 ? createdAtMs : Date.now(),
   } as ResourceMeta
 }

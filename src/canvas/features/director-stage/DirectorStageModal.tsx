@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Box, Camera, Cylinder, Eye, EyeOff, Loader2, PersonStanding, Redo2, RotateCcw, Sparkles, Trash2, Undo2, X } from 'lucide-react'
+import { Box, Camera, Cylinder, Download, Eye, EyeOff, Loader2, PersonStanding, Redo2, RotateCcw, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import {
   DEFAULT_JOINT_HANDLE_SCALE,
   DirectorStageThree,
@@ -82,6 +82,8 @@ import {
   type PropKind,
   type StageProp,
 } from './types'
+import { assetsApi } from '@/lib/api'
+import { errorToText } from '@/lib/display'
 import './director-stage.css'
 
 export interface DirectorStageRenderPayload {
@@ -93,6 +95,7 @@ export interface DirectorStageRenderPayload {
 
 interface Props {
   initialState: DirectorStageState
+  projectUuid: string
   nodeName?: string
   /** 连进来的参考图（用来分析姿势）。没连时传 undefined 或 url 为空。 */
   reference?: { url: string; name: string; missing: boolean }
@@ -156,7 +159,7 @@ function Row({ label, value, children }: { label: string; value?: string; childr
   )
 }
 
-export function DirectorStageModal({ initialState, nodeName, reference, busy = false, onCancel, onRender }: Props) {
+export function DirectorStageModal({ initialState, projectUuid, nodeName, reference, busy = false, onCancel, onRender }: Props) {
   const [state, setState] = useState<DirectorStageState>(() => normalizeDirectorStageState(initialState))
   const [tab, setTab] = useState<PanelTab>('camera')
   const [tool, setTool] = useState<StageTool>('slider')
@@ -167,6 +170,10 @@ export function DirectorStageModal({ initialState, nodeName, reference, busy = f
   const [jointHandleScale, setJointHandleScale] = useState(DEFAULT_JOINT_HANDLE_SCALE)
   const [rendering, setRendering] = useState(false)
   const [error, setError] = useState('')
+  const [modelUploading, setModelUploading] = useState(false)
+  const [modelProgress, setModelProgress] = useState(0)
+  const [modelImportPhase, setModelImportPhase] = useState<'uploading' | 'converting'>('uploading')
+  const [modelToSave, setModelToSave] = useState<DirectorStageState['models'][number] | null>(null)
   const viewRef = useRef<DirectorStageThreeHandle>(null)
 
   // ── 从参考图分析姿势 ──────────────────────────────────────────────────────
@@ -341,6 +348,31 @@ export function DirectorStageModal({ initialState, nodeName, reference, busy = f
     commit((current) => ({ ...current, props: current.props.filter((item) => item.id !== propId) }), null)
     setSelectedPropId((current) => (current === propId ? null : current))
   }, [commit])
+
+  const importMaxModel = useCallback(async (file: File) => {
+    if (!/\.max$/i.test(file.name)) { setError('请选择 .max 文件'); return }
+    setModelUploading(true)
+    setModelProgress(0)
+    setModelImportPhase('uploading')
+    setError('')
+    try {
+      const result = await assetsApi.importMaxModel(projectUuid, file, (progress) => {
+        const uploadPercent = Math.max(0, Math.min(100, Math.round(progress)))
+        setModelProgress(uploadPercent)
+        if (uploadPercent >= 100) setModelImportPhase('converting')
+      })
+      const model = result.model
+      commit((current) => ({
+        ...current,
+          models: [...current.models, {
+          id: 'model-' + Date.now(), name: model.name || file.name, sourceUrl: model.url,
+          format: 'fbx' as const, position: [current.models.length * 0.35, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+        }],
+      }), null)
+    } catch (err) {
+      setError(errorToText(err, '3ds Max 模型导入失败'))
+    } finally { setModelUploading(false) }
+  }, [commit, projectUuid])
 
   const resetView = useCallback(() => {
     patchCamera(DEFAULT_DIRECTOR_STAGE_STATE.camera)
@@ -925,6 +957,33 @@ export function DirectorStageModal({ initialState, nodeName, reference, busy = f
                   </div>
                   <p className="director-stage-hint">摆桌子、门框、箱子、柱子 —— 给构图一个空间关系。</p>
 
+                  <label className="director-stage-ghost" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: modelUploading ? 'default' : 'pointer' }}>
+                    {modelUploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                    {modelUploading
+                      ? modelImportPhase === 'uploading'
+                        ? <>上传中 {modelProgress}%</>
+                        : '已上传，3ds Max 转换中…'
+                      : '导入 3ds Max (.max)'}
+                    <input className="nodrag" type="file" accept=".max,application/vnd.autodesk.max" disabled={modelUploading} style={{ display: 'none' }}
+                      onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importMaxModel(file) }} />
+                  </label>
+                  {modelUploading && modelImportPhase === 'converting' && (
+                    <p className="director-stage-hint" data-max-conversion-hint>
+                      正在读取场景并导出 FBX，通常需要 30–90 秒，请勿重复导入或关闭页面。
+                    </p>
+                  )}
+                  {state.models.length > 0 && (
+                    <div className="director-stage-proplist">
+                      {state.models.map((model) => (
+                        <div key={model.id}>
+                          <button type="button" disabled>{model.name} · FBX</button>
+                          <button type="button" className="is-save" onClick={() => setModelToSave(model)} aria-label="保存 FBX 文件"><Download size={13} /></button>
+                          <button type="button" className="is-remove" onClick={() => commit((current) => ({ ...current, models: current.models.filter((item) => item.id !== model.id) }), null)} aria-label="删除模型"><Trash2 size={13} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {state.props.length > 0 && (
                     <>
                       <div className="director-stage-section-title">
@@ -966,6 +1025,21 @@ export function DirectorStageModal({ initialState, nodeName, reference, busy = f
                 </>
               )}
             </div>
+
+            {modelToSave && (
+              <div className="director-stage-save-backdrop" role="dialog" aria-modal="true" aria-label="保存 FBX">
+                <div className="director-stage-save-dialog">
+                  <div className="director-stage-save-title">保存导入的 FBX</div>
+                  <p>将模型文件下载到本机，名称：<strong>{modelToSave.name}</strong></p>
+                  <div className="director-stage-save-actions">
+                    <button type="button" className="director-stage-ghost" onClick={() => setModelToSave(null)}>取消</button>
+                    <a className="director-stage-primary is-compact" href={modelToSave.sourceUrl} download={modelToSave.name || 'model.fbx'} onClick={() => setModelToSave(null)}>
+                      <Download size={14} /> 保存 FBX
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <footer className="director-stage-footer">
               <div className="director-stage-section-title">出图</div>

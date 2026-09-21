@@ -241,6 +241,7 @@ export function DirectorStageNode({ id, data, selected }: Props) {
       {open && (
         <DirectorStageModal
           initialState={stageState}
+          projectUuid={data.projectUuid}
           nodeName={data.name}
           reference={reference}
           busy={busy}

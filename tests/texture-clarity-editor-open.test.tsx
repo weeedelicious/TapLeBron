@@ -41,6 +41,17 @@ const STATUS_SEMANTIC_DOWN = {
   canRepair: false,
   checkedAtMs: 1,
 }
+const STATUS_SEMANTIC_FALLBACK = {
+  semantic: {
+    configured: true,
+    ok: false,
+    fallbackAvailable: true,
+    reason: 'Request failed with status code 500',
+  },
+  geometry: { configured: true, ok: true, reason: '' },
+  canRepair: true,
+  checkedAtMs: 1,
+}
 
 const { TextureClarityEditor } = await import('@/features/texture-clarity/TextureClarityEditor')
 
@@ -189,6 +200,17 @@ describe('细化纹理弹窗打开时不等待', () => {
     // 原始报错留在 title 里给排查用，但不糊在正文上
     expect(hint?.getAttribute('title')).toContain('ETIMEDOUT')
     expect(hint?.textContent).not.toContain('ETIMEDOUT')
+  })
+
+  it('GPU 部位分区故障但本地轮廓可用时继续允许生成，并明确提示降级', async () => {
+    statusMock.mockResolvedValue(STATUS_SEMANTIC_FALLBACK)
+    render()
+    await act(async () => { await Promise.resolve() })
+
+    expect(buttonByText('生成修复')?.disabled).toBe(false)
+    const hint = document.querySelector('.tc-overlay .tc-hint')
+    expect(hint?.textContent).toContain('本地人物轮廓')
+    expect(hint?.textContent).toContain('部位精度会降低')
   })
 
   it('服务都正常时不显示任何告警，也不影响生成', async () => {

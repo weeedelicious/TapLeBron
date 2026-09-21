@@ -42,7 +42,11 @@ function getImageModelRule(model) {
 }
 
 function isGptImageModel(model) {
-  return normalizeImageModel(model) === 'gpt-image-2';
+  return normalizeImageModel(model).startsWith('gpt-image-');
+}
+
+function imageModerationForModel(model) {
+  return isGptImageModel(model) ? 'low' : '';
 }
 
 function isGeminiImageParamModel(model) {
@@ -271,6 +275,7 @@ module.exports = {
   getImageModelRule,
   getImageRatioOptions,
   getImageResolutionOptions,
+  imageModerationForModel,
   imageSizeFromSettings,
   imageSizeForModel,
   isGeminiInteractionsImageModel,

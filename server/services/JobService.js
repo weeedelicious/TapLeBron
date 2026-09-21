@@ -3,6 +3,7 @@ const { getUsagePool } = require('../db');
 const { recordGenerationTaskFailure } = require('./ErrorService');
 const { applyGenerationResult } = require('./GenerationResultApplyService');
 const { isResumableGenerationTask } = require('./GenerationTaskRecovery');
+const { taskUserIdFromRow } = require('./GenerationTaskApiKeyContext');
 
 const tasks = {};
 const pendingPersistence = new Set();
@@ -764,6 +765,7 @@ function activeTaskFromRow(row, outputRows = []) {
     progressPercent: task?.progressPercent ?? Number(row.progress_percent || 0),
     urls: task?.urls ?? [],
     error: task?.error,
+    providerStatus: task?.providerStatus ?? null,
     meta: task?.meta ?? {},
   };
 }
@@ -925,6 +927,7 @@ function recoveryTaskFromRow(row) {
   const rawProviderJobIds = safeJson(row.provider_job_ids, []);
   return {
     jobId: row.job_id,
+    userId: taskUserIdFromRow(row),
     taskType: row.task_type,
     provider: row.provider,
     model: row.model,

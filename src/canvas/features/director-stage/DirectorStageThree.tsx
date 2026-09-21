@@ -16,6 +16,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import {
   DIRECTOR_JOINTS,
   JOINT_BY_ID,
@@ -75,6 +76,20 @@ export function clampJointHandleScale(value: unknown): number {
   return Math.min(MAX_JOINT_HANDLE_SCALE, Math.max(MIN_JOINT_HANDLE_SCALE, num))
 }
 
+/**
+ * Distance required to keep a bounding sphere inside a perspective camera.
+ * Use the narrower of horizontal and vertical FOV: fitting width and height
+ * independently misses corners and model depth, especially in a narrow panel.
+ */
+export function fitDistanceForBoundingSphere(radius: number, verticalFov: number, aspect: number): number {
+  const safeRadius = Math.max(0.001, Number.isFinite(radius) ? radius : 0.001)
+  const safeVerticalFov = Math.max(0.01, Math.min(Math.PI - 0.01, verticalFov))
+  const safeAspect = Math.max(0.05, Number.isFinite(aspect) ? aspect : 1)
+  const horizontalFov = 2 * Math.atan(Math.tan(safeVerticalFov * 0.5) * safeAspect)
+  const limitingHalfFov = Math.max(0.005, Math.min(safeVerticalFov, horizontalFov) * 0.5)
+  return Math.max(0.9, (safeRadius / Math.sin(limitingHalfFov)) * 1.18)
+}
+
 const FIGURE_COLOR = 0xe8e6ef
 const HANDLE_COLOR = 0x7c5cfc
 const HANDLE_ACTIVE_COLOR = 0xffd166
@@ -85,7 +100,7 @@ const PROP_COLOR = 0x9c93b8
 /**
  * MakeHuman 白模（CC0，由 tools/build_mannequin.py 合成）。
  * 同域绝对路径 —— 和 poseEstimator 的 `POSE_MODEL_BASE` 同一个目录，
- * 也和 `/shotflow-logo.png` 一样走 public/，浏览器不需要外网。
+ * 也和 `/shotflow-logo.svg` 一样走 public/，浏览器不需要外网。
  */
 const MANNEQUIN_URL = '/models/mannequin.glb'
 
@@ -111,6 +126,8 @@ interface Runtime {
   skin: THREE.SkinnedMesh | null
   propGroup: THREE.Group
   propMeshes: Map<string, THREE.Mesh>
+  modelGroup: THREE.Group
+  modelObjects: Map<string, THREE.Object3D>
   ground: THREE.Mesh
   grid: THREE.GridHelper
   backdrop: THREE.Mesh
@@ -355,6 +372,33 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
    */
   const cameraLiveRef = useRef(false)
 
+  const fitCameraToContent = useCallback((runtime: Runtime) => {
+    if (runtime.modelGroup.children.length === 0) return
+    runtime.scene.updateMatrixWorld(true)
+    // Imported models replace the posing mannequin in this view. Fit only the
+    // imported scene, otherwise the hidden mannequin still shifts the target.
+    const bounds = new THREE.Box3().setFromObject(runtime.modelGroup)
+    if (bounds.isEmpty()) return
+    const center = bounds.getCenter(new THREE.Vector3())
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere())
+    const hostWidth = Math.max(1, runtime.renderer.domElement.clientWidth)
+    const hostHeight = Math.max(1, runtime.renderer.domElement.clientHeight)
+    const aspect = hostWidth / hostHeight
+    const fov = focalToFovDeg(clampFocalMm(stateRef.current.camera.focalMm)) * DEG
+    const distance = fitDistanceForBoundingSphere(sphere.radius, fov, aspect)
+    const current = stateRef.current.camera
+    const target: [number, number, number] = [center.x, center.y, center.z]
+    const next = { ...current, target, distance }
+    applyingCameraRef.current = true
+    const [x, y, z] = orbitToPosition(next)
+    runtime.camera.position.set(x, y, z)
+    runtime.orbit.target.set(...target)
+    runtime.orbit.update()
+    applyingCameraRef.current = false
+    cameraLiveRef.current = true
+    callbacksRef.current.onCameraChange(next)
+  }, [])
+
   stateRef.current = state
   toolRef.current = tool
   selectedJointRef.current = selectedJoint
@@ -398,7 +442,7 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
       } finally {
         runtime.transform.getHelper().visible = gizmoWasVisible
         runtime.handles.forEach((handle, index) => {
-          handle.visible = showJointHandlesRef.current
+          handle.visible = stateRef.current.models.length === 0 && showJointHandlesRef.current
           ;(handle.material as THREE.Material).opacity = handleOpacity[index]
         })
         runtime.fingerHandles.forEach((handle, index) => {
@@ -476,6 +520,9 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
     const propGroup = new THREE.Group()
     propGroup.name = 'director-props'
     scene.add(propGroup)
+    const modelGroup = new THREE.Group()
+    modelGroup.name = 'director-models'
+    scene.add(modelGroup)
 
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.enableDamping = true
@@ -508,7 +555,7 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
     const runtime: Runtime = {
       renderer, scene, camera, orbit, transform, figure, joints, handles, fingerHandles,
       shapeMeshes, bodyMaterial, skin: null,
-      propGroup, propMeshes: new Map(), ground, grid, backdrop, raycaster,
+      propGroup, propMeshes: new Map(), modelGroup, modelObjects: new Map(), ground, grid, backdrop, raycaster,
       frameId: 0, resize,
     }
     runtimeRef.current = runtime
@@ -523,6 +570,7 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
         runtime.skin.geometry.dispose()
         runtime.skin = null
       }
+      if (runtimeRef.current === runtime && runtime.modelGroup.children.length > 0) fitCameraToContent(runtime)
     })
 
     // ── 相机：拖的过程中就把结果读回状态（出图 / 下次打开接着用）────────────
@@ -825,10 +873,63 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
     }
   }, [state.props])
 
+  // Native .max files are converted to FBX on the 4090. Load the browser-safe
+  // FBX here and normalize its units so a Max scene fits the director stage.
+  useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    const wanted = new Map(state.models.map((model) => [model.id, model]))
+    for (const [id, object] of runtime.modelObjects) {
+      if (wanted.has(id)) continue
+      runtime.modelGroup.remove(object)
+      disposeObject(object)
+      runtime.modelObjects.delete(id)
+    }
+    let cancelled = false
+    const loader = new FBXLoader()
+    for (const model of state.models) {
+      if (runtime.modelObjects.has(model.id)) {
+        const object = runtime.modelObjects.get(model.id)!
+        object.position.set(...model.position)
+        object.rotation.set(model.rotation[0] * DEG, model.rotation[1] * DEG, model.rotation[2] * DEG)
+        object.scale.set(...model.scale)
+        continue
+      }
+      loader.load(model.sourceUrl, (object) => {
+        if (cancelled) { disposeObject(object); return }
+        object.name = 'model:' + model.id
+        object.userData.modelId = model.id
+        const bounds = new THREE.Box3().setFromObject(object)
+        const size = bounds.getSize(new THREE.Vector3())
+        const center = bounds.getCenter(new THREE.Vector3())
+        const maxDim = Math.max(size.x, size.y, size.z, 0.001)
+        object.position.set(-center.x * (2.2 / maxDim), -bounds.min.y * (2.2 / maxDim), -center.z * (2.2 / maxDim))
+        object.scale.setScalar(2.2 / maxDim)
+        object.traverse((child) => {
+          const mesh = child as THREE.Mesh
+          if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true }
+        })
+        runtime.modelGroup.add(object)
+        runtime.modelObjects.set(model.id, object)
+        // An imported Max/FBX scene replaces the posing mannequin.
+        runtime.figure.visible = false
+        object.position.x += model.position[0]
+        object.position.y += model.position[1]
+        object.position.z += model.position[2]
+        object.rotation.set(model.rotation[0] * DEG, model.rotation[1] * DEG, model.rotation[2] * DEG)
+        object.scale.multiply(new THREE.Vector3(...model.scale))
+        fitCameraToContent(runtime)
+      }, undefined, (error) => console.warn('[三维空间] FBX 加载失败', model.sourceUrl, error))
+    }
+    return () => { cancelled = true }
+  }, [fitCameraToContent, state.models])
+
   // ── 选中项 → 手柄高亮 + gizmo 挂到谁身上 ──────────────────────────────────
   useEffect(() => {
     const runtime = runtimeRef.current
     if (!runtime) return
+    const hasImportedModel = state.models.length > 0
+    runtime.figure.visible = !hasImportedModel
     for (const handle of runtime.handles) {
       const active = handle.userData.jointId === selectedJoint
       const material = handle.material as THREE.MeshBasicMaterial
@@ -837,14 +938,14 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
       )
       material.opacity = active ? 0.95 : 0.5
       handle.scale.setScalar(clampJointHandleScale(jointHandleScale) * (active ? 1.25 : 1))
-      handle.visible = showJointHandles
+      handle.visible = !hasImportedModel && showJointHandles
     }
 
     for (const handle of runtime.fingerHandles) {
       const jointId = handle.userData.jointId as JointId
       const chain = fingerIkChainFor(jointId)
       const active = selectedJoint != null && (jointId === selectedJoint || chain?.effector === selectedJoint || chain?.links.includes(selectedJoint) === true)
-      handle.visible = showJointHandles && tool === 'finger'
+      handle.visible = !hasImportedModel && showJointHandles && tool === 'finger'
       const material = handle.material as THREE.MeshBasicMaterial
       material.color.set(active ? HANDLE_ACTIVE_COLOR : FINGER_HANDLE_COLOR)
       material.opacity = active ? 0.95 : 0.55
@@ -867,7 +968,7 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
         return
       }
     }
-    if (showJointHandles && tool === 'rotate' && selectedJoint && runtime.joints[selectedJoint]) {
+    if (showJointHandles && tool === 'rotate' && selectedJoint && runtime.joints[selectedJoint] && !hasImportedModel) {
       runtime.transform.attach(runtime.joints[selectedJoint])
       runtime.transform.setMode('rotate')
       runtime.transform.setSpace('local')
@@ -879,7 +980,7 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
     }
     runtime.transform.detach()
     runtime.transform.getHelper().visible = false
-  }, [selectedJoint, selectedPropId, tool, propTool, state.props, showJointHandles, jointHandleScale])
+  }, [selectedJoint, selectedPropId, tool, propTool, state.props, state.models.length, showJointHandles, jointHandleScale])
 
   const onContextMenu = useCallback((event: React.MouseEvent) => {
     // 画布右键要留给浏览器（见 lib/canvasContextMenu.ts），这里只挡住上游的节点菜单

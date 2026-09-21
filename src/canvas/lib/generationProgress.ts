@@ -1,4 +1,5 @@
 import type { CanvasNodeData, ImageParams, TaskInfo, VideoParams } from './types'
+import { getImageProgressEstimate } from './imageRules'
 
 export type GenerationTaskKind = 'image' | 'video' | 'video_merge' | 'text' | 'other'
 
@@ -37,12 +38,52 @@ function refCount(params: { imageList?: unknown[]; videoList?: unknown[]; mixedL
   )
 }
 
+function frameInterpolationEstimate(params: Partial<VideoParams>): GenerationEstimate | null {
+  const raw = (params as Record<string, unknown>).frameInterpolation
+  if (!raw || typeof raw !== 'object') return null
+  const settings = raw as Record<string, unknown>
+  const duration = clamp(Number(settings.durationSec ?? settings.duration ?? 5) || 5, 0.2, 6 * 60 * 60)
+  const sourceFps = Math.max(1, Number(settings.sourceFps ?? 24) || 24)
+  const targetFps = Math.max(sourceFps + 0.01, Number(settings.targetFps ?? 30) || 30)
+  const frameFactor = clamp(targetFps / sourceFps, 1, 5)
+  const resolutionFactor = resolutionMultiplier(settings.resolution)
+  // MCI is CPU-heavy and can be much slower than a provider request. Keep a
+  // deliberately conservative estimate so the elapsed/remaining text does
+  // not reach zero while a long 4K interpolation is still running.
+  const estimatedMs = (28 + duration * 11 * frameFactor * resolutionFactor) * SECOND
+  return {
+    taskKind: 'video',
+    model: 'ffmpeg-minterpolate',
+    quantity: 1,
+    estimatedMs: clamp(Math.round(estimatedMs), 20 * SECOND, 6 * 60 * 60 * 1000),
+  }
+}
+
 function estimateImageTask(data: CanvasNodeData): GenerationEstimate {
   const params = (data.params ?? {}) as unknown as Partial<ImageParams>
   const model = String(params.model || data.generatorType || 'image')
   const modelKey = normalizeText(model)
   const count = clamp(Number(params.count || 1), 1, 8)
   const settings = params.settings ?? { ratio: '16:9', resolution: '1K' }
+  const imageReferences = Array.isArray(params.imageList) ? params.imageList.length : 0
+  const configuredEstimate = getImageProgressEstimate(model)
+
+  if (configuredEstimate) {
+    const baseSeconds = imageReferences > 0
+      ? configuredEstimate.image2imageSeconds
+      : configuredEstimate.text2imageSeconds
+    const resolutionFactor = Number(configuredEstimate.resolutionMultipliers?.[String(settings.resolution || '1K')]) || 1
+    const countFactor = 1 + Math.max(0, count - 1) * Number(configuredEstimate.extraOutputMultiplier || 0)
+    const referenceFactor = 1 + Math.max(0, imageReferences - 1) * Number(configuredEstimate.extraReferenceMultiplier || 0)
+    const estimatedMs = Math.round(baseSeconds * SECOND * resolutionFactor * countFactor * referenceFactor)
+
+    return {
+      taskKind: 'image',
+      model,
+      quantity: count,
+      estimatedMs: clamp(estimatedMs, 10 * SECOND, 12 * 60 * SECOND),
+    }
+  }
 
   let baseMs = 72 * SECOND
   if (modelKey.includes('gpt') || modelKey.includes('image 2')) baseMs = 105 * SECOND
@@ -63,6 +104,8 @@ function estimateImageTask(data: CanvasNodeData): GenerationEstimate {
 
 function estimateVideoTask(data: CanvasNodeData): GenerationEstimate {
   const params = (data.params ?? {}) as unknown as Partial<VideoParams>
+  const interpolationEstimate = frameInterpolationEstimate(params)
+  if (interpolationEstimate) return interpolationEstimate
   const model = String(params.model || data.generatorType || 'Seedance 2.0')
   const settings = params.settings ?? { ratio: '16:9', resolution: '720P', duration: 5, enableSound: 'off' }
   const duration = clamp(Number(settings.duration || 5), 1, 60)
@@ -131,8 +174,14 @@ export function displayGenerationProgress(taskInfo?: Partial<TaskInfo> | null, n
     ? 6 + elapsedRatio * 86
     : 92 + Math.min(4, (elapsedRatio - 1) * 2.5)
   const percent = clamp(Math.max(serverProgress, timeProgress), 3, taskInfo?.loading ? 96 : 100)
-  const remainingFromPercent = percent > 4 ? elapsedMs * (100 / percent - 1) : estimatedMs - elapsedMs
-  const remainingMs = Math.max(0, Math.min(Math.max(estimatedMs - elapsedMs, 0), remainingFromPercent))
+  const remainingFromEstimate = Math.max(estimatedMs - elapsedMs, 0)
+  // timeProgress intentionally starts at 6% so the UI never looks frozen. Do not
+  // treat that synthetic head start as measured provider progress when deriving ETA.
+  const serverProgressLeads = serverProgress >= 10 && serverProgress > timeProgress + 0.5
+  const remainingFromServer = serverProgressLeads && elapsedMs > 0
+    ? Math.max(0, elapsedMs * (100 / serverProgress - 1))
+    : remainingFromEstimate
+  const remainingMs = Math.max(0, Math.min(remainingFromEstimate, remainingFromServer))
 
   return { percent: Math.round(percent), elapsedMs, remainingMs, estimatedMs }
 }

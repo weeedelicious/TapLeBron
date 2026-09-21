@@ -1,6 +1,11 @@
 node_modules/
 dist/
 data/
+__pycache__/
+*.py[cod]
+!server/data/
+server/data/*
+!server/data/official-template-library.json
 projects/
 server/config.json
 
@@ -9,6 +14,8 @@ server/config.json
 tmp/
 tmp-*/
 tmp-*.*
+tmp_*/
+tmp_*.*
 deploy-backups/
 dist.*
 shotflow-deploy-*.tar.gz
@@ -16,8 +23,26 @@ shotflow-deploy-*.tar.gz
 # 生产备份（画布数据、被替换掉的脚本），不进仓库。
 backups/
 
-# 线上静态资源与发布入口 HTML，靠 tools/push.py 直传生产，不走 git。
-public/
+# AI 高清增强 worker 的本机模型、可执行文件和任务缓存。
+services/media-enhance-worker/runtime/
+services/media-enhance-worker/work/
+
+# 线上构建产物仍由 tools/push.py 发布；只把可维护的静态源文件纳入 Git。
+public/*
+!public/admin.css
+!public/admin.html
+!public/admin.js
+!public/favicon.ico
+!public/shotflow-icon.svg
+!public/shotflow-logo.svg
+!public/home/
+public/home/*
+!public/home/index.html
+!public/home/vendor/
+!public/home/vendor/*.min.js
+!public/models/
+public/models/*
+!public/models/mannequin.glb
 
 # 改动前的原文件备份，只在本机有意义。
 *.bak

@@ -1,7 +1,8 @@
 const express = require('express');
 const fs = require('fs');
+const config = require('../config');
 const { requirePluginScope } = require('../auth');
-const { persistUploadedAsset } = require('../canvasRoutes');
+const { apiRouter, persistUploadedAsset } = require('../canvasRoutes');
 const {
   createPluginToken,
   listPluginTokens,
@@ -14,9 +15,18 @@ const {
   createCanvasForPlugin,
   createUploadNodeForPlugin,
   getCanvasSummary,
+  getGenerationNodeForPlugin,
   listCanvasesForPlugin,
   updateNodeForPlugin,
 } = require('../services/PluginCanvasService');
+const {
+  completeStart,
+  createPlan,
+  failStart,
+  getJobForPlugin,
+  hasScope,
+  prepareStart,
+} = require('../services/PluginGenerationService');
 const {
   cancelPluginUploadIntent,
   createPluginUploadIntent,
@@ -34,6 +44,76 @@ function asyncRoute(handler) {
 
 function requestBody(req) {
   return req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+}
+
+function forwardGenerationToCanvasApi(req, res, next, prepared) {
+  return new Promise((resolve, reject) => {
+    const originalUrl = req.url;
+    const originalBody = req.body;
+    const originalJson = res.json.bind(res);
+    let settled = false;
+
+    const finish = () => {
+      req.url = originalUrl;
+      req.body = originalBody;
+      res.json = originalJson;
+    };
+
+    res.json = (payload) => {
+      if (settled) return res;
+      settled = true;
+      const success = res.statusCode >= 200 && res.statusCode < 300 && payload && payload.jobId;
+      const persistence = success
+        ? completeStart({
+            userId: req.user.id,
+            canvasId: prepared.loaded.canvas.id,
+            planId: prepared.plan.plan_id,
+            idempotencyKey: prepared.idempotencyKey,
+            jobId: payload.jobId,
+            response: payload,
+          })
+        : failStart({
+            userId: req.user.id,
+            canvasId: prepared.loaded.canvas.id,
+            idempotencyKey: prepared.idempotencyKey,
+            errorCode: payload?.errorCode || 'GENERATION_START_FAILED',
+          });
+      void Promise.resolve(persistence).then(() => {
+        finish();
+        originalJson(payload);
+        resolve();
+      }, (error) => {
+        finish();
+        reject(error);
+      });
+      return res;
+    };
+
+    req.url = `/generate/${prepared.kind}`;
+    req.body = {
+      projectUuid: prepared.loaded.canvas.id,
+      nodeKey: prepared.loaded.node.key,
+      params: prepared.params,
+    };
+    apiRouter.handle(req, res, (error) => {
+      if (settled) return;
+      settled = true;
+      void failStart({
+        userId: req.user.id,
+        canvasId: prepared.loaded.canvas.id,
+        idempotencyKey: prepared.idempotencyKey,
+        errorCode: error?.code || 'GENERATION_START_FAILED',
+      }).finally(() => {
+        finish();
+        if (error) reject(error);
+        else {
+          const notFound = new Error('Generation dispatcher route not found');
+          notFound.statusCode = 500;
+          reject(notFound);
+        }
+      });
+    });
+  }).catch(next);
 }
 
 pluginTokenRouter.get(
@@ -81,7 +161,13 @@ shotflowPluginRouter.get('/status', requirePluginScope('read'), (req, res) => {
       read: true,
       canvasWrite: req.pluginAuth.scopes.includes('canvas:write'),
       assetUpload: req.pluginAuth.scopes.includes('canvas:write'),
-      generate: false,
+      generate: config.generation.pluginEnabled && (
+        hasScope(req.pluginAuth.scopes, 'generate:image') || hasScope(req.pluginAuth.scopes, 'generate:video')
+      ),
+      generateImage: config.generation.pluginEnabled && config.generation.imageEnabled
+        && hasScope(req.pluginAuth.scopes, 'generate:image'),
+      generateVideo: config.generation.pluginEnabled && config.generation.videoEnabled
+        && hasScope(req.pluginAuth.scopes, 'generate:video'),
       delete: false,
     },
   });
@@ -209,6 +295,64 @@ shotflowPluginRouter.patch(
     res.json(await updateNodeForPlugin(req.user.id, req.params.id, req.params.nodeKey, {
       patch: body.patch,
       expectedRevision: body.expectedRevision,
+    }));
+  })
+);
+
+shotflowPluginRouter.get(
+  '/canvases/:id/nodes/:nodeKey',
+  requirePluginScope('read'),
+  asyncRoute(async (req, res) => {
+    res.json(await getGenerationNodeForPlugin(req.user.id, req.params.id, req.params.nodeKey));
+  })
+);
+
+shotflowPluginRouter.post(
+  '/canvases/:id/nodes/:nodeKey/generation-plans',
+  requirePluginScope('read'),
+  asyncRoute(async (req, res) => {
+    res.status(201).json(await createPlan({
+      userId: req.user.id,
+      tokenId: req.pluginAuth.id,
+      scopes: req.pluginAuth.scopes,
+      canvasId: req.params.id,
+      nodeKey: req.params.nodeKey,
+    }));
+  })
+);
+
+shotflowPluginRouter.post(
+  '/canvases/:id/nodes/:nodeKey/generations',
+  requirePluginScope('read'),
+  asyncRoute(async (req, res, next) => {
+    const body = requestBody(req);
+    const prepared = await prepareStart({
+      userId: req.user.id,
+      tokenId: req.pluginAuth.id,
+      scopes: req.pluginAuth.scopes,
+      canvasId: req.params.id,
+      nodeKey: req.params.nodeKey,
+      planId: body.planId,
+      confirmBillable: body.confirmBillable,
+      idempotencyKey: body.idempotencyKey,
+      maxCost: body.maxCost,
+    });
+    if (prepared.replay) {
+      res.json({ ...(prepared.response || {}), replayed: true });
+      return;
+    }
+    await forwardGenerationToCanvasApi(req, res, next, prepared);
+  })
+);
+
+shotflowPluginRouter.get(
+  '/canvases/:id/jobs/:jobId',
+  requirePluginScope('read'),
+  asyncRoute(async (req, res) => {
+    res.json(await getJobForPlugin({
+      userId: req.user.id,
+      canvasId: req.params.id,
+      jobId: req.params.jobId,
     }));
   })
 );

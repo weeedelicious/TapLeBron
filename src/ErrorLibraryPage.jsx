@@ -220,7 +220,7 @@ export default function ErrorLibraryPage({ user, onLogout }) {
     <main className="error-library-page">
       <header className="error-library-topbar">
         <div className="error-library-brand">
-          <img src="/shotflow-mark.svg" alt="" />
+          <img src="/shotflow-icon.svg" alt="" />
           <div>
             <strong>节点报错库</strong>
             <span>独立数据库 · 仅吴逸翔可见</span>

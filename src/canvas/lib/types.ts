@@ -29,6 +29,13 @@ export interface ResourceMeta {
   hashSha1?: string;
   extension?: string;
   createdAtMs?: number;
+  /** 视频媒体探测字段；用于补帧目标帧率和 RV 兼容信息。 */
+  fps?: number;
+  codecName?: string;
+  codecProfile?: string;
+  pixelFormat?: string;
+  audioCodecName?: string;
+  formatName?: string;
 }
 
 export interface NodeRef {
@@ -228,6 +235,44 @@ export interface AssetGenerationMeta {
   taskId?: string;
   generationVersion?: number;
   outputIndex?: number;
+  /** 派生视频 / 补帧输出的媒体与质量元数据。 */
+  fps?: number;
+  sourceFps?: number;
+  targetFps?: number;
+  codecName?: string;
+  codecProfile?: string;
+  pixelFormat?: string;
+  audioCodecName?: string;
+  formatName?: string;
+  frameInterpolation?: boolean;
+  interpolationProvider?: string;
+  /** RealSR、NVIDIA RTX 视频超分、SeedVR2 或 FlashVSR 增强产物。 */
+  mediaEnhance?: boolean;
+  enhanceMode?: "faithful" | "generative" | "nvidia-vsr" | "flashvsr";
+  enhanceProvider?: string;
+  enhanceModel?: string;
+  generativeDetails?: boolean;
+  scale?: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  outputWidth?: number;
+  outputHeight?: number;
+  frameCount?: number;
+  boundaryFramesVerified?: boolean;
+  imageTta?: boolean;
+  videoTta?: boolean;
+  qualityMode?: string;
+  crf?: number;
+  preset?: string;
+  colorCorrection?: string;
+  batchSize?: number;
+  uniformBatchSize?: boolean;
+  temporalOverlap?: number;
+  prependFrames?: number;
+  seedvr2Commit?: string;
+  nvidiaVfxVersion?: string;
+  nvidiaVsrQuality?: string;
+  contentFramesVerified?: boolean;
 }
 
 export interface CanvasNodeData extends Record<string, unknown> {
@@ -417,6 +462,7 @@ export interface CanvasOwnerOption {
 
 export interface ProjectGroups {
   ownCanvases: ProjectIndex[];
+  officialTemplateCanvases: ProjectIndex[];
   templateCanvases: ProjectIndex[];
   sharedCanvases: ProjectIndex[];
   personalSharedCanvases: ProjectIndex[];

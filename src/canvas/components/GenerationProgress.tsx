@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { TaskInfo } from '@/lib/types'
 import { displayGenerationProgress, formatGenerationDuration } from '@/lib/generationProgress'
+import { getImageModelDisplayName } from '@/lib/imageRules'
 
 interface GenerationProgressProps {
   taskInfo?: Partial<TaskInfo> | null
@@ -33,7 +34,7 @@ export function GenerationProgress({
 
   const progress = displayGenerationProgress(taskInfo, now)
   const percent = progress.percent
-  const model = typeof taskInfo?.model === 'string' ? taskInfo.model : ''
+  const model = getImageModelDisplayName(typeof taskInfo?.model === 'string' ? taskInfo.model : '')
   const quantity = Math.max(1, Math.floor(Number(taskInfo?.quantity) || 1))
   const quantityBadge = quantity > 1 ? `*${quantity}` : ''
   const overEstimate = Boolean(taskInfo?.loading && progress.remainingMs <= 0 && progress.elapsedMs >= progress.estimatedMs)

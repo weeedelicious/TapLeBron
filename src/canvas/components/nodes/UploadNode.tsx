@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState, useEffect } from 'react'
 import { addEdge } from '@xyflow/react'
-import { Crop as CropIcon, Download, Expand, Globe2, Grid3X3, Lightbulb, Loader2, Paintbrush, Palette, ScanLine, SquarePen, Wand2 } from 'lucide-react'
+import { Crop as CropIcon, Download, Expand, Globe2, Grid3X3, Lightbulb, Loader2, Paintbrush, Palette, ScanLine, Sparkles, SquarePen, Wand2 } from 'lucide-react'
 import { MediaNodeToolbar, type MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { LightStageModal, type LightStageAcceptPayload } from '@/features/light-stage/LightStageModal'
 import { LIGHT_STAGE_MODEL, readLightStageState } from '@/features/light-stage/types'
 import { useImageRepaint } from '@/features/image-repaint/useImageRepaint'
 import { usePanoramaGeneration } from '@/features/panorama/usePanoramaGeneration'
 import { useSubjectMatting } from '@/features/subject-matting/useSubjectMatting'
+import { useMediaEnhance } from '@/features/media-enhance/useMediaEnhance'
 import { TextureClarityEditor } from '@/features/texture-clarity/TextureClarityEditor'
 import { startTextureClarityRepair } from '@/features/texture-clarity/textureClarityJob'
 import { ImageGridConfirmModal } from '@/components/ImageGridConfirmModal'
@@ -132,6 +133,22 @@ export function UploadNode({ id, data, selected }: Props) {
   const previewAspectH = hasImage ? (imgSize?.h ?? 3) : hasVideo ? (videoSize?.h ?? 9) : 3
   const previewFrame = fitFrameToAspect(previewAspectW, previewAspectH, 520, 400, 220)
   const shellWidth = hasImage || hasVideo ? previewFrame.width : 240
+  const resourceItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
+  const mainResourceMeta = resourceItems.find((item) => (
+    item?.originalUrl === mainUrl || item?.displayUrl === mainUrl
+  )) ?? resourceItems.find((item) => item?.kind === (hasVideo ? 'video' : 'image'))
+  const mediaEnhance = useMediaEnhance({
+    id,
+    data,
+    sourceUrl: hasImage || hasVideo ? mainUrl : '',
+    sourceName: data.name,
+    mediaType: hasVideo ? 'video' : 'image',
+    shellWidth,
+    sourceWidth: Number(mainResourceMeta?.width || mainResourceMeta?.displayWidth || (hasVideo ? videoSize?.w : imgSize?.w) || 0) || undefined,
+    sourceHeight: Number(mainResourceMeta?.height || mainResourceMeta?.displayHeight || (hasVideo ? videoSize?.h : imgSize?.h) || 0) || undefined,
+    sourceFps: Number(mainResourceMeta?.fps || 0) || undefined,
+    sourceDurationSec: Number(mainResourceMeta?.durationSec || mainResourceMeta?.displayDurationSec || 0) || undefined,
+  })
   const panorama = usePanoramaGeneration({
     id,
     data,
@@ -803,6 +820,15 @@ export function UploadNode({ id, data, selected }: Props) {
       onClick: panorama.isPanorama ? panorama.openViewer : panorama.openGenerator,
       disabled: panorama.submitting || !mainUrl,
     }] : []),
+    ...((hasImage || hasVideo) ? [{
+      key: 'media-enhance',
+      label: mediaEnhance.submitting ? '正在创建高清增强' : 'AI 高清增强',
+      icon: mediaEnhance.submitting
+        ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+        : <Sparkles size={14} strokeWidth={1.9} />,
+      onClick: mediaEnhance.openModal,
+      disabled: mediaEnhance.submitting || !mainUrl,
+    }] : []),
     {
       key: 'download',
       label: '下载',
@@ -992,6 +1018,7 @@ export function UploadNode({ id, data, selected }: Props) {
         {panorama.viewer}
         {repaint.modal}
         {subjectMatting.modal}
+        {mediaEnhance.modal}
         {cropOpen && hasImage && (
           <ImageCropModal
             sourceName={data.name}

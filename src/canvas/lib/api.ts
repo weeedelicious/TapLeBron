@@ -26,6 +26,13 @@ import { prepareAssetForUpload } from "./uploadPrep";
 const http = axios.create({ baseURL: "/api" });
 const pendingGenerationErrorKey = "shotflow.pending-generation-errors.v1";
 
+/** Add the exclusive canvas-session token to upload calls as a fallback for Cindy preview pages. */
+function canvasSessionHeaders(projectUuid: string): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = window.sessionStorage.getItem("shotflow.canvas-session.v1:" + projectUuid) || "";
+  return token ? { "X-Shotflow-Canvas-Session": token } : {};
+}
+
 type GenerationErrorReport = {
   clientRequestId: string;
   taskId?: string;
@@ -246,17 +253,53 @@ export interface CanvasUserSharesResponse {
   sharedUserIds: string[];
 }
 
+export type OfficialTemplateCategory = "image" | "video" | "3d";
+
+export interface OfficialTemplateItem {
+  id: string;
+  category: OfficialTemplateCategory;
+  categories: OfficialTemplateCategory[];
+  title: string;
+  subtitle: string;
+  thumbnailUrl: string;
+  method: string;
+  canvasId: string;
+  tone: string;
+  nodes: Array<{ type: string; label: string }>;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+}
+
+export const officialTemplatesApi = {
+  list: () =>
+    http
+      .get<{ items: OfficialTemplateItem[]; canEdit: boolean }>("/official-templates")
+      .then((response) => response.data),
+  source: (id: string) =>
+    http
+      .get<Project>(`/official-templates/${encodeURIComponent(id)}/source`)
+      .then((response) => response.data),
+  create: (item: Omit<OfficialTemplateItem, "id" | "canvasId" | "createdAtMs" | "updatedAtMs">) =>
+    http
+      .post<{ item: OfficialTemplateItem }>("/official-templates", item)
+      .then((response) => response.data.item),
+  update: (id: string, item: Partial<OfficialTemplateItem>) =>
+    http
+      .patch<{ item: OfficialTemplateItem }>(`/official-templates/${encodeURIComponent(id)}`, item)
+      .then((response) => response.data.item),
+};
+
 export const projectsApi = {
   /**
    * 画布管理页的列表。
    *
-   * skipGroups 传哪一组，服务端就不去查那一组（返回空数组）：管理页右栏「画布模版」
-   * 「共享画布」默认收起，收起时不该为它们付一次查询 + 每行一次建目录的代价。
+   * skipGroups 传哪一组，服务端就不去查那一组（返回空数组）：管理页右栏「官方画布模板」
+   * 「画布模版」「共享画布」默认收起，收起时不该为它们付一次查询 + 每行一次建目录的代价。
    * 不传就是全返回，跟以前一字不差。
    */
   list: (
     ownerId?: string | null,
-    skipGroups?: Array<"templates" | "shared" | "personalShared">,
+    skipGroups?: Array<"officialTemplates" | "templates" | "shared" | "personalShared">,
   ) =>
     http
       .get<ProjectGroups>("/projects", {
@@ -421,12 +464,26 @@ export interface ActiveGenerationTask {
   progressPercent: number;
   urls?: string[];
   error?: string;
+  providerStatus?: Record<string, unknown> | null;
   meta?: {
     model?: string;
     resolution?: string;
     durationSec?: number;
     quantity?: number;
     generationVersion?: number;
+    outputs?: Array<{
+      index: number;
+      url: string;
+      assetId?: number | null;
+      mimeType?: string;
+      width?: number;
+      height?: number;
+      durationSec?: number;
+      model?: string;
+      resolution?: string;
+      isPrimary?: boolean;
+      metadata?: Record<string, unknown> | null;
+    }>;
     createdAt?: string;
     updatedAt?: string;
     [key: string]: unknown;
@@ -537,6 +594,7 @@ export const generateApi = {
         } | null;
         meta?: {
           model?: string;
+          mode?: string;
           resolution?: string;
           generationVersion?: number;
           applyStatus?:
@@ -822,6 +880,63 @@ export const toolboxApi = {
         },
       )
       .then((r) => r.data),
+  videoFrameInterpolation: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    targetFps: number,
+    method: 'quality' | 'openflowframes' | 'video2x',
+    sourceNodeKey?: string,
+  ) =>
+    http
+      .post<{
+        jobId: string;
+        generationVersion?: number;
+        sourceMeta?: Record<string, unknown>;
+        targetFps?: number;
+        method?: string;
+        provider?: string;
+        model?: string;
+        quality?: Record<string, unknown>;
+      }>('/toolbox/video-frame-interpolation', {
+        projectUuid,
+        nodeKey,
+        sourceUrl,
+        targetFps,
+        method,
+        sourceNodeKey,
+      })
+      .then((r) => r.data),
+  mediaEnhance: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    mediaType: 'image' | 'video',
+    scale: 2 | 4,
+    enhanceMode: 'faithful' | 'generative' | 'nvidia-vsr' | 'flashvsr',
+    sourceNodeKey?: string,
+  ) =>
+    http
+      .post<{
+        jobId: string;
+        generationVersion?: number;
+        mediaType: 'image' | 'video';
+        scale: 2 | 4;
+        enhanceMode: 'faithful' | 'generative' | 'nvidia-vsr' | 'flashvsr';
+        sourceMeta?: Record<string, unknown>;
+        outputMeta?: Record<string, unknown>;
+        provider?: string;
+        model?: string;
+      }>('/toolbox/media-enhance', {
+        projectUuid,
+        nodeKey,
+        sourceUrl,
+        mediaType,
+        scale,
+        enhanceMode,
+        sourceNodeKey,
+      })
+      .then((r) => r.data),
 };
 
 export const historyAssetsApi = {
@@ -834,6 +949,27 @@ export const historyAssetsApi = {
 };
 
 export const assetsApi = {
+  importMaxModel: async (
+    projectUuid: string,
+    file: File,
+    onProgress?: (pct: number) => void,
+  ) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('projectUuid', projectUuid);
+    return http.post<{
+      url: string;
+      originalName?: string;
+      sha1: string;
+      meta: Record<string, unknown>;
+      model: { url: string; name: string; format: 'fbx' };
+      conversionJobId: string;
+    }>('/director-stage/import-max', fd, {
+      headers: { 'Content-Type': 'multipart/form-data', ...canvasSessionHeaders(projectUuid) },
+      timeout: 35 * 60 * 1000,
+      onUploadProgress: (e) => { if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100)); },
+    }).then((r) => r.data);
+  },
   upload: async (
     projectUuid: string,
     file: File,
@@ -857,7 +993,7 @@ export const assetsApi = {
         sha1: string;
         meta: Record<string, unknown>;
       }>("/assets/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data", ...canvasSessionHeaders(projectUuid) },
         onUploadProgress: (e) => {
           if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100));
         },
@@ -894,6 +1030,12 @@ export const assetsApi = {
       .post<{ url: string; copied: boolean }>("/assets/copy", {
         projectUuid,
         sourceUrl,
+      })
+      .then((r) => r.data),
+  metadata: (projectUuid: string, sourceUrl: string) =>
+    http
+      .get<{ meta: Record<string, unknown> }>("/media/metadata", {
+        params: { projectUuid, url: sourceUrl },
       })
       .then((r) => r.data),
 };
@@ -1080,8 +1222,10 @@ export interface TextureClarityAssets {
     scale: number;
   };
   semantic: {
-    status: "cached" | "generated" | "failed" | "unavailable";
+    status: "cached" | "generated" | "fallback" | "failed" | "unavailable";
     reason?: string;
+    /** parts = GPU 人体部位分区；subject-silhouette = 本地人物轮廓降级路径。 */
+    mode?: "parts" | "subject-silhouette";
     classMapUrl?: string;
     previewUrl?: string;
     modelId?: string;
@@ -1125,12 +1269,14 @@ export interface TextureClarityRepair {
 export interface TextureClarityWorkerStatus {
   configured: boolean;
   ok: boolean;
+  /** GPU 服务不可用时，服务器能否用本地人物轮廓安全完成融合。 */
+  fallbackAvailable?: boolean;
   /** 原始报错，交给 describeServiceError 翻译 */
   reason: string;
 }
 
 export interface TextureClarityServiceStatus {
-  /** 语义分区（硬依赖：没有它算不出融合支持区） */
+  /** GPU 人体部位分区；不可用时服务器可降级为本地人物轮廓。 */
   semantic: TextureClarityWorkerStatus;
   /** 深度/法线（软依赖：缺了只是少一层约束） */
   geometry: TextureClarityWorkerStatus;
@@ -1167,6 +1313,7 @@ export const textureClarityApi = {
     sourceUrl: string;
     classMapUrl: string;
     semanticUrl?: string;
+    semanticMode?: "parts" | "subject-silhouette";
     depthUrl?: string;
     normalUrl?: string;
     extraInstruction?: string;

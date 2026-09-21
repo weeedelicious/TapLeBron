@@ -2,7 +2,15 @@ const crypto = require('crypto');
 const { getPool } = require('../db');
 
 const TOKEN_PREFIX = 'sfp_';
-const VALID_SCOPES = Object.freeze(['read', 'canvas:write', 'generate']);
+const VALID_SCOPES = Object.freeze([
+  'read',
+  'canvas:write',
+  // `generate` is retained only so already-issued 0.3.x tokens remain readable.
+  // New Cindy tokens request the two least-privilege scopes below.
+  'generate',
+  'generate:image',
+  'generate:video',
+]);
 const MAX_ACTIVE_TOKENS_PER_USER = 20;
 
 function pluginTokenError(message, code = 'PLUGIN_TOKEN_ERROR', statusCode = 400) {
@@ -20,7 +28,7 @@ function normalizeScopes(value, options = {}) {
     throw pluginTokenError(`Unsupported plugin token scope: ${invalid.join(', ')}`, 'INVALID_PLUGIN_SCOPE');
   }
   if (options.defaultRead !== false && scopes.length === 0) scopes.push('read');
-  if ((scopes.includes('canvas:write') || scopes.includes('generate')) && !scopes.includes('read')) {
+  if (scopes.some((scope) => scope === 'canvas:write' || scope.startsWith('generate')) && !scopes.includes('read')) {
     scopes.unshift('read');
   }
   return scopes;

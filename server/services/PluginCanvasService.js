@@ -227,6 +227,75 @@ function summarizeNode(node) {
   };
 }
 
+function primaryOutputUrlFromNodeData(data) {
+  const urls = Array.isArray(data?.url)
+    ? data.url.filter((url) => typeof url === 'string' && url.trim())
+    : [];
+  const primary = typeof data?._primaryAssetUrl === 'string' ? data._primaryAssetUrl : '';
+  return urls.includes(primary) ? primary : String(urls[0] || '');
+}
+
+function nodeKeyFromRecord(node) {
+  const data = parseNodeData(node);
+  return String(node?.nodeKey || data.nodeKey || '');
+}
+
+function resolveGenerationParams(rawParams, nodes) {
+  const params = rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)
+    ? jsonClone(rawParams)
+    : {};
+  const byKey = new Map();
+  for (const node of nodes) {
+    const key = nodeKeyFromRecord(node);
+    if (key) byKey.set(key, node);
+  }
+
+  const liveUrls = new Map();
+  const resolveMediaRefs = (value, mediaType) => (Array.isArray(value) ? value : [])
+    .map((item) => {
+      const ref = typeof item === 'string' ? { nodeId: item } : { ...(item || {}) };
+      const nodeId = String(ref.nodeId || '');
+      const sourceData = parseNodeData(byKey.get(nodeId));
+      const liveUrl = primaryOutputUrlFromNodeData(sourceData);
+      const fallbackUrl = typeof ref.url === 'string' ? ref.url : '';
+      const url = liveUrl || fallbackUrl;
+      if (nodeId && url) liveUrls.set(nodeId, url);
+      return { ...ref, nodeId, url, ...(mediaType ? { mediaType } : {}) };
+    })
+    .filter((ref) => ref.nodeId || ref.url);
+
+  params.imageList = resolveMediaRefs(params.imageList, 'image');
+  params.videoList = resolveMediaRefs(params.videoList, 'video');
+  params.audioList = resolveMediaRefs(params.audioList, 'audio');
+  if (Array.isArray(params.mixedList)) params.mixedList = resolveMediaRefs(params.mixedList);
+
+  if (Array.isArray(params.promptChips)) {
+    params.promptChips = params.promptChips.map((item) => {
+      const chip = { ...(item || {}) };
+      const liveUrl = liveUrls.get(String(chip.nodeId || ''));
+      return liveUrl ? { ...chip, url: liveUrl } : chip;
+    });
+  }
+
+  if (!String(params.prompt || '').trim() && Array.isArray(params.textList)) {
+    const seen = new Set();
+    const chunks = [];
+    for (const item of params.textList) {
+      const ref = typeof item === 'string' ? { nodeId: item } : (item || {});
+      const nodeId = String(ref.nodeId || '');
+      if (!nodeId || seen.has(nodeId)) continue;
+      seen.add(nodeId);
+      const sourceData = parseNodeData(byKey.get(nodeId));
+      const sourceParams = sourceData.params && typeof sourceData.params === 'object' ? sourceData.params : {};
+      const text = String(sourceParams.content || sourceParams.prompt || ref.content || '').trim();
+      if (text) chunks.push(text);
+    }
+    if (chunks.length) params.prompt = chunks.join('\n\n');
+  }
+
+  return params;
+}
+
 function connectionsFromNodes(nodes) {
   const knownKeys = new Set(nodes.map((node) => String(node.nodeKey || '')).filter(Boolean));
   const seen = new Set();
@@ -337,6 +406,38 @@ async function getCanvasSummary(userId, canvasId) {
   const row = await loadCanvasRow(userId, canvasId, { write: false });
   if (!row) throw serviceError('Canvas not found', 'PLUGIN_CANVAS_NOT_FOUND', 404);
   return canvasSummaryFromRow(row);
+}
+
+async function getGenerationNodeForPlugin(userId, canvasId, requestedNodeKey) {
+  const row = await loadCanvasRow(userId, canvasId, { write: true });
+  if (!row) throw serviceError('Canvas not found', 'PLUGIN_CANVAS_NOT_FOUND', 404);
+  const data = canvasDataFromRow(row);
+  const nodes = nodeListFromData(data);
+  const node = nodes.find((item) =>
+    String(item.nodeKey || parseNodeData(item).nodeKey || '') === String(requestedNodeKey || '')
+  );
+  if (!node) throw serviceError('Node not found', 'PLUGIN_NODE_NOT_FOUND', 404);
+  const parsed = parseNodeData(node);
+  const type = String(parsed.type || '');
+  if (!['image', 'video'].includes(type)) {
+    throw serviceError('Only image and video nodes can be generated from Cindy', 'PLUGIN_NODE_NOT_GENERATABLE', 400);
+  }
+  // The browser resolves connected node ids to each upstream node's current
+  // primary output immediately before generation. Cindy has no open browser,
+  // so do the same on the server; otherwise valid connections silently arrive
+  // at the provider with empty URLs and spend credits on the wrong request.
+  const params = resolveGenerationParams(parsed.params, nodes);
+  const configHash = sha1(JSON.stringify({ type, params }));
+  return {
+    canvas: { id: String(row.id), name: row.title, ownerId: Number(row.owner_id) },
+    node: {
+      key: String(node.nodeKey || parsed.nodeKey || ''),
+      type,
+      name: String(parsed.name || node.name || ''),
+      params,
+      configHash,
+    },
+  };
 }
 
 async function uniqueCanvasName(userId, requestedName) {
@@ -756,6 +857,8 @@ module.exports = {
   createCanvasForPlugin,
   createUploadNodeForPlugin,
   getCanvasSummary,
+  getGenerationNodeForPlugin,
   listCanvasesForPlugin,
   updateNodeForPlugin,
+  _resolveGenerationParams: resolveGenerationParams,
 };

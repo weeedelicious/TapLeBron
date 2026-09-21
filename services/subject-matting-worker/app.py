@@ -1,16 +1,19 @@
 import base64
 import io
+import logging
 import os
 import time
 from typing import Any
 
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, SegformerForSemanticSegmentation, SegformerImageProcessor
+
+from cuda_recovery import CudaHealthState, is_fatal_cuda_error, terminate_process_after_response
 
 
 MODEL_ID = os.getenv("SUBJECT_MATTING_MODEL_ID", "ZhengPeng7/BiRefNet")
@@ -40,10 +43,12 @@ SEMANTIC_PARTS_MODEL_REVISION = os.getenv("SEMANTIC_PARTS_MODEL_REVISION", "main
 SEMANTIC_PARTS_INPUT_SIZE = int(os.getenv("SEMANTIC_PARTS_INPUT_SIZE", "768"))
 
 app = FastAPI(title="Shotflow Subject Matting Worker", version="1.1.0")
+logger = logging.getLogger("shotflow.subject-matting")
 model = None
 sam_predictor = None
 semantic_parts_model = None
 semantic_parts_processor = None
+cuda_health_state = CudaHealthState()
 preprocess = transforms.Compose(
     [
         transforms.Resize((INPUT_SIZE, INPUT_SIZE)),
@@ -59,6 +64,21 @@ def require_auth(authorization: str | None) -> None:
     expected = f"Bearer {API_TOKEN}"
     if authorization != expected:
         raise HTTPException(status_code=401, detail="Invalid subject matting token")
+
+
+def fatal_cuda_response(exc: BaseException, background_tasks: BackgroundTasks) -> JSONResponse | None:
+    if not is_fatal_cuda_error(exc):
+        return None
+    cuda_health_state.mark_fatal(exc)
+    logger.exception("Fatal CUDA context failure; worker will restart after this response")
+    background_tasks.add_task(terminate_process_after_response)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "code": "CUDA_WORKER_RESTARTING",
+            "detail": "GPU worker became unhealthy and is restarting; retry shortly",
+        },
+    )
 
 
 def load_model() -> Any:
@@ -210,27 +230,39 @@ def predict_sam_mask(source: Image.Image, intent: str, prompt_type: str, point: 
 
 
 @app.get("/health")
-def health() -> dict[str, Any]:
-    return {
-        "ok": True,
+def health(background_tasks: BackgroundTasks) -> JSONResponse:
+    cuda_healthy, cuda_error = cuda_health_state.probe(torch, DEVICE)
+    if not cuda_healthy:
+        logger.error("CUDA health probe failed: %s", cuda_error)
+        background_tasks.add_task(terminate_process_after_response)
+    return JSONResponse(status_code=200 if cuda_healthy else 503, content={
+        "ok": cuda_healthy,
         "modelId": MODEL_ID,
         "modelRevision": MODEL_REVISION,
         "device": DEVICE,
         "cudaAvailable": torch.cuda.is_available(),
+        "cudaHealthy": cuda_healthy,
+        "cudaError": None if cuda_healthy else "CUDA probe failed; worker is restarting",
         "modelLoaded": model is not None,
         "samLoaded": sam_predictor is not None,
         "semanticPartsModelId": SEMANTIC_PARTS_MODEL_ID,
         "semanticPartsModelRevision": SEMANTIC_PARTS_MODEL_REVISION,
         "semanticPartsLoaded": semantic_parts_model is not None,
         "semanticPartsLabelSet": "ATR-18",
-    }
+    })
 
 
 @app.post("/v1/preload")
-def preload(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def preload(background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)) -> Any:
     require_auth(authorization)
     started = time.time()
-    load_model()
+    try:
+        load_model()
+    except Exception as exc:
+        response = fatal_cuda_response(exc, background_tasks)
+        if response is not None:
+            return response
+        raise
     return {
         "ok": True,
         "modelId": MODEL_ID,
@@ -242,6 +274,7 @@ def preload(authorization: str | None = Header(default=None)) -> dict[str, Any]:
 
 @app.post("/v1/subject-mask")
 async def subject_mask(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:
@@ -257,10 +290,16 @@ async def subject_mask(
       raise HTTPException(status_code=400, detail=f"Invalid image: {exc}") from exc
 
     width, height = source.size
-    tensor = preprocess(source).unsqueeze(0).to(DEVICE)
-    with torch.inference_mode():
-        output = output_to_tensor(load_model()(tensor))
-        mask_tensor = output.sigmoid().detach().float().cpu()[0].squeeze()
+    try:
+        tensor = preprocess(source).unsqueeze(0).to(DEVICE)
+        with torch.inference_mode():
+            output = output_to_tensor(load_model()(tensor))
+            mask_tensor = output.sigmoid().detach().float().cpu()[0].squeeze()
+    except Exception as exc:
+        response = fatal_cuda_response(exc, background_tasks)
+        if response is not None:
+            return response
+        raise
     mask_array = postprocess_probability_mask(mask_tensor)
     mask = Image.fromarray(mask_array, mode="L").resize((width, height), Image.Resampling.BICUBIC)
     preview = build_preview(source, mask)
@@ -290,6 +329,7 @@ async def subject_mask(
 
 @app.post("/v1/subject-correction")
 async def subject_correction(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     intent: str = Form(...),
     promptType: str = Form(...),
@@ -317,20 +357,28 @@ async def subject_correction(
     if prompt_type not in {"point", "box"}:
         raise HTTPException(status_code=400, detail="Invalid SAM correction prompt type")
 
-    if prompt_type == "point":
-        if pointX is None or pointY is None:
-            raise HTTPException(status_code=400, detail="Point prompt is required")
-        mask = predict_sam_mask(source, str(intent).strip().lower(), prompt_type, {"x": pointX, "y": pointY}, None)
-    else:
-        if boxX is None or boxY is None or boxWidth is None or boxHeight is None:
-            raise HTTPException(status_code=400, detail="Box prompt is required")
-        mask = predict_sam_mask(
-            source,
-            str(intent).strip().lower(),
-            prompt_type,
-            None,
-            {"x": boxX, "y": boxY, "width": boxWidth, "height": boxHeight},
-        )
+    try:
+        if prompt_type == "point":
+            if pointX is None or pointY is None:
+                raise HTTPException(status_code=400, detail="Point prompt is required")
+            mask = predict_sam_mask(source, str(intent).strip().lower(), prompt_type, {"x": pointX, "y": pointY}, None)
+        else:
+            if boxX is None or boxY is None or boxWidth is None or boxHeight is None:
+                raise HTTPException(status_code=400, detail="Box prompt is required")
+            mask = predict_sam_mask(
+                source,
+                str(intent).strip().lower(),
+                prompt_type,
+                None,
+                {"x": boxX, "y": boxY, "width": boxWidth, "height": boxHeight},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        response = fatal_cuda_response(exc, background_tasks)
+        if response is not None:
+            return response
+        raise
 
     coverage = float((np.array(mask) > 16).sum()) / float(max(1, source.size[0] * source.size[1]))
 
@@ -354,10 +402,16 @@ async def subject_correction(
 
 
 @app.post("/v1/semantic-parts/preload")
-def preload_semantic_parts(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def preload_semantic_parts(background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)) -> Any:
     require_auth(authorization)
     started = time.time()
-    load_semantic_parts_model()
+    try:
+        load_semantic_parts_model()
+    except Exception as exc:
+        response = fatal_cuda_response(exc, background_tasks)
+        if response is not None:
+            return response
+        raise
     return {
         "ok": True,
         "modelId": SEMANTIC_PARTS_MODEL_ID,
@@ -369,6 +423,7 @@ def preload_semantic_parts(authorization: str | None = Header(default=None)) -> 
 
 @app.post("/v1/semantic-parts")
 async def semantic_parts(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:

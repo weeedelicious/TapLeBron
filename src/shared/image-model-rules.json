@@ -112,6 +112,76 @@
         "maxAspectRatio": 3
       }
     },
+    "gpt-image-2.5-flare": {
+      "label": "GPT image 2.5 Flare",
+      "provider": "openai-compatible",
+      "providerModel": "openai/gpt-image-2.5-flare",
+      "frontendSelectable": true,
+      "aliases": ["image2.5 flare", "image 2.5 flare", "gpt image 2.5 flare", "openai/gpt-image-2.5-flare"],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "resolutions": ["1K", "2K", "4K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "progressEstimate": {
+        "text2imageSeconds": 17,
+        "image2imageSeconds": 34,
+        "resolutionMultipliers": { "1K": 1, "2K": 1.15, "4K": 1.3 },
+        "extraOutputMultiplier": 0.04,
+        "extraReferenceMultiplier": 0.03
+      },
+      "sizeStrategy": "computed",
+      "computedSize": {
+        "targetAreas": {
+          "1K": 1048576,
+          "2K": 2359296,
+          "4K": 4194304
+        },
+        "fallback": "1024x1024",
+        "step": 16,
+        "maxWidth": 3840,
+        "maxHeight": 2160,
+        "maxAspectRatio": 3
+      }
+    },
+    "gpt-image-2.5-sunburst": {
+      "label": "GPT image 2.5 Sunburst",
+      "provider": "openai-compatible",
+      "providerModel": "openai/gpt-image-2.5-sunburst",
+      "frontendSelectable": true,
+      "aliases": ["image2.5 sunburst", "image 2.5 sunburst", "gpt image 2.5 sunburst", "openai/gpt-image-2.5-sunburst"],
+      "modes": ["text2image", "image2image"],
+      "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "nativeRatios": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "4:5", "5:4", "21:9", "2:1"],
+      "resolutions": ["1K", "2K", "4K"],
+      "qualities": ["high"],
+      "generationCounts": [1, 2, 4],
+      "maxGenerationCount": 10,
+      "maxReferenceImages": 10,
+      "progressEstimate": {
+        "text2imageSeconds": 22,
+        "image2imageSeconds": 36,
+        "resolutionMultipliers": { "1K": 1, "2K": 1.15, "4K": 1.3 },
+        "extraOutputMultiplier": 0.04,
+        "extraReferenceMultiplier": 0.03
+      },
+      "sizeStrategy": "computed",
+      "computedSize": {
+        "targetAreas": {
+          "1K": 1048576,
+          "2K": 2359296,
+          "4K": 4194304
+        },
+        "fallback": "1024x1024",
+        "step": 16,
+        "maxWidth": 3840,
+        "maxHeight": 2160,
+        "maxAspectRatio": 3
+      }
+    },
     "seedream-5-pro": {
       "label": "Seedream 5 Pro",
       "provider": "volcengine",
