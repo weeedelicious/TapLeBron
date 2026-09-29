@@ -581,6 +581,46 @@ export const generateApi = {
       .then((r) => ({
         translated: r.data.translated ?? r.data.text ?? "",
       })),
+  promptWash: (payload: {
+    projectUuid: string;
+    nodeKey: string;
+    sourceText: string;
+    mode: "conservative" | "cinematic" | "references" | "timeline" | "minimax";
+    skillId?: string;
+    nodeName?: string;
+    textModel: string;
+    thinkingMode?: "fast" | "deep";
+    target: {
+      model: string;
+      modeType: string;
+      duration: number;
+      ratio: string;
+      resolution: string;
+      enableSound: "on" | "off";
+    };
+    references: {
+      imageCount: number;
+      videoCount: number;
+      audioCount: number;
+      names: string[];
+    };
+  }) =>
+    http
+      .post<{
+        prompt: string;
+        settings: {
+          model: string;
+          modeType: string;
+          duration: number;
+          ratio: string;
+          resolution: string;
+          enableSound: "on" | "off";
+        };
+        referenceRoles: Array<{ token: string; use: string; exclude: string }>;
+        warnings: string[];
+        changeSummary: string[];
+      }>("/generate/prompt-wash", payload)
+      .then((r) => r.data),
   poll: (jobId: string) =>
     http
       .get<{
@@ -907,6 +947,42 @@ export const toolboxApi = {
         sourceNodeKey,
       })
       .then((r) => r.data),
+
+  videoUiRemovalPreview: async (projectUuid: string, sourceUrl: string) => {
+    const response = await http.post('/toolbox/video-ui-removal-preview', { projectUuid, sourceUrl }, {
+      responseType: 'blob',
+      timeout: 300000,
+      validateStatus: () => true,
+    });
+    if (response.status >= 400) {
+      const text = await (response.data as Blob).text();
+      let message = '\u8499\u7248\u9884\u89c8\u5931\u8d25';
+      try {
+        const parsed = JSON.parse(text);
+        message = parsed.error || parsed.detail || message;
+      } catch {
+        if (text.trim()) message = text.trim().slice(0, 200);
+      }
+      throw new Error(message);
+    }
+    const raw = response.headers['x-mask-coverage'];
+    const coverage = raw == null || raw === '' ? null : Number(raw);
+    return { blob: response.data as Blob, coverage: Number.isFinite(coverage as number) ? Number(coverage) : null };
+  },
+  videoUiRemoval: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    method: 'propainter' | 'diffueraser',
+    sourceNodeKey?: string,
+  ) =>
+    http.post<{
+      jobId: string;
+      generationVersion?: number;
+      method?: string;
+      provider?: string;
+      model?: string;
+    }>('/toolbox/video-ui-removal', { projectUuid, nodeKey, sourceUrl, method, sourceNodeKey }).then((response) => response.data),
   mediaEnhance: (
     projectUuid: string,
     nodeKey: string,

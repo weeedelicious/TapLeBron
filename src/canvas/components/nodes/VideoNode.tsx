@@ -1,13 +1,14 @@
 ﻿import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
-import { Camera, Copy, Crop, Download, Expand, Gauge, Loader2, Lock, Scissors, Sparkles, SquarePen, Trash2, Unlock } from 'lucide-react'
+import { Camera, Copy, Crop, Download, Expand, Gauge, Library, Loader2, Lock, Scissors, Sparkles, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
 import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
 import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { GenerationProgress } from '@/components/GenerationProgress'
 import { VideoCropModal } from '@/components/VideoCropModal'
 import { VideoTrimModal } from '@/components/VideoTrimModal'
 import { VideoFrameInterpolationModal, type VideoFrameInterpolationMethod } from '@/components/VideoFrameInterpolationModal'
+import { VideoUiRemovalModal, type VideoUiRemovalMethod } from '@/components/VideoUiRemovalModal'
 import { useMediaEnhance } from '@/features/media-enhance/useMediaEnhance'
 import { WhiteboardModal } from '@/components/WhiteboardModal'
 import { NodeShell } from './NodeShell'
@@ -16,7 +17,7 @@ import { ResizablePanelHandle, readPanelSize, useResizablePanel, type PanelSize 
 import { HoverImagePreview } from '@/components/HoverImagePreview'
 import { ImagePreview } from '@/components/ImagePreview'
 import type { ImagePreviewItem } from '@/components/ImagePreview'
-import { PromptEditor } from '@/components/PromptEditor'
+import { PromptEditor, buildPromptHtmlFromMentions } from '@/components/PromptEditor'
 import type { ChipRef, PromptEditorHandle, PromptEditorSnapshot } from '@/components/PromptEditor'
 import { resolveTextMentionAt, resolveTextMentionsIn as resolveTextMentionsInText } from '@/lib/promptTokenMention'
 import { edgesWithoutLink } from '@/lib/referenceEdges'
@@ -58,6 +59,7 @@ import {
 } from '@/lib/videoRules'
 import { popoverPlacement, type PopoverPlacement } from '@/lib/popoverFit'
 import { modelPromptFromNodeParams } from '@/lib/modelPrompt'
+import { SEEDANCE_PROMPT_SKILL_CATEGORIES, SEEDANCE_PROMPT_SKILLS, seedancePromptSkillById } from '@/lib/seedancePromptSkills'
 import type { AssetGenerationMeta, CanvasNodeData, VideoParams, NodeRef, ResourceMeta, TaskInfo, FailedGeneration } from '@/lib/types'
 import { hasPendingUpstream } from '@/lib/autoGenerate'
 import {
@@ -86,6 +88,39 @@ function getParams(data: CanvasNodeData): VideoParams {
 }
 
 type VideoMode = VideoModeKey
+
+type PromptWashMode = 'conservative' | 'cinematic' | 'references' | 'timeline' | 'minimax'
+
+type PromptWashTextChoice = 'opus' | 'luna'
+
+const PROMPT_WASH_TEXT_CHOICES: Array<{ value: PromptWashTextChoice; label: string; model: string }> = [
+  { value: 'opus', label: 'Opus', model: 'anthropic/claude-opus-5-5' },
+  { value: 'luna', label: 'GPT Luna', model: 'gpt-5.6-luna' },
+]
+
+function promptWashTextModelId(value: unknown) {
+  const raw = String(value || '').trim()
+  return PROMPT_WASH_TEXT_CHOICES.find(item => item.value === raw || item.model === raw)?.model || PROMPT_WASH_TEXT_CHOICES[0].model
+}
+
+const PROMPT_WASH_MODES: Array<{ value: PromptWashMode; label: string; description: string }> = [
+  { value: 'conservative', label: '保守优化', description: '保留原意，只补齐必要细节' },
+  { value: 'cinematic', label: '电影化', description: '强化镜头、光影、节奏与声音' },
+  { value: 'references', label: '参考素材强化', description: '明确 @图片/@视频 的职责' },
+  { value: 'timeline', label: '时间轴分镜', description: '整理动作和镜头时间段' },
+  { value: 'minimax', label: 'MiniMax 官方优化', description: '按 MiniMax 官方镜头指令与模型限制优化' },
+]
+
+function promptWashResultName(_sourceName: unknown, mode: PromptWashMode, choice: PromptWashTextChoice, skillId?: string) {
+  const skillLabel = seedancePromptSkillById(skillId)?.shortName
+  const modeLabel = skillLabel || PROMPT_WASH_MODES.find(item => item.value === mode)?.label || '保守优化'
+  const modelLabel = choice === 'luna' ? 'Luna' : 'Opus'
+  return '洗提示词_' + modeLabel + '_' + modelLabel
+}
+
+// 页面刷新后会重新挂载节点；这个集合只用于防止“当前页面”里原请求和
+// 恢复 effect 重复提交，刷新后集合自然清空，节点上的持久化标记会触发恢复。
+const activePromptWashNodeKeys = new Set<string>()
 
 function fitFrameToAspect(w: number, h: number, maxWidth: number, maxHeight: number, minWidth: number) {
   const safeW = Math.max(1, w)
@@ -320,7 +355,7 @@ type ConnectedMediaRef = NodeRef & {
 }
 
 export function VideoNode({ id, data, selected }: Props) {
-  const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, pushHistory, persistNodesAndWait } = useCanvasStore()
+  const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, setActivePanelNode, setSelected, pushHistory, persistNodesAndWait } = useCanvasStore()
   const { addTask, startPolling, cancelTask } = useTasksStore()
   /** 真正还在轮询的任务表。进度条只信这个，不信节点上残留的 loading 标记。 */
   const liveTasks = useTasksStore(state => state.tasks)
@@ -332,6 +367,8 @@ export function VideoNode({ id, data, selected }: Props) {
   const [showSettings, setShowSettings] = useState(false)
   const bottomWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsPopoverRef = useRef<HTMLDivElement | null>(null)
+  const promptWashWrapRef = useRef<HTMLDivElement | null>(null)
+  const promptSkillWrapRef = useRef<HTMLDivElement | null>(null)
   /** 设置弹层的锚点（底栏在屏幕上的位置）；null = 弹层没开 */
   const [settingsAnchor, setSettingsAnchor] = useState<{ left: number; width: number; top: number; bottom: number } | null>(null)
   /** 弹层最终的定位：往上（bottom）还是往下（top），装不下时才带 maxHeight */
@@ -361,6 +398,8 @@ export function VideoNode({ id, data, selected }: Props) {
   const [trimSubmitting, setTrimSubmitting] = useState(false)
   const [frameInterpolationOpen, setFrameInterpolationOpen] = useState(false)
   const [frameInterpolationSubmitting, setFrameInterpolationSubmitting] = useState(false)
+  const [uiRemovalOpen, setUiRemovalOpen] = useState(false)
+  const [uiRemovalSubmitting, setUiRemovalSubmitting] = useState(false)
   const [frameMode, setFrameMode] = useState(false)
   const [frameNumber, setFrameNumber] = useState(1)
   const [frameCapturing, setFrameCapturing] = useState(false)
@@ -368,6 +407,13 @@ export function VideoNode({ id, data, selected }: Props) {
   const [galleryLocked, setGalleryLocked] = useState(false)
   const [panelExpanded, setPanelExpanded] = useState(false)
   const [panelSize, setPanelSize] = useState<PanelSize | null>(() => initialPanelSize)
+  const [promptWashOpen, setPromptWashOpen] = useState(false)
+  const [promptWashHoverMode, setPromptWashHoverMode] = useState<PromptWashMode | null>(null)
+  const [promptWashModelMenu, setPromptWashModelMenu] = useState<PromptWashMode | null>(null)
+  const [promptSkillOpen, setPromptSkillOpen] = useState(false)
+  const [promptSkillCategory, setPromptSkillCategory] = useState(SEEDANCE_PROMPT_SKILL_CATEGORIES[0]?.id || 'structure')
+  const [promptSkillHoverId, setPromptSkillHoverId] = useState<string | null>(null)
+  const [promptSkillMenu, setPromptSkillMenu] = useState<string | null>(null)
 
   useEffect(() => {
     if (data.taskInfo?.loading) {
@@ -450,6 +496,10 @@ export function VideoNode({ id, data, selected }: Props) {
       setAtMenu(false)
       setHoverThumb(null)
       setPanelExpanded(false)
+      setPromptWashOpen(false)
+      setPromptWashModelMenu(null)
+      setPromptSkillOpen(false)
+      setPromptSkillMenu(null)
     }
   }, [isPanelOpen])
 
@@ -495,6 +545,20 @@ export function VideoNode({ id, data, selected }: Props) {
     document.addEventListener('mousedown', handler, true)
     return () => document.removeEventListener('mousedown', handler, true)
   }, [expanded, galleryLocked])
+
+  useEffect(() => {
+    if (!promptWashOpen && !promptSkillOpen) return
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (promptWashWrapRef.current?.contains(target) || promptSkillWrapRef.current?.contains(target)) return
+      setPromptWashOpen(false)
+      setPromptWashModelMenu(null)
+      setPromptSkillOpen(false)
+      setPromptSkillMenu(null)
+    }
+    document.addEventListener('mousedown', handler, true)
+    return () => document.removeEventListener('mousedown', handler, true)
+  }, [promptWashOpen, promptSkillOpen])
 
   useEffect(() => {
     if (!isPanelActive) {
@@ -625,8 +689,8 @@ export function VideoNode({ id, data, selected }: Props) {
     }).filter(r => r.url),
     [connectedImageRefs, nodes]
   )
-  const generationCount = normalizeVideoGenerationCount(model, params.count, connectedImages.length > 0)
-  const generationCountOptions = getVideoGenerationCounts(model, connectedImages.length > 0)
+  const generationCount = normalizeVideoGenerationCount(model, params.count, connectedImages.length > 0, resolution)
+  const generationCountOptions = getVideoGenerationCounts(model, connectedImages.length > 0, resolution)
   const canChooseGenerationCount = generationCountOptions.length > 1
 
   const connectedVideoRefs = useMemo(
@@ -939,6 +1003,22 @@ export function VideoNode({ id, data, selected }: Props) {
     setParam('settings', { ...params.settings, [key]: val })
   }, [params, setParam])
 
+  const setVideoResolution = useCallback((value: string) => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const nextModel = currentParams.model || 'Seedance_2_0'
+    const nextResolution = normalizeVideoResolutionValue(nextModel, value)
+    const hasImageReference = (currentParams.imageList as NodeRef[] | undefined)?.some(ref => Boolean(ref.url)) ?? false
+    const nextCount = normalizeVideoGenerationCount(nextModel, currentParams.count, hasImageReference, nextResolution)
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        count: nextCount,
+        settings: { ...currentParams.settings, resolution: nextResolution },
+      } as unknown as Record<string, unknown>,
+    })
+  }, [id, params, updateNodeData])
+
   const handleGenerate = useCallback(async () => {
     // 只挡"请求还在飞"和 5 秒冷却。故意不再挡 taskInfo.loading —— 上一次还在跑也允许再发。
     if (isSubmitting || generateCooldown) return
@@ -963,7 +1043,7 @@ export function VideoNode({ id, data, selected }: Props) {
       const prompt = String(params.prompt || '').trim() || textPromptFromRefs(params.textList as NodeRef[] | undefined, nodes)
       const hasVisualRef = freshImageList.length > 0 || freshVideoList.length > 0
       const hasAnyRef = hasVisualRef || freshAudioList.length > 0
-      const submitCount = normalizeVideoGenerationCount(requestModel, params.count, freshImageList.length > 0)
+      const submitCount = normalizeVideoGenerationCount(requestModel, params.count, freshImageList.length > 0, normalizedResolution)
       const capabilityError = validateVideoCapability({
         model: requestModel,
         mode: normalizedMode,
@@ -1088,6 +1168,185 @@ export function VideoNode({ id, data, selected }: Props) {
       setGenError(errorToText(axErr.response?.data?.error ?? axErr.message, '生成失败'))
     }
   }, [data.projectUuid, id, params, nodes, updateNodeData, addTask, startPolling, isSubmitting, generateCooldown, startGenerateCooldown])
+
+  const isSeedanceModel = /seedance/i.test(String(model))
+  const isMiniMaxModel = /minimax/i.test(String(model))
+  const isPromptWashModel = isSeedanceModel || isMiniMaxModel
+
+  /** 复制当前视频节点并在副本上执行洗提示词，原节点不被改写。 */
+  const washVideoPrompt = useCallback(async (requestedMode: PromptWashMode, requestedTextChoice: PromptWashTextChoice = 'opus', requestedSkillId = '') => {
+    if (!isPromptWashModel) return
+    const skillId = isSeedanceModel ? (seedancePromptSkillById(requestedSkillId)?.id || '') : ''
+    const state = useCanvasStore.getState()
+    const sourceNode = state.nodes.find(node => node.id === id || node.data.nodeKey === id)
+    if (!sourceNode) return
+    const sourceParams = getParams(sourceNode.data as CanvasNodeData)
+    const sourceText = modelPromptFromNodeParams({ prompt: sourceParams.prompt, promptHtml: sourceParams.promptHtml as string | undefined }).trim()
+      || textPromptFromRefs(sourceParams.textList as NodeRef[] | undefined, state.nodes)
+    const sourceImages = (sourceParams.imageList as NodeRef[] | undefined) ?? []
+    const sourceVideos = (sourceParams.videoList as NodeRef[] | undefined) ?? []
+    const sourceAudios = (sourceParams.audioList as NodeRef[] | undefined) ?? []
+    if (!skillId && !sourceText && sourceImages.length === 0 && sourceVideos.length === 0) {
+      setGenError('请先填写视频提示词或连接参考素材')
+      return
+    }
+    const freshRefList = (list: NodeRef[]) => list.map(ref => {
+      const refNode = state.nodes.find(node => node.id === ref.nodeId)
+      const liveUrl = primaryOutputUrl(refNode?.data as CanvasNodeData)
+      return liveUrl ? { ...ref, url: liveUrl } : ref
+    }).filter(ref => ref.url)
+    const imageList = freshRefList(sourceImages)
+    const videoList = freshRefList(sourceVideos)
+    const audioList = freshRefList(sourceAudios)
+    const names = [...imageList, ...videoList, ...audioList].map(ref => {
+      const refNode = state.nodes.find(node => node.id === ref.nodeId)
+      return String(refNode?.data.name || ref.nodeId || '').trim()
+    }).filter(Boolean)
+    const copiedParams = { ...sourceParams, prompt: sourceText, promptHtml: undefined, promptChips: [], imageList, videoList, audioList, imageListOrder: imageList.map(ref => ref.nodeId), settings: { ...sourceParams.settings } } as unknown as Record<string, unknown>
+    const sourceWidth = Number(sourceNode.measured?.width || sourceNode.width || 620)
+    const sourceName = String(sourceNode.data.name || data.name || '')
+    const created = addNodeAt('video', (sourceNode.position?.x ?? 0) + sourceWidth + 100, sourceNode.position?.y ?? 0, {
+      name: promptWashResultName(sourceName, requestedMode, requestedTextChoice, skillId), url: [], action: 'video_generate', taskInfo: undefined, params: copiedParams,
+      _promptWashStatus: 'loading', _promptWashProgress: 8, _promptWashMode: requestedMode, _promptWashModel: requestedTextChoice, _promptWashSkillId: skillId || undefined, _promptWashSourceName: sourceName, _promptWashStarted: false,
+    })
+    setSelected([created.id])
+    setActivePanelNode(created.id)
+    // addNodeAt only schedules a debounced save. Make the copied node and its
+    // reference edges durable before the long-running wash request starts, so
+    // a refresh cannot reload the canvas without this node.
+    // React Flow may still have a pending node-save pass when the copy is
+    // created (especially on MiniMax nodes whose model/settings were just
+    // changed). Give the queue one short retry before reporting a real failure.
+    let initialSave = await persistNodesAndWait()
+    if (!initialSave) {
+      await new Promise(resolve => window.setTimeout(resolve, 650))
+      initialSave = await persistNodesAndWait()
+    }
+    if (!initialSave) {
+      updateNodeData(created.id, {
+        _promptWashStatus: 'error',
+        _promptWashProgress: 0,
+        _promptWashMessage: '复制节点保存失败，请重试',
+      })
+      await persistNodesAndWait()
+      return
+    }
+    // 先把“请求已经启动”写入节点，再发起 LLM 请求。刷新后由节点自身的
+    // 恢复 effect 接管；当前页面则由这个集合避免重复请求。
+    activePromptWashNodeKeys.add(created.id)
+    updateNodeData(created.id, { _promptWashStarted: true })
+    await persistNodesAndWait()
+    let progressTimer = 0
+    const updateProgress = (progress: number) => updateNodeData(created.id, { _promptWashProgress: progress })
+    progressTimer = window.setInterval(() => {
+      const current = Number(useCanvasStore.getState().nodes.find(node => node.id === created.id)?.data._promptWashProgress ?? 8)
+      updateProgress(Math.min(92, current + Math.max(1, Math.round((92 - current) / 7))))
+    }, 420)
+    try {
+      const targetSettings = sourceParams.settings ?? defaultVideoParams().settings
+      const result = await generateApi.promptWash({
+        projectUuid: data.projectUuid, nodeKey: created.id, sourceText, mode: requestedMode,
+        skillId: skillId || undefined, nodeName: sourceName,
+        textModel: promptWashTextModelId(requestedTextChoice), thinkingMode: 'fast',
+        target: { model: sourceParams.model || 'Seedance_2_0', modeType: sourceParams.modeType || 'omni', duration: targetSettings.duration, ratio: targetSettings.ratio, resolution: targetSettings.resolution, enableSound: targetSettings.enableSound ?? 'on' },
+        references: { imageCount: imageList.length, videoCount: videoList.length, audioCount: audioList.length, names },
+      })
+      const requiredMentions = Array.from(new Set([
+        ...Array.from(sourceText.matchAll(/@(图片\d+|视频\d+|音频\d+)/g)).map(match => '@' + match[1]),
+        ...imageList.map((_, index) => '@图片' + (index + 1)), ...videoList.map((_, index) => '@视频' + (index + 1)), ...audioList.map((_, index) => '@音频' + (index + 1)),
+      ]))
+      const washedPrompt = requiredMentions.some(token => !result.prompt.includes(token)) ? result.prompt.trim() + '\n参考素材：' + requiredMentions.join(' ') : result.prompt
+       const washCandidates: ChipRef[] = [
+         ...imageList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '图片' + (index + 1), mediaType: 'image' as const })),
+         ...videoList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '视频' + (index + 1), mediaType: 'video' as const })),
+         ...audioList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '音频' + (index + 1), mediaType: 'audio' as const })),
+       ]
+       const formattedPrompt = buildPromptHtmlFromMentions(washedPrompt, washCandidates)
+       updateNodeData(created.id, { params: { ...copiedParams, prompt: washedPrompt, promptHtml: formattedPrompt.chips.length ? formattedPrompt.html : undefined, promptChips: formattedPrompt.chips }, _promptWashStatus: 'done', _promptWashProgress: 100, _promptWashMessage: '洗提示词完成，可直接检查或生成' })
+       await persistNodesAndWait()
+    } catch (error) {
+       const message = (error as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error || (error instanceof Error ? error.message : String(error))
+       updateNodeData(created.id, { _promptWashStatus: 'error', _promptWashProgress: 0, _promptWashMessage: message })
+       await persistNodesAndWait()
+    } finally { window.clearInterval(progressTimer); activePromptWashNodeKeys.delete(created.id) }
+  }, [addNodeAt, data.name, data.projectUuid, id, isMiniMaxModel, isPromptWashModel, isSeedanceModel, persistNodesAndWait, setActivePanelNode, setSelected, updateNodeData])
+
+  // 洗词请求本身是一次页面内的 HTTP Promise，刷新会让它消失；节点数据已经
+  // 落库，因此重新挂载时用节点里的 prompt/mode/references 再执行一次，避免
+  // 永远停在 8%/92%。完成或失败状态仍然写回同一个副本节点。
+  useEffect(() => {
+    const legacyWashNeedsResume = data._promptWashStarted == null && Boolean(data._promptWashMode)
+    if (String(data._promptWashStatus || '') !== 'loading' || (data._promptWashStarted !== true && !legacyWashNeedsResume)) return
+    if (activePromptWashNodeKeys.has(id)) return
+    activePromptWashNodeKeys.add(id)
+    let timer = 0
+    const liveState = useCanvasStore.getState()
+    const liveNode = liveState.nodes.find(node => node.id === id || node.data.nodeKey === id)
+    if (!liveNode) { activePromptWashNodeKeys.delete(id); return }
+    const washParams = getParams(liveNode.data as CanvasNodeData)
+    const sourceText = modelPromptFromNodeParams({ prompt: washParams.prompt, promptHtml: washParams.promptHtml as string | undefined }).trim()
+    const imageList = ((washParams.imageList as NodeRef[] | undefined) ?? []).filter(ref => ref.url)
+    const videoList = ((washParams.videoList as NodeRef[] | undefined) ?? []).filter(ref => ref.url)
+    const audioList = ((washParams.audioList as NodeRef[] | undefined) ?? []).filter(ref => ref.url)
+    const names = [...imageList, ...videoList, ...audioList].map(ref => String(liveState.nodes.find(node => node.id === ref.nodeId)?.data.name || ref.nodeId || '').trim()).filter(Boolean)
+    const mode = (String(data._promptWashMode || 'conservative') as PromptWashMode)
+    const skillId = seedancePromptSkillById(data._promptWashSkillId)?.id || ''
+    const nodeName = String(data._promptWashSourceName || '')
+    const targetSettings = washParams.settings ?? defaultVideoParams().settings
+    const updateProgress = (progress: number) => updateNodeData(id, { _promptWashProgress: progress })
+    timer = window.setInterval(() => {
+      const current = Number(useCanvasStore.getState().nodes.find(node => node.id === id)?.data._promptWashProgress ?? 8)
+      updateProgress(Math.min(92, current + Math.max(1, Math.round((92 - current) / 7))))
+    }, 420)
+    void (async () => {
+      try {
+        const result = await generateApi.promptWash({
+          projectUuid: data.projectUuid, nodeKey: id, sourceText, mode,
+          skillId: skillId || undefined, nodeName,
+          textModel: promptWashTextModelId(data._promptWashModel), thinkingMode: 'fast',
+          target: { model: washParams.model || 'Seedance_2_0', modeType: washParams.modeType || 'omni', duration: targetSettings.duration, ratio: targetSettings.ratio, resolution: targetSettings.resolution, enableSound: targetSettings.enableSound ?? 'on' },
+          references: { imageCount: imageList.length, videoCount: videoList.length, audioCount: audioList.length, names },
+        })
+        const requiredMentions = Array.from(new Set([
+          ...Array.from(sourceText.matchAll(/@(图片\d+|视频\d+|音频\d+)/g)).map(match => '@' + match[1]),
+          ...imageList.map((_, index) => '@图片' + (index + 1)), ...videoList.map((_, index) => '@视频' + (index + 1)), ...audioList.map((_, index) => '@音频' + (index + 1)),
+        ]))
+        const washedPrompt = requiredMentions.some(token => !result.prompt.includes(token)) ? result.prompt.trim() + '\n参考素材：' + requiredMentions.join(' ') : result.prompt
+        const washCandidates: ChipRef[] = [
+          ...imageList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '图片' + (index + 1), mediaType: 'image' as const })),
+          ...videoList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '视频' + (index + 1), mediaType: 'video' as const })),
+          ...audioList.map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '音频' + (index + 1), mediaType: 'audio' as const })),
+        ]
+        const formattedPrompt = buildPromptHtmlFromMentions(washedPrompt, washCandidates)
+        updateNodeData(id, { params: { ...washParams, prompt: washedPrompt, promptHtml: formattedPrompt.chips.length ? formattedPrompt.html : undefined, promptChips: formattedPrompt.chips }, _promptWashStatus: 'done', _promptWashProgress: 100, _promptWashMessage: '洗提示词完成，可直接检查或生成' })
+        await persistNodesAndWait()
+      } catch (error) {
+        const message = (error as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error || (error instanceof Error ? error.message : String(error))
+        updateNodeData(id, { _promptWashStatus: 'error', _promptWashProgress: 0, _promptWashMessage: message })
+        await persistNodesAndWait()
+      } finally {
+        window.clearInterval(timer)
+        activePromptWashNodeKeys.delete(id)
+      }
+    })()
+  }, [data._promptWashMode, data._promptWashModel, data._promptWashSkillId, data._promptWashSourceName, data._promptWashStarted, data._promptWashStatus, data.projectUuid, id, isMiniMaxModel, persistNodesAndWait, updateNodeData])
+
+  // 兼容旧版本已经完成的洗词节点：旧写回逻辑会把 promptChips/promptHtml 清空，
+  // 这里在重新挂载时按保存的引用列表补回药丸，避免用户必须重新执行一次洗词。
+  useEffect(() => {
+    if (String(data._promptWashStatus || '') !== 'done') return
+    const storedPromptHtml = String(params.promptHtml || '')
+    const hasStrayAtBeforeChip = /@\s*(?=<span[^>]*data-chip=["']1["'])/i.test(storedPromptHtml)
+    if (Array.isArray(params.promptChips) && params.promptChips.length > 0 && !hasStrayAtBeforeChip) return
+    const candidates: ChipRef[] = [
+      ...((params.imageList as NodeRef[] | undefined) ?? []).filter(ref => ref.url).map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '图片' + (index + 1), mediaType: 'image' as const })),
+      ...((params.videoList as NodeRef[] | undefined) ?? []).filter(ref => ref.url).map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '视频' + (index + 1), mediaType: 'video' as const })),
+      ...((params.audioList as NodeRef[] | undefined) ?? []).filter(ref => ref.url).map((ref, index) => ({ nodeId: ref.nodeId, url: ref.url, name: '音频' + (index + 1), mediaType: 'audio' as const })),
+    ]
+    const formatted = buildPromptHtmlFromMentions(String(params.prompt || ''), candidates)
+    if (!formatted.chips.length) return
+    updateNodeData(id, { params: { ...params, promptHtml: formatted.html, promptChips: formatted.chips } as unknown as Record<string, unknown> })
+  }, [data._promptWashStatus, id, params, updateNodeData])
 
   // Cindy "应用并生成": fire this video node's own generate once when flagged.
   const autoGenerateFiredRef = useRef(false)
@@ -1277,6 +1536,9 @@ export function VideoNode({ id, data, selected }: Props) {
     : data.taskInfo?.loading
       ? `生成（上一次还在跑 ${runningPercent}%，再点会取代它，旧的结果不会采用）`
       : '生成'
+  const promptWashStatus = String(data._promptWashStatus || '')
+  const promptWashProgress = Math.max(0, Math.min(100, Number(data._promptWashProgress || 0)))
+  const promptWashMessage = String(data._promptWashMessage || '')
   /**
    * 要画的进度条：以 _pendingTasks 为准（并发时可能好几条），老画布没这个字段就回落到
    * 单个 taskInfo，行为跟改造前一致。按开始时间排，先点的在上面。
@@ -1611,6 +1873,53 @@ export function VideoNode({ id, data, selected }: Props) {
     }
   }, [addNodeAt, cropSubmitting, data.name, data.projectUuid, edges, id, nodes, setEdges, shellWidth, videoUrl])
 
+  const handleUiRemovalPreview = useCallback(async () => {
+    if (!videoUrl) throw new Error('没有可预览的视频')
+    return toolboxApi.videoUiRemovalPreview(data.projectUuid, videoUrl)
+  }, [data.projectUuid, videoUrl])
+
+  const handleUiRemovalAccept = useCallback(async (method: VideoUiRemovalMethod) => {
+    if (!videoUrl || uiRemovalSubmitting) return
+    setGenError(null)
+    setUiRemovalSubmitting(true)
+    let createdNodeId = ''
+    let taskStarted = false
+    try {
+      const state = useCanvasStore.getState()
+      const sourceNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 }
+      const outgoingCount = state.edges.filter((edge) => edge.source === id || edge.source === sourceNode?.id).length
+      const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+      const implementation = method === 'diffueraser'
+        ? { provider: 'diffueraser', model: 'SAM 2 + DiffuEraser' }
+        : { provider: 'propainter', model: 'SAM 2 + ProPainter' }
+      const createdNode = addNodeAt('video', sourcePosition.x + shellWidth + 140, sourcePosition.y + outgoingCount * 44, {
+        name: (data.name || '视频') + ' · 去除UI',
+        url: [], action: 'image_resource', sourceKind: 'ui_removal',
+        params: { ...defaultVideoParams(), modeType: 'video-edit', videoList: [sourceRef], mixedList: [sourceRef], mixedListOrder: [id], uiRemoval: { method, ...implementation } } as unknown as Record<string, unknown>,
+      })
+      createdNodeId = createdNode.id
+      const saved = await persistNodesAndWait()
+      if (!saved) throw new Error('去除 UI 输出节点保存失败，请刷新画布后重试')
+      const result = await toolboxApi.videoUiRemoval(data.projectUuid, createdNode.id, videoUrl, method, id)
+      if (!result?.jobId) throw new Error('去除 UI 任务未创建')
+      taskStarted = true
+      addTask(result.jobId, createdNode.id, result.generationVersion, { phaseLabel: '去除 UI', model: implementation.model, taskKind: 'video' })
+      startPolling(result.jobId, data.projectUuid)
+      setUiRemovalOpen(false)
+    } catch (error) {
+      const message = errorToText(error, '去除 UI 失败')
+      setGenError(message)
+      if (createdNodeId && !taskStarted) {
+        const liveNode = useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)
+        if (liveNode) useCanvasStore.getState().deleteNodes([createdNodeId])
+      }
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setUiRemovalSubmitting(false)
+    }
+  }, [addNodeAt, addTask, data.name, data.projectUuid, id, persistNodesAndWait, shellWidth, startPolling, uiRemovalSubmitting, videoUrl])
+
   const openFrameInterpolationModal = useCallback(() => {
     if (!videoUrl || frameInterpolationSubmitting) return
     setGenError(null)
@@ -1902,6 +2211,13 @@ export function VideoNode({ id, data, selected }: Props) {
             : <Crop size={14} strokeWidth={1.9} />,
           onClick: openCropModal,
           disabled: cropSubmitting,
+        },
+        {
+          key: 'ui-removal',
+          label: uiRemovalSubmitting ? '正在去除UI' : '去除UI',
+          icon: uiRemovalSubmitting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Scissors size={14} strokeWidth={1.9} />,
+          onClick: () => { if (videoUrl && !uiRemovalSubmitting) { setGenError(null); setUiRemovalOpen(true) } },
+          disabled: uiRemovalSubmitting,
         },
         {
           key: 'frame-interpolation',
@@ -2973,6 +3289,16 @@ export function VideoNode({ id, data, selected }: Props) {
         </div>
       )}
 
+      {promptWashStatus && (
+        <div className="mx-2 mb-2 nodrag" style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + (promptWashStatus === 'error' ? 'rgba(248,113,113,0.3)' : 'rgba(124,92,252,0.25)'), background: promptWashStatus === 'error' ? 'rgba(127,29,29,0.18)' : 'rgba(124,92,252,0.08)', color: promptWashStatus === 'error' ? '#fca5a5' : '#cfc3ff', fontSize: 11 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span>{promptWashStatus === 'loading' ? '正在洗提示词…' : promptWashMessage || (promptWashStatus === 'done' ? '洗提示词完成' : '洗提示词失败')}</span>
+            {promptWashStatus === 'loading' && <span>{promptWashProgress}%</span>}
+          </div>
+          {promptWashStatus === 'loading' && <div style={{ height: 4, marginTop: 6, borderRadius: 99, overflow: 'hidden', background: 'rgba(196,181,253,0.14)' }}><div style={{ width: promptWashProgress + '%', height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #7c5cfc, #c4b5fd)', transition: 'width .3s ease' }} /></div>}
+        </div>
+      )}
+
       {/* 进度条只在两处渲染，且互斥：面板内那条（本文件下方 shotflow-node-popover-progress-row）
           和面板收起时游离在节点下方那条（showDetachedProgress）。这里原先还有第三处，被
           `isLoading && false` 长期关着，是死代码，已删。 */}
@@ -3030,7 +3356,7 @@ export function VideoNode({ id, data, selected }: Props) {
                     // 展开的，多一行就把最上面的「比例」「清晰度」顶出屏幕顶部，而且超出视口的部分
                     // 既看不见也滚不到 —— 2026-08-19「不能调分辨率了」就是这么来的。
                     title={getVideoResolutionNote(model, r) || undefined}
-                    onClick={() => setSettings('resolution', r)}>{r}</button>
+                    onClick={() => setVideoResolution(r)}>{r}</button>
                 ))}
               </div>
             </div>
@@ -3174,6 +3500,112 @@ export function VideoNode({ id, data, selected }: Props) {
               {generationCountOptions.map(n => <option key={n} value={n}>{n}个</option>)}
             </select>
           )}
+          {isSeedanceModel && (
+            <div ref={promptSkillWrapRef} className="relative nodrag" style={{ flexShrink: 0 }}>
+              <button
+                type="button"
+                className="nodrag"
+                aria-label="Seedance Skill 库"
+                title="按片种 Skill 复制节点并洗提示词"
+                onPointerDown={event => event.stopPropagation()}
+                onClick={event => { event.stopPropagation(); setPromptWashOpen(false); setPromptWashModelMenu(null); setPromptSkillMenu(null); setPromptSkillOpen(value => !value) }}
+                style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(124,92,252,0.35)', background: promptSkillOpen ? '#2a1f50' : '#1e1830', color: '#c4b5fd', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Library size={15} strokeWidth={1.8} />
+              </button>
+              {promptSkillOpen && (
+                <div className="nodrag nopan" style={{ position: 'absolute', right: 0, bottom: 38, width: 300, maxHeight: 420, overflow: 'hidden', padding: 6, borderRadius: 10, background: '#171320', border: '1px solid rgba(124,92,252,0.3)', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', zIndex: 1200, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10, flexShrink: 0 }}>切换分组后点 Skill，再选 Opus 或 GPT Luna。无提示词时按节点名和参考图扩写。</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 8px', flexShrink: 0 }}>
+                    {SEEDANCE_PROMPT_SKILL_CATEGORIES.map(category => {
+                      const selected = promptSkillCategory === category.id
+                      return (
+                        <button
+                          key={category.id}
+                          type="button"
+                          className="nodrag nopan"
+                          onPointerDown={event => event.stopPropagation()}
+                          onClick={event => { event.stopPropagation(); setPromptSkillCategory(category.id); setPromptSkillMenu(null); setPromptSkillHoverId(null) }}
+                          style={{ height: 24, padding: '0 8px', borderRadius: 999, border: '1px solid ' + (selected ? 'rgba(196,181,253,0.55)' : 'rgba(124,92,252,0.22)'), background: selected ? 'rgba(124,92,252,0.38)' : '#1e1830', color: selected ? '#f4efff' : '#b9a9ef', fontSize: 10, fontWeight: selected ? 750 : 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          {category.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
+                    {SEEDANCE_PROMPT_SKILLS.filter(skill => skill.category === promptSkillCategory).map(skill => {
+                      const modelMenuOpen = promptSkillMenu === skill.id
+                      const hovered = promptSkillHoverId === skill.id || modelMenuOpen
+                      return (
+                        <div key={skill.id}>
+                          <button type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptSkillMenu(modelMenuOpen ? null : skill.id) }} onMouseEnter={() => setPromptSkillHoverId(skill.id)} onMouseLeave={() => setPromptSkillHoverId(null)} style={{ width: '100%', display: 'block', padding: '6px 8px', textAlign: 'left', border: '1px solid ' + (hovered ? 'rgba(196,181,253,0.42)' : 'transparent'), borderRadius: 7, background: hovered ? 'rgba(124,92,252,0.28)' : 'transparent', color: '#e8e1f7', cursor: 'pointer' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700 }}>{skill.name}</span>
+                              <span style={{ color: '#c4b5fd', fontSize: 10 }}>{modelMenuOpen ? '收起' : '选模型'}</span>
+                            </div>
+                            <div style={{ marginTop: 2, color: '#9488ad', fontSize: 10 }}>{skill.description}</div>
+                          </button>
+                          {modelMenuOpen && (
+                            <div className="nodrag nopan" style={{ display: 'flex', gap: 6, padding: '0 4px 6px' }}>
+                              {PROMPT_WASH_TEXT_CHOICES.map(choice => (
+                                <button key={choice.value} type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptSkillOpen(false); setPromptSkillMenu(null); void washVideoPrompt('conservative', choice.value, skill.id) }} style={{ flex: 1, height: 28, borderRadius: 7, border: '1px solid rgba(196,181,253,0.4)', background: '#2a2140', color: '#f4efff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                                  {choice.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {isPromptWashModel && (
+            <div ref={promptWashWrapRef} className="relative nodrag" style={{ flexShrink: 0 }}>
+              <button
+                type="button"
+                className="nodrag"
+                aria-label="洗提示词"
+                title="洗提示词并复制视频节点"
+                onPointerDown={event => event.stopPropagation()}
+                onClick={event => { event.stopPropagation(); setPromptSkillOpen(false); setPromptSkillMenu(null); setPromptWashModelMenu(null); setPromptWashOpen(value => !value) }}
+                style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(124,92,252,0.35)', background: promptWashOpen ? '#2a1f50' : '#1e1830', color: '#c4b5fd', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Wand2 size={15} strokeWidth={1.8} />
+              </button>
+              {promptWashOpen && (
+                <div className="nodrag nopan" style={{ position: 'absolute', right: 0, bottom: 38, width: 228, padding: 6, borderRadius: 10, background: '#171320', border: '1px solid rgba(124,92,252,0.3)', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', zIndex: 1200 }}>
+                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10 }}>{'\u70b9\u9009\u6a21\u5f0f\uff0c\u518d\u9009 Opus \u6216 GPT Luna'}</div>
+                  {PROMPT_WASH_MODES.filter(option => isMiniMaxModel ? option.value === 'minimax' : option.value !== 'minimax').map(option => {
+                    const modelMenuOpen = promptWashModelMenu === option.value
+                    return (
+                    <div key={option.value}>
+                      <button type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptWashModelMenu(modelMenuOpen ? null : option.value) }} onMouseEnter={() => setPromptWashHoverMode(option.value)} onMouseLeave={() => setPromptWashHoverMode(null)} style={{ width: '100%', display: 'block', padding: '7px 8px', textAlign: 'left', border: '1px solid ' + ((promptWashHoverMode === option.value || modelMenuOpen) ? 'rgba(196,181,253,0.42)' : 'transparent'), borderRadius: 7, background: (promptWashHoverMode === option.value || modelMenuOpen) ? 'rgba(124,92,252,0.28)' : 'transparent', color: '#e8e1f7', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700 }}>{option.label}</span>
+                          <span style={{ color: '#c4b5fd', fontSize: 10 }}>{modelMenuOpen ? '\u6536\u8d77' : '\u9009\u6a21\u578b'}</span>
+                        </div>
+                        <div style={{ marginTop: 2, color: '#9488ad', fontSize: 10 }}>{option.description}</div>
+                      </button>
+                      {modelMenuOpen && (
+                        <div className="nodrag nopan" style={{ display: 'flex', gap: 6, padding: '0 4px 6px' }}>
+                          {PROMPT_WASH_TEXT_CHOICES.map(choice => (
+                            <button key={choice.value} type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptWashOpen(false); setPromptWashModelMenu(null); void washVideoPrompt(option.value, choice.value) }} style={{ flex: 1, height: 28, borderRadius: 7, border: '1px solid rgba(196,181,253,0.4)', background: '#2a2140', color: '#f4efff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                              {choice.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           {/* Generate button */}
           <button
             className="flex items-center justify-center nodrag shotflow-node-primary-action"
@@ -3271,6 +3703,15 @@ export function VideoNode({ id, data, selected }: Props) {
           if (!cropSubmitting) setCropOpen(false)
         }}
         onConfirm={handleCropAccept}
+      />
+    )}
+    {uiRemovalOpen && videoUrl && (
+      <VideoUiRemovalModal
+        name={data.name || '视频'}
+        durationHintSec={sourceDurationHint}
+        onCancel={() => { if (!uiRemovalSubmitting) setUiRemovalOpen(false) }}
+        onPreview={handleUiRemovalPreview}
+        onConfirm={handleUiRemovalAccept}
       />
     )}
     {frameInterpolationOpen && videoUrl && (

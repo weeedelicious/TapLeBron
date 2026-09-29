@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "attribution": "Category map distilled from LearnPrompt/awesome-seedance (MIT code / CC BY 4.0 curation). Skill bodies are original Shotflow instructions for Seedance nodes.",
+  "categories": [
+    { "id": "structure", "label": "结构基础" },
+    { "id": "ugc", "label": "真实感与 UGC" },
+    { "id": "commercial", "label": "商业与产品" },
+    { "id": "narrative", "label": "叙事与表演" },
+    { "id": "style", "label": "风格化动画" },
+    { "id": "action", "label": "动作·舞蹈·特效" }
+  ],
+  "skills": [
+    { "id": "timeline-shot-script", "category": "structure", "name": "逐秒时间轴分镜脚本", "shortName": "时间轴分镜", "description": "按秒切开，每段一个动作一个镜头" },
+    { "id": "character-reference-lock", "category": "structure", "name": "参考图身份锁定", "shortName": "身份锁定", "description": "五官发型服装体型整段不漂移" },
+    { "id": "storyboard-grid-to-video", "category": "structure", "name": "分镜网格转视频", "shortName": "分镜转视频", "description": "把分镜格顺序连成可拍镜头" },
+    { "id": "handheld-ugc-vlog", "category": "ugc", "name": "手持 UGC vlog", "shortName": "手持UGC", "description": "消费级手持、呼吸感和生活毛边" },
+    { "id": "pov-continuous-take", "category": "ugc", "name": "第一人称一镜到底", "shortName": "POV一镜", "description": "主观镜头连续走完，中途不切" },
+    { "id": "retro-found-footage", "category": "ugc", "name": "早年 DV 家庭录像", "shortName": "复古DV", "description": "MiniDV 噪点、过曝和家用取景" },
+    { "id": "pet-animal", "category": "ugc", "name": "宠物动物当主角", "shortName": "宠物主角", "description": "动物体态真实，拟人但不变形" },
+    { "id": "ugc-creator-review", "category": "commercial", "name": "UGC 口播测评带货", "shortName": "口播带货", "description": "真人测评口播，产品特写不变形" },
+    { "id": "product-commercial-shotlist", "category": "commercial", "name": "电影级产品广告分镜", "shortName": "产品广告", "description": "微距、手部接触和英雄镜头" },
+    { "id": "process-transformation-montage", "category": "commercial", "name": "流程与变换蒙太奇", "shortName": "流程蒙太奇", "description": "制作、变换、前后对比按节拍切" },
+    { "id": "fashion-lookbook", "category": "commercial", "name": "时尚 lookbook 与人像写真片", "shortName": "时尚lookbook", "description": "走位、服装层次和杂志光" },
+    { "id": "dialogue-performance-beats", "category": "narrative", "name": "对白与表演节拍", "shortName": "对白表演", "description": "台词、表情和反应拍点对齐" },
+    { "id": "cinematic-narrative-short", "category": "narrative", "name": "电影级叙事短片", "shortName": "电影短片", "description": "起承转合，一场戏一个明确冲突" },
+    { "id": "travel-city-walk", "category": "narrative", "name": "电影感旅行漫游", "shortName": "旅行漫游", "description": "城市行走、光影和空间过渡" },
+    { "id": "meme-comedy", "category": "narrative", "name": "反转结尾搞笑短片", "shortName": "搞笑反转", "description": "铺垫要短，笑点落在最后一秒" },
+    { "id": "horror-suspense", "category": "narrative", "name": "恐怖悬疑短片", "shortName": "恐怖悬疑", "description": "信息隐瞒、声画错位和惊吓点" },
+    { "id": "anime-style-lock", "category": "style", "name": "动漫与风格化画风固定", "shortName": "动漫锁画风", "description": "线面比例和上色规则写死" },
+    { "id": "stop-motion-cadence", "category": "style", "name": "定格动画与步进节奏", "shortName": "定格动画", "description": "步进、材料质感和手作抖动" },
+    { "id": "3d-cartoon", "category": "style", "name": "3D 卡通角色短片", "shortName": "3D卡通", "description": "卡通体积、夸张表演和干净材质" },
+    { "id": "combat-choreography", "category": "action", "name": "打斗编排", "shortName": "打斗编排", "description": "招式交接清楚，一拍一个主要动作" },
+    { "id": "music-beat-sync-mv", "category": "action", "name": "音乐卡点 MV", "shortName": "卡点MV", "description": "动作和转场落在节拍上" },
+    { "id": "time-freeze-rewind", "category": "action", "name": "时间冻结与倒放奇观", "shortName": "时间冻结", "description": "冻结、碎裂、倒放要有物理过程" },
+    { "id": "car-vehicle", "category": "action", "name": "汽车与载具速度片", "shortName": "载具速度", "description": "速度感、反射和跟拍路径" },
+    { "id": "epic-fantasy-scifi", "category": "action", "name": "奇幻科幻大场面", "shortName": "奇幻科幻", "description": "空间尺度、能量和镜头压迫" },
+    { "id": "sports-extreme", "category": "action", "name": "体育与极限运动", "shortName": "极限运动", "description": "发力、落地和身体力学" }
+  ]
+}

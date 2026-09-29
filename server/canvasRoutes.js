@@ -53,9 +53,11 @@ const lightStageGeometryService = require('./services/LightStageGeometryService'
 const textureClarityService = require('./services/TextureClarityService');
 const subjectMattingService = require('./services/SubjectMattingService');
 const videoFrameInterpolationService = require('./services/VideoFrameInterpolationService');
+const videoUiRemovalService = require('./services/VideoUiRemovalService');
 const mediaEnhanceService = require('./services/MediaEnhanceService');
 const directorStageModelService = require('./services/DirectorStageModelService');
 const officialTemplateLibraryService = require('./services/OfficialTemplateLibraryService');
+const promptWashService = require('./services/PromptWashService');
 const jobService = require('./services/JobService');
 const {
   createProjectInCatalog,
@@ -95,6 +97,7 @@ const {
   normalizeFavoriteSourceProject,
   normalizeFavoriteSourceRoot,
   normalizeFavoriteTags,
+  sharedRecordReferencesAsset,
 } = require('./services/LibraryService');
 const appearanceDescriptorService = require('./services/appearanceDescriptorService');
 const appearanceHistoryService = require('./services/appearanceHistoryService');
@@ -131,6 +134,12 @@ function currentUserApiKey() {
   return store && store.userKey ? store.userKey : null;
 }
 function currentLlmKey() { return currentUserApiKey() || config.llmApiKey; }
+function isOpusModel(model) {
+  return String(model || '').trim().toLowerCase() === 'anthropic/claude-opus-5-5';
+}
+function llmKeyForModel(model) {
+  return isOpusModel(model) ? (config.opusApiKey || currentLlmKey()) : currentLlmKey();
+}
 function currentOpenaiKey() { return currentUserApiKey() || config.openaiApiKey; }
 
 apiRouter.use(async (req, res, next) => {
@@ -2289,14 +2298,27 @@ async function createOfficialTemplateCanvas(template, preferredOwnerId = null) {
 async function ensureOfficialTemplateCanvases(preferredOwnerId = null) {
   const run = officialTemplateEnsureQueue.then(async () => {
     const templates = await officialTemplateLibraryService.listTemplates();
-    const [rows] = await getPool().query(
-      "SELECT id, title, data FROM canvases WHERE canvas_role = 'template' ORDER BY created_at ASC, id ASC"
+    const [idRows] = await getPool().query(
+      "SELECT id FROM canvases WHERE canvas_role = 'template' ORDER BY created_at ASC, id ASC"
     );
+    const orderedIds = idRows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    let rows = [];
+    if (orderedIds.length > 0) {
+      const placeholders = orderedIds.map(() => '?').join(', ');
+      const [markerRows] = await getPool().query(
+        "SELECT id, JSON_UNQUOTE(JSON_EXTRACT(data, '$.officialTemplateId')) AS official_template_id FROM canvases WHERE id IN (" + placeholders + ")",
+        orderedIds
+      );
+      const markerById = new Map(markerRows.map((row) => [String(row.id), row]));
+      rows = orderedIds.map((id) => markerById.get(String(id))).filter(Boolean);
+    }
     const byId = new Map(rows.map((row) => [String(row.id), row]));
     const byTemplateId = new Map();
     for (const row of rows) {
-      const marker = String(parseJsonDocument(row.data, {})?.officialTemplateId || '');
-      if (marker && !byTemplateId.has(marker)) byTemplateId.set(marker, row);
+      const marker = String(row.official_template_id || '').trim();
+      if (marker && marker !== 'null' && !byTemplateId.has(marker)) byTemplateId.set(marker, row);
     }
 
     const usedCanvasIds = new Set();
@@ -4338,6 +4360,20 @@ apiRouter.post('/assets/upload', upload.single('file'), async (req, res, next) =
   }
 });
 
+function likeContains(value) {
+  return '%' + String(value).replace(/[\\%_]/g, (ch) => '\\' + ch) + '%';
+}
+
+async function sharedAssetGrantsAssetCopy(sourceUrl) {
+  const bare = String(sourceUrl || '').trim().split(/[?#]/)[0];
+  if (!bare) return false;
+  const needle = likeContains(bare);
+  const [rows] = await getPool().query(
+    "SELECT payload, preview_url FROM canvas_shared_assets WHERE CAST(payload AS CHAR) LIKE ? ESCAPE '\\\\' OR preview_url LIKE ? ESCAPE '\\\\' LIMIT 20",
+    [needle, needle]
+  );
+  return rows.some((row) => sharedRecordReferencesAsset(row.payload, row.preview_url, bare));
+}
 apiRouter.post('/assets/copy', async (req, res, next) => {
   try {
     const projectUuid = String(req.body.projectUuid || '');
@@ -4354,7 +4390,8 @@ apiRouter.post('/assets/copy', async (req, res, next) => {
       return;
     }
     const readable = await getReadableCanvasForUser(req, parsed.projectUuid);
-    if (!readable) {
+    const sharedCopy = !readable && await sharedAssetGrantsAssetCopy('/assets/' + parsed.projectUuid + '/' + parsed.storedName);
+    if (!readable && !sharedCopy) {
       res.status(403).json({ error: `没有画布 ${parsed.projectUuid} 的读取权限` });
       return;
     }
@@ -4930,7 +4967,7 @@ function parseEmbeddedJson(value) {
 }
 
 function isClaudeModel(model) {
-  return String(model || '').trim().toLowerCase().startsWith('claude');
+  return String(model || '').trim().toLowerCase().includes('claude');
 }
 
 function isGpt5Model(model) {
@@ -4967,7 +5004,7 @@ function shouldRetryWithoutReasoningEffort(error) {
 
 async function postLlmChatCompletions(payload, requestOptions = {}) {
   const axiosOptions = {
-    headers: { Authorization: `Bearer ${currentLlmKey()}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${llmKeyForModel(payload.model)}`, 'Content-Type': 'application/json' },
     timeout: 300_000,
     ...requestOptions
   };
@@ -7638,7 +7675,10 @@ function extractChatText(data) {
 async function chatComplete(messages, model = config.defaultChatModel, options = {}) {
   requireLlmKey();
   const payload = applyLlmPerformanceOptions({ model, messages, stream: false }, model, options, 0.4);
-  const response = await postLlmChatCompletions(payload);
+  const requestOptions = Number(options.timeoutMs) > 0
+    ? { timeout: Number(options.timeoutMs) }
+    : {};
+  const response = await postLlmChatCompletions(payload, requestOptions);
   return extractChatText(response.data).trim();
 }
 
@@ -9105,7 +9145,7 @@ apiRouter.post('/generate/video', async (req, res) => {
     const ratio = normalizeVideoRatio(model, settings.ratio || '16:9', modeType);
     const resolution = normalizeVideoResolution(model, settings.resolution || '720P');
     const duration = normalizeVideoDuration(model, settings.duration || 5, modeType);
-    const count = normalizeVideoCount(model, params.count, imageList.length > 0);
+    const count = normalizeVideoCount(model, params.count, imageList.length > 0, resolution);
     const referenceMaterials = summarizeVideoReferences(params, { imageList, videoList, audioList });
     const submissionParams = {
       taskType: 'video-generation',
@@ -9508,6 +9548,83 @@ apiRouter.post('/generate/translate', async (req, res) => {
   } catch (error) {
     const message = error.response?.data?.error?.message || error.response?.data?.message || error.message || String(error);
     res.status(500).json({ error: message });
+  }
+});
+
+apiRouter.post('/generate/prompt-wash', async (req, res) => {
+  let usageLogId = null;
+  try {
+    const body = req.body || {};
+    const projectUuid = String(body.projectUuid || '').trim();
+    const nodeKey = String(body.nodeKey || '').trim();
+    const sourceText = String(body.sourceText || '').trim();
+    const skillId = promptWashService.normalizeSkillId(body.skillId);
+    const nodeName = String(body.nodeName || '').trim();
+    if (!sourceText && !skillId) return res.status(400).json({ error: '请先填写要优化的文字' });
+
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!row) return res.status(404).json({ error: '画布不存在，或当前页面没有写入权限' });
+
+    const mode = promptWashService.normalizeMode(body.mode);
+    const target = promptWashService.resolveTarget(sourceText, body.target);
+    // MiniMax prompt washing is a short, structured rewrite. Use the fast
+    // text route by default instead of the slower reasoning model, which can
+    // otherwise occupy the full five-minute gateway timeout on a tiny prompt.
+    // Prompt washing uses the fast, gateway-allowlisted Luna route for every
+    // mode. Keep the caller override for controlled diagnostics/backward
+    // compatibility, but do not fall back to the blocked Sol chat default.
+    const textModel = String(body.textModel || 'anthropic/claude-opus-5-5');
+    const references = body.references && typeof body.references === 'object' ? body.references : {};
+    usageLogId = await safeCreateUsageLog(req, row, {
+      projectUuid,
+      nodeKey,
+      operationType: 'text',
+      endpoint: '/generate/prompt-wash',
+      provider: 'llm-proxy',
+      model: textModel,
+      mode: skillId ? `prompt-wash:skill:${skillId}` : `prompt-wash:${mode}`,
+      quantity: 1,
+      promptChars: sourceText.length || nodeName.length,
+      promptPreview: sourceText || nodeName,
+      inputCounts: {
+        images: Number(references.imageCount || 0),
+        videos: Number(references.videoCount || 0),
+        audios: Number(references.audioCount || 0),
+        texts: 1,
+      },
+      settings: target,
+    });
+
+    const messages = promptWashService.buildMessages({ sourceText, mode, skillId, target, references, nodeName });
+    const options = {
+      performanceMode: body.thinkingMode === 'deep' ? 'highest' : 'standard',
+      reasoningEffort: body.thinkingMode === 'deep' ? 'high' : 'medium',
+    };
+    let raw = await chatComplete(messages, textModel, { ...options, timeoutMs: mode === 'minimax' ? 120_000 : undefined });
+    let result;
+    try {
+      result = promptWashService.normalizeResult(raw, target);
+    } catch (firstError) {
+      raw = await chatComplete([
+        {
+          role: 'system',
+          content: 'Repair the supplied content into one valid JSON object. Preserve its meaning. Return JSON only, with a non-empty prompt field.',
+        },
+        { role: 'user', content: raw },
+      ], textModel, { performanceMode: 'standard', reasoningEffort: 'low', timeoutMs: mode === 'minimax' ? 120_000 : undefined });
+      try {
+        result = promptWashService.normalizeResult(raw, target);
+      } catch {
+        throw new Error(`提示词优化结果解析失败：${firstError.message}`);
+      }
+    }
+
+    await safeUpdateUsageLog(usageLogId, { status: 'succeeded', resultCount: 1 });
+    res.json(result);
+  } catch (error) {
+    const message = errorMessageFrom(error);
+    await safeUpdateUsageLog(usageLogId, { status: 'failed', errorMessage: message });
+    res.status(error?.response?.status || 500).json({ error: message });
   }
 });
 
@@ -10601,6 +10718,161 @@ async function safeCreateToolUsageLog(req, entry) {
  * GPU worker upload use temporary files that cannot be reconstructed after a
  * main-service restart.
  */
+apiRouter.post('/toolbox/video-ui-removal-preview', async (req, res) => {
+  let source = null;
+  let piped = false;
+  const cleanupSource = () => { if (source?.cleanup) { try { source.cleanup(); } catch {} } source = null; };
+  try {
+    const projectUuid = String(req.body?.projectUuid || '').trim();
+    const sourceUrl = String(req.body?.sourceUrl || '').trim();
+    if (!projectUuid || !sourceUrl) return res.status(400).json({ error: '\u53bb\u9664 UI \u9884\u89c8\u7f3a\u5c11\u753b\u5e03\u6216\u89c6\u9891', errorCode: 'VIDEO_UI_REMOVAL_PREVIEW_INVALID' });
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!row) return res.status(404).json({ error: '\u753b\u5e03\u4e0d\u5b58\u5728\u6216\u6ca1\u6709\u5199\u5165\u6743\u9650', errorCode: 'CANVAS_NOT_ACCESSIBLE' });
+    source = await resolveVideoTrimSource(sourceUrl, projectUuid, req);
+    const sourceMeta = await probeMediaMetadata(source.filePath, source.mimeType, source.originalName, { probeAv: true });
+    if (Number(sourceMeta.durationSec || 0) > 30.05) {
+      cleanupSource();
+      return res.status(400).json({ error: '\u53bb\u9664 UI \u76ee\u524d\u53ea\u5904\u7406 30 \u79d2\u4ee5\u5185\u7684\u89c6\u9891', errorCode: 'VIDEO_UI_REMOVAL_TOO_LONG' });
+    }
+    const preview = await videoUiRemovalService.previewMask(source.filePath, { serviceUrl: config.mediaEnhance.serviceUrl, serviceToken: config.mediaEnhance.serviceToken });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'no-store');
+    if (preview.coverage) res.setHeader('X-Mask-Coverage', String(preview.coverage));
+    piped = true;
+    preview.stream.on('end', cleanupSource);
+    preview.stream.on('error', () => { cleanupSource(); if (!res.writableEnded) res.end(); });
+    res.on('close', cleanupSource);
+    preview.stream.pipe(res);
+  } catch (error) {
+    cleanupSource();
+    if (piped || res.headersSent) return;
+    const status = Number(error.statusCode || 500);
+    res.status(status >= 400 && status < 600 ? status : 500).json({ error: error.message || '\u8499\u7248\u9884\u89c8\u5931\u8d25', errorCode: error.code || 'VIDEO_UI_REMOVAL_PREVIEW_FAILED' });
+  }
+});
+
+apiRouter.post('/toolbox/video-ui-removal', async (req, res) => {
+  let source = null;
+  let internalId = '';
+  let abortController = null;
+  let tempOutputPath = '';
+  const cleanupSource = () => { if (source?.cleanup) { try { source.cleanup(); } catch {} } source = null; };
+  try {
+    const projectUuid = String(req.body?.projectUuid || '').trim();
+    const nodeKey = String(req.body?.nodeKey || '').trim();
+    const sourceUrl = String(req.body?.sourceUrl || '').trim();
+    const request = videoUiRemovalService.normalizeMethod(req.body?.method);
+    if (!projectUuid || !nodeKey || !sourceUrl) return res.status(400).json({ error: 'projectUuid、nodeKey 和 sourceUrl 都是必填项', errorCode: 'VIDEO_UI_REMOVAL_REQUEST_INVALID' });
+    const row = await getSessionWritableCanvasForUser(req, res, projectUuid);
+    if (!row) return res.status(404).json({ error: '画布不存在或没有写入权限', errorCode: 'CANVAS_NOT_ACCESSIBLE' });
+    const data = readCanvasData(row);
+    const targetNode = nodeListFromData(data, projectUuid).find((item) => String(item?.nodeKey || item?.id || '') === nodeKey);
+    if (!targetNode) return res.status(404).json({ error: '去除 UI 输出节点不存在', errorCode: 'VIDEO_UI_REMOVAL_NODE_NOT_FOUND' });
+    source = await resolveVideoTrimSource(sourceUrl, projectUuid, req);
+    const sourceMeta = await probeMediaMetadata(source.filePath, source.mimeType, source.originalName, { probeAv: true });
+    internalId = randomId();
+    const taskRecord = await jobService.createPersistentTask({
+      ...generationTaskBaseFromCanvas(req, row, { projectUuid, nodeKey }),
+      jobId: internalId, taskType: 'video', endpoint: '/toolbox/video-ui-removal', provider: request.provider, model: request.model,
+      mode: 'ui_removal', resolution: sourceMeta.width && sourceMeta.height ? sourceMeta.width + 'x' + sourceMeta.height : null,
+      durationSec: sourceMeta.durationSec || null, quantity: 1,
+      requestParams: { action: 'video_ui_removal', sourceUrl, sourceNodeKey: String(req.body?.sourceNodeKey || ''), method: request.method, provider: request.provider, model: request.model, width: sourceMeta.width, height: sourceMeta.height, durationSec: sourceMeta.durationSec || null },
+    });
+    abortController = new AbortController();
+    generationAbortControllers.set(internalId, abortController);
+    tempOutputPath = path.join(tmpDir(), internalId + '-ui-removal.mp4');
+    jobService.setTask(internalId, { status: 1, progressPercent: 1, providerStatus: { phase: 'queued', phaseLabel: '去除 UI' } });
+    const created = await videoUiRemovalService.createWorkerJob(source.filePath, request, { serviceUrl: config.mediaEnhance.serviceUrl, serviceToken: config.mediaEnhance.serviceToken, signal: abortController.signal });
+    jobService.setTask(internalId, { status: 1, progressPercent: 3, providerStatus: { phase: 'running', phaseLabel: '去除 UI', workerJobId: created.jobId, method: request.method, model: request.model } });
+    res.json({ jobId: internalId, generationVersion: taskRecord.generationVersion, method: request.method, provider: request.provider, model: request.model, workerJobId: created.jobId });
+    setImmediate(async () => {
+      try {
+        let payload = {};
+        const started = Date.now();
+        while (Date.now() - started < Number(config.mediaEnhance.videoTimeoutMs || 3600000)) {
+          if (abortController.signal.aborted) throw new Error('去除 UI 已取消');
+          payload = await videoUiRemovalService.getWorkerJob(created.jobId, { serviceUrl: config.mediaEnhance.serviceUrl, serviceToken: config.mediaEnhance.serviceToken, signal: abortController.signal });
+          const status = String(payload.status || '').toLowerCase();
+          const progress = Math.max(3, Math.min(95, Number(payload.progressPercent || 0)));
+          jobService.setTask(internalId, { status: 1, progressPercent: progress, providerStatus: { phase: payload.phase || 'running', phaseLabel: '去除 UI', workerJobId: created.jobId } });
+          if (status === 'succeeded') break;
+          if (status === 'failed' || status === 'cancelled') throw new Error(payload.error || '去除 UI 失败');
+          await new Promise((resolve) => setTimeout(resolve, Number(config.mediaEnhance.pollIntervalMs || 2000)));
+        }
+        if (String(payload.status || '').toLowerCase() !== 'succeeded') throw new Error('去除 UI 超时');
+        await videoUiRemovalService.downloadWorkerResult(created.jobId, tempOutputPath, { serviceUrl: config.mediaEnhance.serviceUrl, serviceToken: config.mediaEnhance.serviceToken, signal: abortController.signal });
+        const outputStat = fs.statSync(tempOutputPath);
+        if (!outputStat.isFile() || outputStat.size < 1024) {
+          throw new Error('\u53bb\u9664 UI \u6ca1\u6709\u8fd4\u56de\u6709\u6548\u89c6\u9891');
+        }
+        const stored = await storeDerivedVideoAsset(
+          projectUuid,
+          row,
+          tempOutputPath,
+          source.originalName,
+          'ui-removed-' + request.method,
+          { sourceType: 'derived' },
+        );
+        tempOutputPath = '';
+        const output = taskOutputForStoredAsset(
+          stored.url,
+          stored.meta,
+          'video/mp4',
+          {
+            uiRemoval: true,
+            uiRemovalMethod: request.method,
+            uiRemovalProvider: request.provider,
+            uiRemovalModel: request.model,
+            workerJobId: created.jobId,
+          },
+        );
+        await jobService.setTaskAndWait(internalId, {
+          status: 2,
+          progressPercent: 100,
+          urls: [stored.url],
+          outputs: [{
+            ...output,
+            model: request.model,
+            resolution: stored.meta?.width && stored.meta?.height
+              ? stored.meta.width + 'x' + stored.meta.height
+              : (sourceMeta.width && sourceMeta.height ? sourceMeta.width + 'x' + sourceMeta.height : undefined),
+            durationSec: Number(stored.meta?.durationSec || sourceMeta.durationSec) || undefined,
+            isPrimary: true,
+          }],
+          providerStatus: {
+            phase: 'completed',
+            phaseLabel: '\u53bb\u9664 UI',
+            method: request.method,
+            provider: request.provider,
+            model: request.model,
+            workerJobId: created.jobId,
+            codec: stored.meta?.codecName,
+            pixelFormat: stored.meta?.pixelFormat,
+          },
+        });
+      } catch (error) {
+        await jobService.setTaskAndWait(internalId, {
+          status: 3,
+          progressPercent: 100,
+          error: error?.message || '\u53bb\u9664 UI \u5931\u8d25',
+          providerStatus: { phase: 'failed', phaseLabel: '\u53bb\u9664 UI' },
+        });
+      } finally {
+        cleanupSource();
+        if (tempOutputPath) {
+          try { fs.rmSync(tempOutputPath, { force: true }); } catch { /* best effort */ }
+          tempOutputPath = '';
+        }
+        generationAbortControllers.delete(internalId);
+      }
+    });
+  } catch (error) {
+    cleanupSource();
+    if (internalId) generationAbortControllers.delete(internalId);
+    if (!res.headersSent) res.status(error?.statusCode || 500).json({ error: error?.message || '去除 UI 失败', errorCode: error?.code || 'VIDEO_UI_REMOVAL_FAILED' });
+  }
+});
+
 apiRouter.post('/toolbox/video-frame-interpolation', async (req, res) => {
   let source = null;
   let tempOutputPath = '';
