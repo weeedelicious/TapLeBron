@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mivo Canvas</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/mstudio/vendor/three.module.js?v=20261018-core"
+  }
+}
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #100e16;
+    --panel: #1a1624;
+    --panel-2: #241c33;
+    --line: rgba(196, 181, 253, 0.28);
+    --accent: #c4b5fd;
+    --accent-2: #8b5cf6;
+    --text: #f7f4ff;
+    --muted: #c9bedd;
+    --danger: #ffb4c8;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  #app { height: 100%; display: flex; flex-direction: column; }
+  header {
+    height: 64px; display: flex; align-items: center; gap: 14px;
+    padding: 0 14px; border-bottom: 1px solid var(--line); background: #161222;
+  }
+  header img { width: 42px; height: 42px; border-radius: 10px; object-fit: cover; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.12em; color: var(--muted); line-height: 1; }
+  h1 { margin: 2px 0 0; font-size: 26px; line-height: 1; font-weight: 800; }
+  header .spacer { flex: 1; }
+  header .actions, .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button.action, button.mini, .tabs button, .library button, .list button.item {
+    border: 1px solid var(--line); background: #2a2140; border-radius: 9px;
+  }
+  button.action { padding: 8px 12px; font-weight: 700; }
+  button.action.primary { background: linear-gradient(180deg, #a78bfa, #7c3aed); border-color: transparent; color: white; }
+  button.mini { padding: 4px 8px; background: transparent; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #status { min-width: 72px; color: var(--muted); font-size: 13px; }
+  #workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px 1fr 300px; }
+  aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  aside.right { border-right: 0; border-left: 1px solid var(--line); }
+  .tabs { display: flex; gap: 6px; padding: 10px; }
+  .tabs button.active { background: var(--accent-2); border-color: transparent; }
+  .panel { padding: 0 10px 12px; overflow: auto; min-height: 0; }
+  .library, .list { display: flex; flex-direction: column; gap: 6px; }
+  .library button, .list button.item { text-align: left; padding: 8px 10px; }
+  .list button.item.active { outline: 2px solid var(--accent); }
+  main { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr 176px; }
+  #viewport { position: relative; min-height: 0; background: #09080e; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+  #reference { position: absolute; z-index: 0; object-fit: contain; pointer-events: none; transform-origin: center center; }
+  #monitor {
+    position: absolute; z-index: 2; right: 12px; bottom: 12px; width: min(320px, 34%);
+    background: #07060b; border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  }
+  #monitor canvas { display: block; width: 100%; height: auto; }
+  #monitor span { position: absolute; left: 8px; top: 6px; font-size: 12px; color: white; text-shadow: 0 1px 2px #000; }
+  #timeline { border-top: 1px solid var(--line); background: #14111c; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .keys { position: relative; height: 28px; background: #241c33; border-radius: 7px; }
+  .keys b { position: absolute; top: 4px; width: 10px; height: 20px; margin-left: -5px; border-radius: 3px; background: var(--accent); }
+  .keys b.selected { background: white; }
+  label.field { display: grid; grid-template-columns: 64px 1fr; gap: 6px; align-items: center; margin: 6px 0; font-size: 13px; }
+  input[type="text"], input[type="number"], select { width: 100%; background: #100e16; border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; }
+  h2 { margin: 8px 0; font-size: 15px; }
+  .error { color: var(--danger); min-height: 18px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <img src="/mstudio-logo.png" alt="M-studio">
+    <div>
+      <div class="eyebrow">Mivo Canvas</div>
+      <h1>M-studio工作台</h1>
+    </div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <span id="status">就绪</span>
+      <button class="action" id="undo" type="button">撤销</button>
+      <button class="action" id="redo" type="button">重做</button>
+      <button class="action" id="open-project" type="button">打开</button>
+      <button class="action" id="save-project" type="button">保存</button>
+      <button class="action" id="shot-png" type="button">截图到画布</button>
+      <button class="action primary" id="make-video" type="button">生成视频节点</button>
+      <input id="file" type="file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+  <div id="workspace">
+    <aside>
+      <div class="tabs">
+        <button type="button" data-tab="library" class="active">资源</button>
+        <button type="button" data-tab="tree">层级</button>
+        <button type="button" data-tab="shots">镜头</button>
+      </div>
+      <div class="panel" id="left-panel"></div>
+    </aside>
+    <main>
+      <div id="viewport">
+        <img id="reference" alt="">
+        <canvas id="view"></canvas>
+        <div id="monitor"><span>摄像机</span><canvas id="monitor-canvas"></canvas></div>
+      </div>
+      <div id="timeline"></div>
+    </main>
+    <aside class="right"><div class="panel" id="inspector"></div></aside>
+  </div>
+</div>
+<script type="module" src="/mstudio/app.js?v=20261018-core"></script>
+</body>
+</html>
