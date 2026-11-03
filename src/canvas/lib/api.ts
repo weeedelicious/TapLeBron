@@ -628,6 +628,7 @@ export const generateApi = {
         progressPercent: number;
         urls?: string[];
         error?: string;
+        providerJobIds?: string[];
         providerStatus?: {
           previewUrls?: Array<string | null>;
           [key: string]: unknown;

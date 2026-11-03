@@ -11,6 +11,7 @@ import { AtmosphereTransferNode } from '../features/atmosphere-transfer/Atmosphe
 import { PanoramaViewerNode } from '../features/panorama/PanoramaViewerNode'
 import { ImageCompareNode } from '../features/image-compare/ImageCompareNode'
 import { VideoCompareNode } from '../features/video-compare/VideoCompareNode'
+import { UiMaskNode } from './nodes/UiMaskNode'
 
 export const nodeTypes = {
   image: ImageNode,
@@ -26,4 +27,5 @@ export const nodeTypes = {
   panorama_viewer: PanoramaViewerNode,
   image_compare: ImageCompareNode,
   video_compare: VideoCompareNode,
+  ui_mask: UiMaskNode,
 }

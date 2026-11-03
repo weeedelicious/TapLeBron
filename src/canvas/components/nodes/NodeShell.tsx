@@ -78,7 +78,13 @@ export function NodeShell({
   const [isHovered, setIsHovered] = useState(false)
   const [isSourceHandleHovered, setIsSourceHandleHovered] = useState(false)
   const sourceHandleLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { deleteNodes, updateNodeData, duplicateNodes, updateNodeSize, pushHistory, connectionHoverTargetId, selectedNodeKeys } = useCanvasStore()
+  const deleteNodes = useCanvasStore(state => state.deleteNodes)
+  const updateNodeData = useCanvasStore(state => state.updateNodeData)
+  const duplicateNodes = useCanvasStore(state => state.duplicateNodes)
+  const updateNodeSize = useCanvasStore(state => state.updateNodeSize)
+  const pushHistory = useCanvasStore(state => state.pushHistory)
+  const connectionHoverTargetId = useCanvasStore(state => state.connectionHoverTargetId)
+  const selectedNodeKeys = useCanvasStore(state => state.selectedNodeKeys)
   const measuredNodeWidth = useStore((state) => {
     const node = (state.nodeLookup as Map<string, {
       measured?: { width?: number }
@@ -165,7 +171,10 @@ export function NodeShell({
   const sourceHandleIconScale = inverseZoom * handleIconScreenScale * (showSourceHandle ? 1 : 0.9)
   const showDefaultHeader = headerMode === 'default'
   const showMenuOnly = headerMode === 'menu-only'
-  const toolbarTopOffset = showDefaultHeader ? 74 : 52
+  // Toolbar is 1.5x and grows downward from its top edge.
+  // Only add the extra height; do not multiply the old 74/52 offset by 1.5,
+  // or a large gap opens above the resolution line.
+  const toolbarTopOffset = showDefaultHeader ? 88 : 66
   const showFavoriteActions = Boolean(selected && selectedNodeKeys.length === 1)
   const showStandaloneFavoriteToolbar = Boolean(showFavoriteToolbarFallback && showFavoriteActions)
   const favoriteActions = useFavoriteToolbarActions([nodeKey], showFavoriteActions)
@@ -297,7 +306,7 @@ export function NodeShell({
           className="absolute"
           style={{ top: -toolbarTopOffset / safeZoom, left: 0, right: 0, zIndex: 50, pointerEvents: 'none' }}
         >
-          <div style={{ pointerEvents: 'all', transform: `scale(${inverseZoom})`, transformOrigin: 'top center' }}>
+          <div style={{ pointerEvents: 'all', transform: `scale(${inverseZoom * 1.5})`, transformOrigin: 'top center' }}>
             {toolbar ? (
               <MediaToolbarActionsProvider actions={showFavoriteActions ? favoriteActions : []}>
                 {toolbar}

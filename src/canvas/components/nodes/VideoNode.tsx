@@ -27,6 +27,7 @@ import { assetsApi, generateApi, toolboxApi } from '@/lib/api'
 import { errorToText } from '@/lib/display'
 import { defaultImageParams, defaultVideoParams, VIDEO_MODELS } from '@/lib/nodeData'
 import { textPromptFromRefs } from '@/lib/textPrompt'
+import { extractPromptDurationSeconds } from '@/lib/promptDuration'
 import {
   markPromptChipRefsMissingInParams,
   refreshPromptChipUrlsInHtml,
@@ -47,6 +48,7 @@ import {
   getVideoRefRule,
   getVideoResolutionNote,
   getVideoResolutionOptions,
+  videoModelSupportsDraft,
   videoRefCountError,
   videoReferenceNote,
   normalizeVideoDurationValue,
@@ -354,6 +356,18 @@ type ConnectedMediaRef = NodeRef & {
   coverSrc?: string
 }
 
+function SettingCheck({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden style={{ width: 14, height: 14, borderRadius: 4, flex: '0 0 14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box', border: on ? '1.5px solid #c4b5fd' : '1.5px solid #8d84a8', background: on ? '#7c5cfc' : 'transparent' }}>
+      {on ? (
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1.8 5.1 L4 7.3 L8.2 2.7" fill="none" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </span>
+  )
+}
+
 export function VideoNode({ id, data, selected }: Props) {
   const { addNodeAt, updateNodeData, nodes, edges, setEdges, selectedNodeKeys, activePanelNodeId, setActivePanelNode, setSelected, pushHistory, persistNodesAndWait } = useCanvasStore()
   const { addTask, startPolling, cancelTask } = useTasksStore()
@@ -640,6 +654,15 @@ export function VideoNode({ id, data, selected }: Props) {
   const resolution = normalizeVideoResolutionValue(model, params.settings.resolution)
   const duration = normalizeVideoDurationValue(model, params.settings.duration, mode)
   const sound = params.settings.enableSound ?? 'on'
+  const supportsDraft = videoModelSupportsDraft(model) && mode !== 'video-edit' && mode !== 'extend'
+  const draft = supportsDraft && params.settings.draft === true
+  const draftMeta = data._assetGenerationMeta || {}
+  const directDraftTaskId = videoUrl ? (draftMeta[videoUrl] as AssetGenerationMeta | undefined)?.draftTaskId : ''
+  const matchedDraftTaskId = directDraftTaskId || Object.entries(draftMeta).find(([key, item]) => {
+    const clean = (value: string) => value.split('#')[0].split('?')[0]
+    return Boolean(videoUrl) && clean(key) === clean(videoUrl || '') && (item as AssetGenerationMeta | undefined)?.draftTaskId
+  })?.[1]?.draftTaskId
+  const draftTaskId = String(matchedDraftTaskId || '')
 
   /**
    * 决定设置弹层往上还是往下展开。目标是**完整显示**：
@@ -901,6 +924,12 @@ export function VideoNode({ id, data, selected }: Props) {
     const text = textPromptFromRefs((params.textList as NodeRef[] | undefined)?.filter(r => r.nodeId), useCanvasStore.getState().nodes)
     const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
     const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    const durationRule = getVideoDurationRule(String(currentParams.model || ''), currentParams.modeType)
+    const durationLocked = durationRule.min === durationRule.max && durationRule.default === durationRule.min && durationRule.min < 0
+    const promptSeconds = extractPromptDurationSeconds(text)
+    const settings = !durationLocked && promptSeconds != null
+      ? { ...currentParams.settings, duration: normalizeVideoDurationValue(String(currentParams.model || ''), promptSeconds, currentParams.modeType) }
+      : currentParams.settings
     editorRef.current?.setPlainText(text)
     updateNodeData(id, {
       params: {
@@ -908,6 +937,7 @@ export function VideoNode({ id, data, selected }: Props) {
         prompt: text,
         promptChips: [],
         promptHtml: undefined,
+        settings,
       } as unknown as Record<string, unknown>,
     })
   }, [id, params, updateNodeData])
@@ -1014,10 +1044,27 @@ export function VideoNode({ id, data, selected }: Props) {
       params: {
         ...currentParams,
         count: nextCount,
-        settings: { ...currentParams.settings, resolution: nextResolution },
+        settings: { ...currentParams.settings, resolution: nextResolution, ...(nextResolution !== '480P' ? { draft: false } : {}) },
       } as unknown as Record<string, unknown>,
     })
   }, [id, params, updateNodeData])
+
+  const setDraftMode = useCallback((enabled: boolean) => {
+    const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
+    const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    updateNodeData(id, {
+      params: {
+        ...currentParams,
+        settings: {
+          ...currentParams.settings,
+          draft: enabled,
+          ...(enabled ? { resolution: '480P' } : {}),
+        },
+      } as unknown as Record<string, unknown>,
+    })
+  }, [id, params, updateNodeData])
+
+  const finalizeDraftRef = useRef('')
 
   const handleGenerate = useCallback(async () => {
     // 只挡"请求还在飞"和 5 秒冷却。故意不再挡 taskInfo.loading —— 上一次还在跑也允许再发。
@@ -1036,9 +1083,35 @@ export function VideoNode({ id, data, selected }: Props) {
       const freshVideoList = refreshRefList(params.videoList as NodeRef[] | undefined).filter(ref => ref.url)
       const freshAudioList = refreshRefList(params.audioList as NodeRef[] | undefined).filter(ref => ref.url)
       const requestModel = params.model || 'Seedance_2_0'
+      const finalizeDraftTaskId = finalizeDraftRef.current.trim()
+      finalizeDraftRef.current = ''
+      if (finalizeDraftTaskId) {
+        if (!videoModelSupportsDraft(requestModel)) {
+          setGenError('\u53ea\u6709 Seedance 2.5 \u53ef\u4ee5\u628a\u6837\u7247\u8f6c\u6210 1080P \u6210\u7247')
+          return
+        }
+        setIsSubmitting(true)
+        try {
+          const res = await generateApi.video(data.projectUuid, id, {
+            ...params,
+            model: requestModel,
+            finalizeDraftTaskId,
+            settings: { ...params.settings, draft: false, resolution: '1080P' },
+          } as unknown as Record<string, unknown>)
+          addTask(res.jobId, id, res.generationVersion)
+          startPolling(res.jobId, data.projectUuid)
+          startGenerateCooldown()
+        } catch (e: unknown) {
+          setIsSubmitting(false)
+          const axErr = e as { response?: { data?: { error?: unknown } }; message?: string }
+          setGenError(errorToText(axErr.response?.data?.error ?? axErr.message, '\u751f\u6210\u5931\u8d25'))
+        }
+        return
+      }
       const normalizedMode = normalizeVideoModeKey(params.modeType as string | undefined)
+      const draft = videoModelSupportsDraft(requestModel) && params.settings.draft === true && normalizedMode !== 'video-edit' && normalizedMode !== 'extend'
       const normalizedRatio = normalizeVideoRatioValue(requestModel, params.settings.ratio, normalizedMode)
-      const normalizedResolution = normalizeVideoResolutionValue(requestModel, params.settings.resolution)
+      const normalizedResolution = normalizeVideoResolutionValue(requestModel, draft ? '480P' : params.settings.resolution)
       const normalizedDuration = normalizeVideoDurationValue(requestModel, params.settings.duration, normalizedMode)
       const prompt = String(params.prompt || '').trim() || textPromptFromRefs(params.textList as NodeRef[] | undefined, nodes)
       const hasVisualRef = freshImageList.length > 0 || freshVideoList.length > 0
@@ -1131,6 +1204,7 @@ export function VideoNode({ id, data, selected }: Props) {
           ratio: normalizedRatio,
           resolution: normalizedResolution,
           duration: normalizedDuration,
+          draft,
         },
         count: submitCount,
       }, requestChipUrls)
@@ -1715,6 +1789,7 @@ export function VideoNode({ id, data, selected }: Props) {
   const panelPromptMaxHeight = panelExpanded
     ? Math.max(380, Math.min(680, viewportHeight - 360))
     : 132
+  const panelScrollsPromptOnly = Boolean(panelSize) || panelExpanded
 
   const commitNodeName = useCallback(() => {
     const nextName = nameDraft.trim() || 'video'
@@ -2211,6 +2286,24 @@ export function VideoNode({ id, data, selected }: Props) {
             : <Crop size={14} strokeWidth={1.9} />,
           onClick: openCropModal,
           disabled: cropSubmitting,
+        },
+        {
+          key: 'ui-mask',
+          label: 'UI遮罩',
+          icon: <Scissors size={14} strokeWidth={1.9} />,
+          onClick: () => {
+            if (!videoUrl) return
+            const state = useCanvasStore.getState()
+            const sourceNode = state.nodes.find((node) => node.id === id)
+            const outgoing = state.edges.filter((edge) => edge.source === id).length
+            const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+            const created = addNodeAt('ui_mask', (sourceNode?.position.x ?? 0) + shellWidth + 80, (sourceNode?.position.y ?? 0) + outgoing * 44, {
+              name: 'UI遮罩',
+              params: { videoList: [sourceRef] } as unknown as Record<string, unknown>,
+            })
+            state.setSelected([created.id])
+            state.setActivePanelNode(null)
+          },
         },
         {
           key: 'ui-removal',
@@ -2852,8 +2945,12 @@ export function VideoNode({ id, data, selected }: Props) {
       >
       <div className="shotflow-node-popover-shell" style={panelExpanded ? {
         width: expandedPanelWidth,
+        height: '86vh',
         maxHeight: '86vh',
-        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        minHeight: 0,
         background: '#1a1625',
         borderRadius: 16,
         border: '1px solid #2d2040',
@@ -2866,7 +2963,7 @@ export function VideoNode({ id, data, selected }: Props) {
         className="flex items-center nodrag shotflow-node-popover-tabs"
         role="tablist"
         aria-label="视频生成模式"
-        style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}
+        style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}) }}
       >
         <div className="flex flex-1 px-1.5 pt-0.5 gap-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
           {modeOptions.map(m => (
@@ -2908,7 +3005,7 @@ export function VideoNode({ id, data, selected }: Props) {
         </button>
       </div>
 
-      <div className="flex items-center gap-1 px-2 py-1.5 nodrag shotflow-node-popover-reference-row" style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+      <div className="flex items-center gap-1 px-2 py-1.5 nodrag shotflow-node-popover-reference-row" style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}) }}>
         {/* Connected image thumbnails 鈥?drag reorder, 脳 delete, hover zoom */}
         {connectedImages.map((ref, i) => (
           <div key={ref.nodeId}
@@ -3109,7 +3206,7 @@ export function VideoNode({ id, data, selected }: Props) {
       {connectedVideos.length > 0 && referenceVideoNote && (
         <div
           className="px-3 py-2 nodrag shotflow-node-popover-reference-note"
-          style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', fontSize: 10, color: '#6a5a8a', ...(panelSize ? { flexShrink: 0 } : {}) }}
+          style={{ borderBottom: '1px solid rgba(124,92,252,0.12)', fontSize: 10, color: '#6a5a8a', ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}) }}
         >
           {referenceVideoNote}
         </div>
@@ -3122,7 +3219,7 @@ export function VideoNode({ id, data, selected }: Props) {
           style={{
             borderBottom: '1px solid rgba(255,170,90,0.2)', fontSize: 10, lineHeight: 1.5,
             color: '#e8b478', background: 'rgba(255,170,90,0.08)',
-            ...(panelSize ? { flexShrink: 0 } : {}),
+            ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}),
           }}
         >
           {refKindWarning}
@@ -3130,7 +3227,7 @@ export function VideoNode({ id, data, selected }: Props) {
       )}
 
       {/* Prompt 鈥?PromptEditor with scrollable area */}
-      <div ref={promptPanelRef} className="px-2 pt-1.5 pb-1 nodrag shotflow-node-popover-prompt-area" style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', ...(panelSize ? { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } : {}) }}>
+      <div ref={promptPanelRef} className="px-2 pt-1.5 pb-1 nodrag shotflow-node-popover-prompt-area" style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', ...(panelScrollsPromptOnly ? { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } : {}) }}>
         <div
           className="nodrag shotflow-prompt-header"
           style={{
@@ -3139,6 +3236,7 @@ export function VideoNode({ id, data, selected }: Props) {
             justifyContent: 'space-between',
             minHeight: 24,
             marginBottom: 2,
+            ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}),
           }}
         >
           <span className="shotflow-prompt-title" style={{ color: 'rgba(218,209,245,0.72)', fontSize: 11, fontWeight: 600 }}>
@@ -3161,7 +3259,7 @@ export function VideoNode({ id, data, selected }: Props) {
                 fontWeight: 700,
                 cursor: upstreamTextPrompt ? 'pointer' : 'not-allowed',
               }}
-              title={upstreamTextPrompt ? '同步上游文本节点内容' : '上游文本节点暂无内容'}
+              title={upstreamTextPrompt ? '同步上游文本，并按提示词里的秒数设置时长' : '上游文本节点暂无内容'}
             >
               同步
             </button>
@@ -3194,7 +3292,7 @@ export function VideoNode({ id, data, selected }: Props) {
         <div
           className="nodrag shotflow-node-popover-scroll"
           style={{
-            maxHeight: panelSize ? 'none' : panelPromptMaxHeight,
+            maxHeight: panelScrollsPromptOnly ? 'none' : panelPromptMaxHeight,
             overflowY: 'auto',
             overflowX: 'hidden',
             paddingRight: 3,
@@ -3204,7 +3302,7 @@ export function VideoNode({ id, data, selected }: Props) {
             maxWidth: '100%',
             minWidth: 0,
             boxSizing: 'border-box',
-            ...(panelSize ? { flex: '1 1 auto', minHeight: 0 } : {}),
+            ...(panelScrollsPromptOnly ? { flex: '1 1 auto', minHeight: 0 } : {}),
           }}
         >
           <PromptEditor
@@ -3282,7 +3380,7 @@ export function VideoNode({ id, data, selected }: Props) {
       {/* Error */}
       {(genError || data.taskInfo?.status === 3) && (
         <div className="mx-2 mb-1 px-2 py-0.5 rounded text-xs nodrag flex items-center justify-between shotflow-node-popover-error"
-          style={{ background: '#2a1020', color: '#f87171', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+          style={{ background: '#2a1020', color: '#f87171', ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}) }}>
           <span>{genError ?? errorToText(data.taskInfo?.error, '生成失败')}</span>
           <button className="nodrag" style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 10 }}
             onClick={() => { setGenError(null); updateNodeData(id, { taskInfo: undefined }) }}>清除</button>
@@ -3304,7 +3402,7 @@ export function VideoNode({ id, data, selected }: Props) {
           `isLoading && false` 长期关着，是死代码，已删。 */}
 
       {/* Bottom bar wrapper 鈥?settings popup floats above */}
-      <div ref={bottomWrapRef} className="relative nodrag shotflow-node-popover-bottom-wrap" style={{ borderTop: '1px solid rgba(124,92,252,0.12)', ...(panelSize ? { flexShrink: 0 } : {}) }}>
+      <div ref={bottomWrapRef} className="relative nodrag shotflow-node-popover-bottom-wrap" style={{ borderTop: '1px solid rgba(124,92,252,0.12)', ...(panelScrollsPromptOnly ? { flexShrink: 0 } : {}) }}>
         {/*
           这个弹层必须 portal 到 body，不能留在面板里：留在里面它就被面板上边裁掉，
           被裁掉的正是最上面的「比例」「清晰度」两行（2026-08-19 的"改不了分辨率"）。
@@ -3334,9 +3432,10 @@ export function VideoNode({ id, data, selected }: Props) {
                   return (
                     <button key={r.value}
                       className="flex flex-col items-center justify-end gap-1 rounded nodrag"
-                      style={{ background: active ? '#2a1f50' : '#1e1830', border: active ? '1px solid #7c5cfc' : '1px solid #312550', cursor: 'pointer', padding: '7px 10px 6px', minWidth: 46 }}
+                      style={{ position: 'relative', background: active ? '#2a1f50' : '#1e1830', border: active ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', padding: '7px 10px 6px', minWidth: 46 }}
                       onClick={() => setSettings('ratio', r.value)}
                     >
+                      <span style={{ position: 'absolute', top: 3, right: 3 }}><SettingCheck on={active} /></span>
                       <div style={{ width: 28, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <div style={{ width: r.w, height: r.h, border: `1.5px solid ${active ? '#a78bfa' : '#5a5070'}`, borderRadius: 2, background: active ? 'rgba(124,92,252,0.18)' : 'transparent' }} />
                       </div>
@@ -3351,12 +3450,12 @@ export function VideoNode({ id, data, selected }: Props) {
               <div className="flex gap-2">
                 {resolutionOptions.map(r => (
                   <button key={r} className="flex-1 text-sm py-1.5 rounded nodrag"
-                    style={{ background: resolution === r ? '#7c5cfc' : '#1e1830', color: resolution === r ? '#fff' : '#8a7aaa', border: resolution === r ? 'none' : '1px solid #312550', cursor: 'pointer' }}
+                    style={{ background: resolution === r ? '#3a2a78' : '#1e1830', color: resolution === r ? '#fff' : '#8a7aaa', border: resolution === r ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                     // 提示只能挂在 title 上，**不许**在弹层里多加一行：这个弹层是 bottom:100% 向上
                     // 展开的，多一行就把最上面的「比例」「清晰度」顶出屏幕顶部，而且超出视口的部分
                     // 既看不见也滚不到 —— 2026-08-19「不能调分辨率了」就是这么来的。
                     title={getVideoResolutionNote(model, r) || undefined}
-                    onClick={() => setVideoResolution(r)}>{r}</button>
+                    onClick={() => setVideoResolution(r)}><SettingCheck on={resolution === r} />{r}</button>
                 ))}
               </div>
             </div>
@@ -3381,14 +3480,38 @@ export function VideoNode({ id, data, selected }: Props) {
                 </>
               )}
             </div>
+            {supportsDraft && (
+              <div className="mb-3">
+                <div className="text-xs mb-2" style={{ color: '#5a5070' }}>样片</div>
+                <div className="flex gap-2">
+                  <button type="button" className="flex-1 text-sm py-2 rounded nodrag"
+                    style={{ background: !draft ? '#3a2a78' : '#1e1830', color: !draft ? '#fff' : '#8a7aaa', border: !draft ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    onClick={() => setDraftMode(false)}><SettingCheck on={!draft} />关闭</button>
+                  <button type="button" className="flex-1 text-sm py-2 rounded nodrag"
+                    title="先出 480P 样片确认构图和运镜，再生成 1080P 成片。两次分开计费，样片任务 7 天内有效。"
+                    style={{ background: draft ? '#3a2a78' : '#1e1830', color: draft ? '#fff' : '#8a7aaa', border: draft ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    onClick={() => setDraftMode(true)}><SettingCheck on={draft} />480P 样片</button>
+                </div>
+                <div className="text-xs" style={{ color: '#8a7aaa', marginTop: 8 }}>
+                  {draftTaskId ? '样片已好，点下面出 1080P 成片' : '请先把要转成片的那条 480P 样片设为主视频'}
+                </div>
+                {draftTaskId && (
+                  <button type="button" className="w-full text-sm py-2 rounded nodrag"
+                    style={{ marginTop: 8, background: '#2a1f50', color: '#c4b5fd', border: '1px solid #7c5cfc', cursor: 'pointer' }}
+                    onClick={() => { finalizeDraftRef.current = draftTaskId; void handleGenerate() }}>
+                    用这条样片生成 1080P 成片
+                  </button>
+                )}
+              </div>
+            )}
             <div>
               <div className="text-xs mb-2" style={{ color: '#5a5070' }}>生成音频</div>
               <div className="flex gap-2">
                 {(['on', 'off'] as const).map(v => (
                   <button key={v} className="flex-1 text-sm py-2 rounded nodrag"
-                    style={{ background: sound === v ? '#7c5cfc' : '#1e1830', color: sound === v ? '#fff' : '#8a7aaa', border: sound === v ? 'none' : '1px solid #312550', cursor: 'pointer', fontWeight: sound === v ? 600 : 400, transition: 'background 0.15s' }}
+                    style={{ background: sound === v ? '#3a2a78' : '#1e1830', color: sound === v ? '#fff' : '#8a7aaa', border: sound === v ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', fontWeight: sound === v ? 600 : 400, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                     onClick={() => setSettings('enableSound', v)}>
-                    {v === 'on' ? '开启' : '关闭'}
+                    <SettingCheck on={sound === v} />{v === 'on' ? '开启' : '关闭'}
                   </button>
                 ))}
               </div>
@@ -3643,7 +3766,7 @@ export function VideoNode({ id, data, selected }: Props) {
         所以那种情况改成挂在面板外、整个弹窗下方，见下方 progressBelowPanel 那个 portal。
       */}
       {panelExpanded && progressRows.length > 0 && (
-        <div className="px-2 pb-2 nodrag shotflow-node-popover-progress-row" style={panelSize ? { flexShrink: 0 } : undefined}>
+        <div className="px-2 pb-2 nodrag shotflow-node-popover-progress-row" style={panelScrollsPromptOnly ? { flexShrink: 0 } : undefined}>
           {progressRows.map((info, index) => (
             <GenerationProgress
               key={info.taskId}

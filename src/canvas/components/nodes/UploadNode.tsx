@@ -843,7 +843,7 @@ export function UploadNode({ id, data, selected }: Props) {
 },
   ]
 
-  const toolbar = isPanelActive && showToolbar && (hasImage || hasVideo) ? (
+  const toolbar = isPanelActive && (hasImage || hasVideo) ? (
     <MediaNodeToolbar actions={mediaToolbarActions} />
   ) : undefined
 

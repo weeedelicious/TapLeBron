@@ -657,9 +657,11 @@ document.querySelectorAll('video[src]').forEach(video=>{
     ['智能抠像','精准提取主体与前景','workflow-demo-04.mp4'],
     ['720°全景','生成与查看沉浸式全景画面','workflow-demo-05.mp4'],
     ['局部重绘','精细修改画面局部区域','workflow-demo-06.mp4'],
-    ['皮肤纹理修复','重建皮肤与材质纹理细节','workflow-demo-07.mp4']
+    ['皮肤纹理修复','重建皮肤与材质纹理细节','workflow-demo-07.mp4'],
+    ['三维导演台','在三维空间里排演镜头与角色','workflow-demo-08.mp4'],
+    ['视频转深度','把画面转成可查看的深度视频','workflow-demo-09.mp4']
   ];
-  let position=2,target=null,velocity=0,dragging=false,lastX=0,lastPointerTime=0,raf=0,ignoreClick=false,active=-1,pressedIndex=-1,pressedOnVideo=false;
+  let position=4,target=null,velocity=0,dragging=false,lastX=0,lastPointerTime=0,raf=0,ignoreClick=false,active=-1,pressedIndex=-1,pressedOnVideo=false;
   const cards=[];
   const videos=[];
   const clampIndex=value=>Math.max(0,Math.min(demos.length-1,value));

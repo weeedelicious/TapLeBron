@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const {
   getContentPool,
   getPool,
+  getUsagePool,
 } = require('../db');
 const { parseJsonDocument, saveCanvasData } = require('./CanvasService');
 const { queueCanvasMutation } = require('./CanvasMutationQueue');
@@ -15,6 +16,29 @@ function nodeData(node) {
   if (!node) return {};
   if (node.data && typeof node.data === 'object') return { ...node.data };
   return parseJsonDocument(node.data, {});
+}
+
+
+async function draftProviderIdForJob(jobId, task) {
+  const fromTask = Array.isArray(task && task.providerJobIds) ? task.providerJobIds.filter(Boolean)[0] : '';
+  try {
+    const [rows] = await getUsagePool().query(
+      'SELECT provider_job_ids, request_params FROM generation_tasks WHERE job_id = ? LIMIT 1',
+      [jobId]
+    );
+    const row = rows && rows[0];
+    if (!row) return '';
+    let req = row.request_params;
+    if (typeof req === 'string') req = JSON.parse(req);
+    const settings = (req && req.requested && req.requested.settings) || {};
+    if (settings.draft !== true) return '';
+    let jobs = row.provider_job_ids;
+    if (typeof jobs === 'string') jobs = JSON.parse(jobs);
+    const id = (Array.isArray(jobs) && jobs.filter(Boolean)[0]) || fromTask;
+    return id ? String(id) : '';
+  } catch (error) {
+    return '';
+  }
 }
 
 async function applyGenerationResult({ jobId, task, ownership }) {
@@ -46,12 +70,14 @@ async function applyGenerationResult({ jobId, task, ownership }) {
 
     const completedAtMs = Date.parse(String(task.meta?.updatedAt || '')) || Date.now();
     const urls = task.urls.map(String).filter(Boolean);
+    const draftProviderId = await draftProviderIdForJob(jobId, task);
     const createdAtMap = { ...(currentData._assetCreatedAtMs || {}) };
     const generationMeta = { ...(currentData._assetGenerationMeta || {}) };
     for (const [outputIndex, url] of urls.entries()) {
       createdAtMap[url] = completedAtMs;
       const persisted = task.meta?.outputs?.find((output) => output.index === outputIndex || output.url === url);
       generationMeta[url] = {
+        ...(generationMeta[url] || {}),
         ...(persisted?.metadata || {}),
         model: persisted?.model || task.meta?.model,
         resolution: persisted?.resolution || task.meta?.resolution,
@@ -59,6 +85,7 @@ async function applyGenerationResult({ jobId, task, ownership }) {
         taskId: jobId,
         generationVersion: taskVersion,
         outputIndex,
+        ...(draftProviderId ? { draftTaskId: draftProviderId } : {}),
       };
     }
 

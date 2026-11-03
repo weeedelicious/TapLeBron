@@ -290,3 +290,118 @@ describe('③ 粘贴当场就转，不用再点一下', () => {
     expect(el.textContent).toContain('图片9')
   })
 })
+
+
+function placeCaretBefore(node: Node) {
+  const range = document.createRange()
+  range.setStartBefore(node)
+  range.collapse(true)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+describe('删空行后光标留在原地', () => {
+  it('Backspace 删掉空行的换行，光标不回到开头', () => {
+    const el = mount()
+    el.innerHTML = '第一行<br><br>'
+    el.focus()
+    const breaks = el.querySelectorAll('br')
+    placeCaretBefore(breaks[1])
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    act(() => {
+      el.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(el.querySelectorAll('br')).toHaveLength(1)
+    const selection = window.getSelection()!
+    const range = selection.getRangeAt(0)
+    expect(range.collapsed).toBe(true)
+    expect(range.startOffset).not.toBe(0)
+  })
+
+  it('普通字符的 Backspace 不拦截', () => {
+    const el = mount()
+    el.innerHTML = '第一行'
+    el.focus()
+    caretToEnd(el)
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    act(() => {
+      el.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(false)
+    expect(el.textContent).toBe('第一行')
+  })
+
+  it('Delete 删掉后面的换行，光标留在这一行末尾', () => {
+    const el = mount()
+    el.innerHTML = '第一行<br>第二行'
+    el.focus()
+    const first = el.firstChild!
+    const range = document.createRange()
+    range.setStart(first, (first.textContent ?? '').length)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true })
+    act(() => {
+      el.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(el.querySelectorAll('br')).toHaveLength(0)
+    expect(el.childNodes[0].textContent).toBe('第一行')
+    expect(el.childNodes[1].textContent).toBe('第二行')
+    const next = window.getSelection()!.getRangeAt(0)
+    expect(next.startContainer).toBe(el)
+    expect(next.startOffset).toBe(1)
+  })
+
+  it('选中一段文字时不拦截 Backspace', () => {
+    const el = mount()
+    el.innerHTML = '第一行<br>第二行'
+    el.focus()
+    const range = document.createRange()
+    range.setStart(el.firstChild!, 0)
+    range.setEnd(el.firstChild!, 2)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    act(() => {
+      el.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('同步 HTML 重写编辑器时，不把光标甩回开头', () => {
+    const render = (html: string) => {
+      act(() => {
+        root.render(
+          <PromptEditor
+            value=""
+            chips={[]}
+            htmlSnapshot={html}
+            onChange={() => {}}
+            onAtKey={() => {}}
+            onEscape={() => {}}
+          />,
+        )
+      })
+    }
+    render('甲<br>乙')
+    const el = container.querySelector('[contenteditable]') as HTMLElement
+    el.focus()
+    const second = Array.from(el.childNodes).find((node) => node.textContent === '乙')!
+    const range = document.createRange()
+    range.setStart(second, 1)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    render('<span style="width:12px">甲</span><br>乙')
+    const next = window.getSelection()!.getRangeAt(0)
+    expect(next.startContainer.textContent).toBe('乙')
+    expect(next.startOffset).toBe(1)
+  })
+})

@@ -4,7 +4,7 @@ import { VIDEO_DEFAULTS, listSelectableVideoModels } from './videoRules'
 
 export const NODE_TYPE_INT: Record<string, number> = {
   text: 1, image: 2, video: 3, video_merge: 4, director_stage: 5, audio: 6, script: 7, upload: 8, group: 9,
-  panorama_viewer: 10, image_compare: 11, video_compare: 12,
+  panorama_viewer: 10, image_compare: 11, video_compare: 12, ui_mask: 16,
 }
 
 export const NODE_INT_TYPE: Record<number, string> = Object.fromEntries(
@@ -15,7 +15,7 @@ export const NODE_LABELS: Record<string, string> = {
   text: '文本节点', image: '图片节点', video: '视频节点',
   video_merge: '视频合成', director_stage: '三维空间', audio: '音频节点',
   script: '脚本节点', upload: '上传资源', group: '分组', panorama_viewer: '360°查看器',
-  image_compare: '图片对比', video_compare: '视频对比'
+  image_compare: '图片对比', video_compare: '视频对比', ui_mask: 'UI遮罩'
 }
 
 export const DEFAULT_IMAGE_MODEL = IMAGE_DEFAULTS.model
@@ -156,6 +156,9 @@ export function makeNodeData(type: string, name: string): CanvasNodeData {
       }
     case 'upload':
       return { type: 'upload', name, url: [], action: 'image_resource' }
+    case 'ui_mask':
+      return { type: 'ui_mask', name, url: [], action: 'ui_mask', sourceKind: 'ui_mask', contentWidth: 280, contentHeight: 92,
+        params: { videoList: [] } as unknown as Record<string, unknown> }
     case 'group':
       return { type: 'group', name, url: [], action: 'image_resource',
         params: { childIds: [], color: '#252525' } as unknown as Record<string, unknown> }

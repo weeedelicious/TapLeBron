@@ -1,0 +1,23 @@
+/** 从提示词里取出明确时长，规则与洗词服务 extractSourceDuration 一致。 */
+export function extractPromptDurationSeconds(sourceText: unknown): number | null {
+  const text = String(sourceText || '').replace(/[０-９]/g, (digit) => String(digit.charCodeAt(0) - 0xff10))
+  const explicitPatterns = [
+    /(?:总时长|视频时长|动画时长|成片时长|全片时长|时长|总计|共计|总共|共|一共|全片|整段)\s*(?:[:：=]\s*|为\s*|是\s*|约\s*|大约\s*)?(\d+(?:\.\d+)?)\s*(?:秒|s\b)/gi,
+    /(?:生成|制作|输出|创作)\s*(?:一段|一个)?\s*(\d+(?:\.\d+)?)\s*(?:秒|s\b)/gi,
+    /(\d+(?:\.\d+)?)\s*(?:秒|s\b)\s*(?:动画|视频|短片|成片|片段|分镜|镜头)/gi,
+    /(?:^|[。！？!?\n])\s*(\d+(?:\.\d+)?)\s*(?:秒|s\b)(?=\s*(?:$|[。！？!?，,；;]))/gim,
+  ]
+  for (const pattern of explicitPatterns) {
+    pattern.lastIndex = 0
+    const match = pattern.exec(text)
+    const value = Number(match?.[1])
+    if (Number.isFinite(value) && value > 0) return value
+  }
+  let timelineEnd = 0
+  const timelinePattern = /(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至|到)\s*(\d+(?:\.\d+)?)\s*(?:秒|s\b)/gi
+  for (const match of text.matchAll(timelinePattern)) {
+    const end = Number(match[2])
+    if (Number.isFinite(end)) timelineEnd = Math.max(timelineEnd, end)
+  }
+  return timelineEnd > 0 ? timelineEnd : null
+}

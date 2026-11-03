@@ -88,6 +88,7 @@ body {
   box-shadow: none !important;
   background: transparent !important;
   outline: none !important;
+  pointer-events: none !important;
 }
 
 .canvas-node-body.is-selected,
@@ -134,7 +135,7 @@ body {
 /* Group nodes have no wrapper ::after, so they keep a static pink ring + glow via
    box-shadow on their drag surface. The solid ring layer is identical across
    keyframes (does not move); only the blurred glow layers breathe. */
-.group-node-drag-surface.is-cindy-origin {
+.group-node-frame.is-cindy-origin {
   animation: canvas-node-pink-breathe 2.2s ease-in-out infinite;
 }
 @keyframes canvas-node-pink-breathe {
@@ -7425,7 +7426,7 @@ select option:checked {
 :root[data-shotflow-theme="white"] .favorite-library-tile-thumb,
 :root[data-shotflow-theme="warm"] .favorite-library-tile-thumb {
   border-color: var(--sf-border) !important;
-  background: var(--sf-node-bg) !important;
+  background-color: var(--sf-node-bg) !important;
 }
 
 :root[data-shotflow-theme="white"] .favorite-library-tile-title,

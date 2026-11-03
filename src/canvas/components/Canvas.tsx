@@ -632,6 +632,7 @@ interface NodeContextMenuProps {
   onCopyNode: () => void
   onCopyMedia: () => void
   onDuplicate: () => void
+  onDuplicateEmpty: () => void
   onPaste: () => void
   onDelete: () => void
   onDeleteGroupWithChildren: () => void
@@ -716,6 +717,7 @@ function NodeContextMenu({
   onCopyNode,
   onCopyMedia,
   onDuplicate,
+  onDuplicateEmpty,
   onPaste,
   onDelete,
   onDeleteGroupWithChildren,
@@ -743,7 +745,8 @@ function NodeContextMenu({
   const mediaCopyLabel = isVideoLike ? '复制封面视频' : '复制封面图片'
   const canCopyMedia = Boolean(data?.url?.[0] && mediaKind)
   const isGroupNode = data?.type === 'group'
-  const pos = getMenuPosition(menu.screenX, menu.screenY, 238, 420)
+  const isVideoNode = data?.type === 'video' || data?.type === 'image'
+  const pos = getMenuPosition(menu.screenX, menu.screenY, 238, isVideoNode ? 456 : 420)
 
   return (
     <div
@@ -773,6 +776,11 @@ function NodeContextMenu({
         <span>创建副本</span>
         <kbd>⌘D</kbd>
       </button>
+      {isVideoNode && (
+        <button className="canvas-context-item" onClick={onDuplicateEmpty}>
+          <span>复制空节点</span>
+        </button>
+      )}
       <button className="canvas-context-item" disabled={!canPaste} onClick={onPaste}>
         <span>粘贴</span>
         <kbd>⌘V</kbd>
@@ -1454,7 +1462,7 @@ function fitGroupsToChangedChildren(
         ...(node.style ?? {}),
         width: bounds.width,
         height: bounds.height,
-        pointerEvents: 'auto' as const,
+        pointerEvents: 'none' as const,
       },
     }
   })
@@ -1760,7 +1768,7 @@ function normalizeClipboardFile(file: File, index = 0) {
 }
 
 export function Canvas() {
-  const { nodes, edges, viewport, canvasTextScale, setNodes, setEdges, setViewport, setCanvasTextScale, setSelected, setActivePanelNode, setConnectionHoverTarget, updateNodeData, addNodeAt, selectedNodeKeys, deleteNodes, deleteGroupWithChildren, ungroupNodes, copySelected, pasteClipboard, undo, pushHistory, clipboard, historyIndex, duplicateNodes, insertFavoritePayload } = useCanvasStore()
+  const { nodes, edges, viewport, canvasTextScale, setNodes, setEdges, setViewport, setCanvasTextScale, setSelected, setActivePanelNode, setConnectionHoverTarget, updateNodeData, addNodeAt, selectedNodeKeys, deleteNodes, deleteGroupWithChildren, ungroupNodes, copySelected, pasteClipboard, undo, pushHistory, clipboard, historyIndex, duplicateNodes, duplicateEmptyVideoNode, insertFavoritePayload } = useCanvasStore()
   const projectUuid = useCanvasStore(state => state.projectUuid)
   const projectName = useCanvasStore(state => state.projectName)
   const restoreProjectTasks = useTasksStore(state => state.restoreProjectTasks)
@@ -3557,6 +3565,12 @@ export function Canvas() {
     setNodeMenu(null)
   }, [duplicateNodes, nodeMenu])
 
+  const handleNodeDuplicateEmpty = useCallback(() => {
+    if (!nodeMenu) return
+    duplicateEmptyVideoNode(nodeMenu.nodeId)
+    setNodeMenu(null)
+  }, [duplicateEmptyVideoNode, nodeMenu])
+
   const handleNodePaste = useCallback(() => {
     if (!nodeMenu) return
     pasteClipboard({ x: nodeMenu.flowX, y: nodeMenu.flowY })
@@ -3671,10 +3685,19 @@ export function Canvas() {
 
     if (titleHitIds.length === 0 && edgeHitIds.length === 0) return
 
-    const selectedIds = new Set<string>([
-      ...state.selectedNodeKeys,
-      ...state.nodes.filter(node => node.selected).map(node => node.id),
-    ])
+    const selectedIds = new Set<string>()
+    const keepSelectable = (id: string) => {
+      const node = state.nodes.find(item => item.id === id)
+      return Boolean(node) && node?.type !== 'group' && node?.data.type !== 'group'
+    }
+    // 分组节点 selectable 为 false，框选不会把它算进去。如果这里再并上
+    // selectedNodeKeys，上一次打完的组会粘在新选区里，第二次打组就把两组并成一个。
+    for (const node of state.nodes) {
+      if (node.selected && keepSelectable(node.id)) selectedIds.add(node.id)
+    }
+    for (const id of state.selectedNodeKeys) {
+      if (keepSelectable(id)) selectedIds.add(id)
+    }
     for (const id of titleHitIds) selectedIds.add(id)
     const selectedEdgeIds = new Set<string>([
       ...state.edges.filter(edge => edge.selected).map(edge => edge.id),
@@ -4031,6 +4054,7 @@ export function Canvas() {
             onCopyNode={handleNodeCopy}
             onCopyMedia={handleNodeCopyCoverMedia}
             onDuplicate={handleNodeDuplicate}
+            onDuplicateEmpty={handleNodeDuplicateEmpty}
             onPaste={handleNodePaste}
             onDelete={handleNodeDelete}
             onDeleteGroupWithChildren={handleNodeDeleteGroupWithChildren}

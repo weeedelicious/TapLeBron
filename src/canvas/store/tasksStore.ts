@@ -497,6 +497,7 @@ export const useTasksStore = create<TasksState>((set, get) => ({
                 prompt: String(p.prompt ?? '').slice(0, 500) || undefined,
                 createdAtMs: completedAtMs,
                 taskId: jobId,
+                draftTaskId: p.settings?.draft && Array.isArray(res.providerJobIds) ? String(res.providerJobIds[0] || '') || undefined : undefined,
                 generationVersion: infoEntry.generationVersion,
                 outputIndex,
                 // Keep the real output fps for ordinary generated videos too;

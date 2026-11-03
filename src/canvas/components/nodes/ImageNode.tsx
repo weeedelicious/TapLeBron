@@ -325,8 +325,11 @@ export function ImageNode({ id, data, selected }: Props) {
     if (collapsed) return
     const handler = (e: MouseEvent) => {
       const target = e.target as Element | null
+      if (e.detail > 1) return
       if (
         !target?.closest('[data-at-mention-dropdown="1"]') &&
+        !target?.closest('.react-flow__node') &&
+        !target?.closest('.shotflow-image-viewer') &&
         !nodeContainerRef.current?.contains(e.target as Node) &&
         !controlsPortalRef.current?.contains(e.target as Node) &&
         !settingsPortalRef.current?.contains(e.target as Node)
@@ -451,6 +454,15 @@ export function ImageNode({ id, data, selected }: Props) {
   const urls = data.url ?? []
   const galleryUrls = urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
   const galleryItems = galleryItemsFromNodeData(data)
+  const expandImageNode = (event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const store = useCanvasStore.getState()
+    store.setSelected([id])
+    store.setActivePanelNode(id)
+    setCollapsed(false)
+    if (galleryItems.length > 1) setExpanded(true)
+  }
   const mainImageItem = primaryGalleryItem(data, galleryItems)
   const mainImageUrl = mainImageItem?.url
   const expandedGalleryItems = galleryItems.filter((item) => item.url !== mainImageUrl)
@@ -1631,6 +1643,7 @@ export function ImageNode({ id, data, selected }: Props) {
             data-shotflow-expanded-gallery={expanded ? '1' : undefined}
             style={{ background: 'transparent', cursor: collapsed ? 'pointer' : 'default' }}
             onClick={collapsed ? () => setCollapsed(false) : undefined}
+            onDoubleClick={expandImageNode}
           >
             {/* Collapsed overlay: "点击展开" */}
             {false && collapsed && !isLoading && (
@@ -1732,7 +1745,7 @@ export function ImageNode({ id, data, selected }: Props) {
                 const img = e.currentTarget
                 setImgSize({ w: img.naturalWidth, h: img.naturalHeight })
               }}
-              onDoubleClick={() => mainImageUrl && setPreviewUrl(mainImageUrl)}
+              onDoubleClick={expandImageNode}
             />
             <div className="shotflow-media-lod-placeholder" aria-hidden="true">
               <NodeTypeIcon type="image" size={18} strokeWidth={1.8} />
@@ -1851,7 +1864,7 @@ export function ImageNode({ id, data, selected }: Props) {
                   loading="lazy"
                   decoding="async"
                   style={{ objectFit: 'cover', height: galleryTileHeight, cursor: 'zoom-in', width: '100%' }}
-                  onDoubleClick={() => setPreviewUrl(item.url)}
+                  onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setCollapsed(false); setPreviewUrl(item.url) }}
                 />
                 <div style={galleryOrderBadge()}>{item.order}</div>
                 <div style={galleryMetaBadge()}>{galleryMetaContent(item)}</div>
@@ -1905,6 +1918,7 @@ export function ImageNode({ id, data, selected }: Props) {
             cursor: collapsed ? 'pointer' : 'default'
           }}
           onClick={collapsed ? () => setCollapsed(false) : undefined}
+          onDoubleClick={expandImageNode}
         >
           {isLoading && false ? (
             <div style={{ position: 'absolute', left: '50%', top: '50%', transform: `translate(-50%, -50%) scale(${inverseZoom})`, transformOrigin: 'center' }}>
@@ -2017,7 +2031,7 @@ export function ImageNode({ id, data, selected }: Props) {
                   cursor: 'zoom-in',
                   width: '100%',
                 }}
-                onDoubleClick={() => setPreviewUrl(url)}
+                onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setCollapsed(false); setPreviewUrl(url) }}
               />
               <div style={galleryOrderBadge()}>{order}</div>
               <div style={galleryMetaBadge()}>{galleryMetaContent({ url, order, model, resolution })}</div>

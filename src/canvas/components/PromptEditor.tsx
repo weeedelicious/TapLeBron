@@ -147,6 +147,42 @@ function buildEditorHtml(value: string, chips: ChipRef[]) {
   return wrapper.innerHTML
 }
 
+/** 把洗词结果里的 @图片1 / @视频2 等文字提及还原成可点的素材标签。 */
+export function buildPromptHtmlFromMentions(value: string, candidates: ChipRef[]): { html: string; chips: ChipRef[] } {
+  if (typeof document === 'undefined') return { html: value, chips: [] }
+  const wrapper = document.createElement('div')
+  const text = String(value || '').replace(/@\s+(?=(?:图片|视频|音频|image|img|pic|picture|video|vid|clip|audio|sound)\s*[0-9]{1,2})/gi, '@')
+  const chips: ChipRef[] = []
+  const byName = new Map<string, ChipRef>()
+  candidates.forEach((candidate) => {
+    const key = String(candidate.name || '').replace(/\s+/g, '').toLowerCase()
+    if (key && !byName.has(key)) byName.set(key, candidate)
+  })
+  const aliases: Record<string, string> = { image: '图片', img: '图片', pic: '图片', picture: '图片', video: '视频', vid: '视频', clip: '视频', audio: '音频', sound: '音频' }
+  const pattern = /(?:@\s*)?([图片视频音频]|image|img|pic|picture|video|vid|clip|audio|sound)\s*([0-9]{1,2})/gi
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(text)) !== null) {
+    const kind = aliases[String(match[1]).toLowerCase()] || match[1]
+    const ref = byName.get(`${kind}${Number(match[2])}`.toLowerCase())
+    if (!ref || !ref.url) continue
+    if (match.index > cursor) wrapper.appendChild(document.createTextNode(text.slice(cursor, match.index)))
+    const tmp = document.createElement('span')
+    tmp.innerHTML = buildChipHtml(ref)
+    const chipNode = tmp.firstElementChild
+    if (chipNode) {
+      wrapper.appendChild(chipNode)
+      chips.push(ref)
+      cursor = match.index + match[0].length
+    }
+  }
+  if (cursor < text.length) wrapper.appendChild(document.createTextNode(text.slice(cursor)))
+  return {
+    html: chips.length ? wrapper.innerHTML.replace(/@\s*(?=<span[^>]*data-chip=["']1["'])/gi, '') : value,
+    chips,
+  }
+}
+
 const BLOCK_TAGS = new Set(['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'H3'])
 
 function canPreviewImage(url: string) {
@@ -245,6 +281,167 @@ export function clipboardTextFromFragment(root: HTMLElement): string {
   root.childNodes.forEach(walk)
   // 不 trim：这是选区片段，首尾的空格可能正是用户选中的内容
   return text
+}
+
+
+function isPromptChip(node: Node | null): node is HTMLElement {
+  return !!node && node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chip === '1'
+}
+
+/** 光标旁边那个只负责换行的节点：br，或里面只有一个 br 的空元素。芯片不算。 */
+function adjacentBreakElement(node: Node | null): HTMLElement | null {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return null
+  const el = node as HTMLElement
+  if (isPromptChip(el)) return null
+  if (el.tagName === 'BR') return el
+  if (el.childNodes.length === 1 && !(el.textContent ?? '').replace(/\u200b/g, '')) {
+    const only = el.firstChild
+    if (only && only.nodeType === Node.ELEMENT_NODE && (only as HTMLElement).tagName === 'BR') return el
+  }
+  return null
+}
+
+function caretUnitSize(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? '').length
+  if (node.nodeType !== Node.ELEMENT_NODE) return 0
+  const el = node as HTMLElement
+  if (el.tagName === 'BR' || isPromptChip(el)) return 1
+  let total = 0
+  for (const child of Array.from(el.childNodes)) total += caretUnitSize(child)
+  return total
+}
+
+export function caretOffsetWithin(root: HTMLElement): number | null {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return null
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.startContainer)) return null
+  let offset = 0
+  const walk = (node: Node): boolean => {
+    if (node === range.startContainer) {
+      if (node.nodeType === Node.TEXT_NODE) offset += range.startOffset
+      else {
+        const children = node.childNodes
+        for (let index = 0; index < range.startOffset && index < children.length; index += 1) {
+          offset += caretUnitSize(children[index])
+        }
+      }
+      return true
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      offset += (node.textContent ?? '').length
+      return false
+    }
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement
+      if (el.tagName === 'BR' || isPromptChip(el)) {
+        offset += 1
+        return false
+      }
+      for (const child of Array.from(node.childNodes)) {
+        if (walk(child)) return true
+      }
+    }
+    return false
+  }
+  return walk(root) ? offset : null
+}
+
+function placeCaret(container: Node, offset: number) {
+  const selection = window.getSelection()
+  if (!selection) return
+  const range = document.createRange()
+  const max = container.nodeType === Node.TEXT_NODE
+    ? (container.textContent ?? '').length
+    : container.childNodes.length
+  range.setStart(container, Math.max(0, Math.min(offset, max)))
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+export function restoreCaretOffset(root: HTMLElement, target: number) {
+  let remaining = Math.max(0, target)
+  const place = (node: Node): boolean => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const length = (node.textContent ?? '').length
+      if (remaining <= length) {
+        placeCaret(node, remaining)
+        return true
+      }
+      remaining -= length
+      return false
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return false
+    const el = node as HTMLElement
+    if (el.tagName === 'BR' || isPromptChip(el)) {
+      if (remaining === 0 && el.parentNode) {
+        placeCaret(el.parentNode, Array.prototype.indexOf.call(el.parentNode.childNodes, el))
+        return true
+      }
+      remaining -= 1
+      return false
+    }
+    for (const child of Array.from(node.childNodes)) {
+      if (place(child)) return true
+    }
+    return false
+  }
+  if (!place(root)) placeCaret(root, root.childNodes.length)
+}
+
+function selectionInsideChip(root: HTMLElement, range: Range) {
+  let node: Node | null = range.startContainer
+  while (node && node !== root) {
+    if (isPromptChip(node)) return true
+    node = node.parentNode
+  }
+  return false
+}
+
+/**
+ * 只在光标紧挨着换行时接管 Backspace / Delete。
+ * 浏览器自己删 br 后会把选区修丢，光标回到开头；这里删完把光标放回被删节点原来的位置。
+ */
+export function removeAdjacentBreak(
+  root: HTMLElement,
+  range: Range,
+  direction: 'backward' | 'forward',
+): { parent: Node; index: number } | null {
+  if (!range.collapsed || !root.contains(range.startContainer) || selectionInsideChip(root, range)) return null
+  let target: HTMLElement | null = null
+  const container = range.startContainer
+  const offset = range.startOffset
+  if (container.nodeType === Node.TEXT_NODE) {
+    const text = container.textContent ?? ''
+    if (direction === 'backward' && offset > 0) return null
+    if (direction === 'forward' && offset < text.length) return null
+    const parent = container.parentNode
+    if (!parent) return null
+    const index = Array.prototype.indexOf.call(parent.childNodes, container)
+    target = adjacentBreakElement(parent.childNodes[direction === 'backward' ? index - 1 : index + 1] ?? null)
+  } else if (container.nodeType === Node.ELEMENT_NODE) {
+    const element = container as HTMLElement
+    if (direction === 'backward') {
+      if (offset === 0 && element !== root && element.parentNode) {
+        const index = Array.prototype.indexOf.call(element.parentNode.childNodes, element)
+        target = adjacentBreakElement(element.parentNode.childNodes[index - 1] ?? null)
+      } else {
+        target = adjacentBreakElement(element.childNodes[offset - 1] ?? null)
+      }
+    } else {
+      target = adjacentBreakElement(element.childNodes[offset] ?? null)
+      if (!target && element !== root && offset === element.childNodes.length && element.parentNode) {
+        const index = Array.prototype.indexOf.call(element.parentNode.childNodes, element)
+        target = adjacentBreakElement(element.parentNode.childNodes[index + 1] ?? null)
+      }
+    }
+  }
+  if (!target?.parentNode) return null
+  const parent = target.parentNode
+  const index = Array.prototype.indexOf.call(parent.childNodes, target)
+  target.remove()
+  return { parent, index }
 }
 
 export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
@@ -571,8 +768,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
       if (!el || !initializedRef.current) return
       const nextHtml = htmlSnapshot ? sanitizePromptHtml(htmlSnapshot) : buildEditorHtml(value, chips)
       if (el.innerHTML === nextHtml) return
+      const keepCaret = document.activeElement === el ? caretOffsetWithin(el) : null
       el.innerHTML = nextHtml
       upgradeChipPreviewElements(el)
+      if (keepCaret != null) restoreCaretOffset(el, keepCaret)
       const { text, chips: currentChips } = extractContent(el)
       setIsEmpty(!text && currentChips.length === 0)
       lastSnapshotRef.current = JSON.stringify({
@@ -825,6 +1024,24 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
               }
             }
             if (e.key === 'Escape') { cbRef.current.onEscape(); return }
+            if (
+              (e.key === 'Backspace' || e.key === 'Delete')
+              && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+              && !composingRef.current
+            ) {
+              const sel = window.getSelection()
+              const editor = divRef.current
+              if (editor && sel && sel.rangeCount) {
+                const removed = removeAdjacentBreak(editor, sel.getRangeAt(0), e.key === 'Backspace' ? 'backward' : 'forward')
+                if (removed) {
+                  e.preventDefault()
+                  placeCaret(removed.parent, removed.index)
+                  syncOut()
+                  saveSelection()
+                  return
+                }
+              }
+            }
             if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
               e.preventDefault()
               const sel = window.getSelection()

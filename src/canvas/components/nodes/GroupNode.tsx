@@ -350,7 +350,7 @@ export function GroupNode({ id, data, selected }: Props) {
               ...(node.style ?? {}),
               width: nextGroupWidth,
               height: nextGroupHeight,
-              pointerEvents: 'auto',
+              pointerEvents: 'none',
             },
             selectable: false,
           }
@@ -416,23 +416,20 @@ export function GroupNode({ id, data, selected }: Props) {
   return (
     <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', pointerEvents: 'none' }}>
       <div
-        className={`group-node-drag-surface group-node-frame${isGroupSelected ? ' is-selected' : ''}${data._cindyProposalMessageId ? ' is-cindy-origin' : ''}`}
+        className={`group-node-frame${isGroupSelected ? ' is-selected' : ''}${data._cindyProposalMessageId ? ' is-cindy-origin' : ''}`}
         style={{
           position: 'absolute',
           inset: 0,
           background: isTransparent ? 'rgba(255,255,255,0.02)' : `${color}cc`,
           border: `1.5px solid ${isTransparent ? '#555' : borderColor}`,
           borderRadius: 10,
-          pointerEvents: 'auto',
-          cursor: 'move',
+          pointerEvents: 'none',
           zIndex: 0,
           boxShadow: isGroupSelected ? undefined : 'none',
           '--selected-node-ring': `${selectedGlowRing}px`,
           '--selected-node-inner': `${selectedGlowInner}px`,
           '--selected-node-outer': `${selectedGlowOuter}px`,
         }}
-        onPointerDown={handleGroupPointerDown}
-        onClick={handleGroupClick}
       />
 
       <div
@@ -512,7 +509,7 @@ export function GroupNode({ id, data, selected }: Props) {
           boxShadow: `0 0 ${selectedHandleGlow}px rgba(103, 190, 255, 0.72)`,
           pointerEvents: 'auto',
         }}
-        lineStyle={{ borderColor: 'transparent' }}
+        lineStyle={{ borderColor: 'transparent', pointerEvents: 'none' }}
       />
 
       {isPanelActive && toolbarPos && createPortal(

@@ -24,6 +24,7 @@ import {
   assetUrlCandidates,
   mergeAssetCreatedAtMap,
 } from "@/lib/assetTimestamps";
+import { emptyVideoCopyData } from "@/lib/emptyVideoCopy";
 
 const EDGE_INTERACTION_WIDTH = 34;
 /** 这些节点的产出走右侧名为 capture 的输出 handle，而不是节点默认输出点 */
@@ -236,7 +237,8 @@ interface CanvasState {
   pushHistory: () => void;
   undo: () => void;
   ungroupNodes: (groupId: string) => void;
-  duplicateNodes: (nodeIds: string[]) => void;
+  duplicateNodes: (nodeIds: string[], options?: { emptyVideo?: boolean }) => void;
+  duplicateEmptyVideoNode: (nodeId: string) => void;
   insertFavoritePayload: (
     payload: FavoriteLibraryPayload,
     position?: { x: number; y: number },
@@ -835,7 +837,7 @@ function expandGroupBoundsForTitles(nodes: FlowNode[], zoomValue: unknown) {
         ...(node.style ?? {}),
         width,
         height,
-        pointerEvents: "auto" as const,
+        pointerEvents: "none" as const,
       },
     };
   });
@@ -1318,7 +1320,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               style: {
                 width: groupWidth,
                 height: groupHeight,
-                pointerEvents: "auto" as const,
+                pointerEvents: "none" as const,
               },
             }
           : {}),
@@ -2033,7 +2035,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   groupNodes: (nodeIds: string[]) => {
-    get().pushHistory();
     const { projectUuid, nodes } = get();
     if (nodeIds.length === 0) return;
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
@@ -2058,6 +2059,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       .map((id) => nodeMap.get(id))
       .filter((node): node is FlowNode => Boolean(node));
     if (targets.length === 0) return;
+    get().pushHistory();
+
+    // 一个节点只能属于一个组。第二次打组如果带上了已有组里的节点，
+    // 旧组要放开这些节点；成员不足 2 个的旧组直接拆掉，避免两个组框叠在一起。
+    const targetIdSet = new Set(targetIds);
+    const childListUpdates = new Map<string, string[]>();
+    for (const node of nodes) {
+      if (node.type !== "group" || groupIdsToRemove.has(node.id)) continue;
+      const params = (node.data.params ?? {}) as { childIds?: string[] };
+      const existing = params.childIds ?? [];
+      if (!existing.some((id) => targetIdSet.has(id))) continue;
+      const remaining = existing.filter((id) => {
+        const child = nodeMap.get(id);
+        return Boolean(child) && child?.type !== "group" && !targetIdSet.has(id);
+      });
+      if (remaining.length < 2) groupIdsToRemove.add(node.id);
+      else childListUpdates.set(node.id, remaining);
+    }
 
     const bounds = groupBoundsForTargets(targets, get().viewport.zoom);
     const gx = bounds.x,
@@ -2088,17 +2107,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       draggable: true,
       selectable: false,
       dragHandle: dragHandleForType("group"),
-      style: { width: gw, height: gh, pointerEvents: "auto" },
+      style: { width: gw, height: gh, pointerEvents: "none" },
     };
     // Group node goes first so it renders below children. After grouping,
     // select only the group so the multi-select toolbar is replaced by the group toolbar.
     const nodesWithoutOldGroups = nodes.filter(
       (node) => !groupIdsToRemove.has(node.id),
     );
-    const updated = [groupNode, ...nodesWithoutOldGroups].map((node) => ({
-      ...node,
-      selected: false,
-    }));
+    const updated = [groupNode, ...nodesWithoutOldGroups].map((node) => {
+      const nextChildIds = childListUpdates.get(node.id);
+      let next = node;
+      if (nextChildIds && node.type === "group") {
+        const remainingNodes = nextChildIds
+          .map((id) => nodeMap.get(id))
+          .filter((child): child is FlowNode => Boolean(child));
+        const nextBounds = groupBoundsForTargets(remainingNodes, get().viewport.zoom);
+        const params = (node.data.params ?? {}) as Record<string, unknown>;
+        next = {
+          ...node,
+          position: { x: nextBounds.x, y: nextBounds.y },
+          data: {
+            ...node.data,
+            params: { ...params, childIds: nextChildIds },
+            contentWidth: nextBounds.width,
+            contentHeight: nextBounds.height,
+          },
+          style: {
+            ...(node.style ?? {}),
+            width: nextBounds.width,
+            height: nextBounds.height,
+            pointerEvents: "none" as const,
+          },
+        };
+      }
+      return {
+        ...next,
+        selected: next.id === nodeKey,
+      };
+    });
     set({
       nodes: updated,
       selectedNodeKeys: [nodeKey],
@@ -2164,7 +2210,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  duplicateNodes: (nodeIds: string[]) => {
+  duplicateNodes: (nodeIds: string[], options?: { emptyVideo?: boolean }) => {
     get().pushHistory();
     const { projectUuid, nodes, edges } = get();
     const targetIds = expandNodeIdsForGroups(nodeIds, nodes);
@@ -2180,8 +2226,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         ...n,
         id: newId,
-        position: { x: n.position.x + 40, y: n.position.y + 40 },
-        data: copiedNodeData(n.data, newId, idMap, copiedAtMs),
+        position: options?.emptyVideo
+          ? {
+              x: n.position.x + nodeVisualWidth(n) + 48,
+              y: n.position.y,
+            }
+          : { x: n.position.x + 40, y: n.position.y + 40 },
+        data: options?.emptyVideo
+          ? emptyVideoCopyData(copiedNodeData(n.data, newId, idMap, copiedAtMs))
+          : copiedNodeData(n.data, newId, idMap, copiedAtMs),
         dragHandle: dragHandleForType(n.data.type),
         selected: false,
       };
@@ -2209,6 +2262,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         updatedNodes,
         set as (s: Partial<CanvasState>) => void,
       );
+  },
+
+  duplicateEmptyVideoNode: (nodeId: string) => {
+    get().duplicateNodes([nodeId], { emptyVideo: true });
   },
 
   insertFavoritePayload: async (payload, position) => {
@@ -2287,7 +2344,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...(node.style ?? {}),
                 width: width || Number(node.style?.width) || 320,
                 height: height || Number(node.style?.height) || 220,
-                pointerEvents: "auto" as const,
+                pointerEvents: "none" as const,
               },
             }
           : {}),

@@ -11,7 +11,8 @@ export type NodeType =
   | "atmosphere_transfer"
   | "panorama_viewer"
   | "image_compare"
-  | "video_compare";
+  | "video_compare"
+  | "ui_mask";
 
 export interface ResourceMeta {
   kind: "image" | "video" | "audio";
@@ -85,6 +86,7 @@ export interface VideoHistoryItem {
     resolution: string;
     duration: number;
     enableSound: "on" | "off";
+    draft?: boolean;
   };
   imageList: NodeRef[];
 }
@@ -131,6 +133,7 @@ export interface VideoParams {
     resolution: string;
     duration: number;
     enableSound: "on" | "off";
+    draft?: boolean;
   };
   promptChips?: { nodeId: string; url: string; name: string }[];
   promptHtml?: string;
@@ -233,6 +236,7 @@ export interface AssetGenerationMeta {
   prompt?: string;
   createdAtMs?: number;
   taskId?: string;
+  draftTaskId?: string;
   generationVersion?: number;
   outputIndex?: number;
   /** 派生视频 / 补帧输出的媒体与质量元数据。 */

@@ -210,6 +210,14 @@ export function getVideoRatioOptions(model?: string, mode?: string) {
   return rules.ratioOptions.filter((option) => allowed.has(option.value))
 }
 
+
+export function videoModelSupportsDraft(model?: string) {
+  const rule = getVideoModelRule(model)
+  const id = String(model || '') + ' ' + String(rule.providerModel || '') + ' ' + String(rule.label || '')
+  const value = id.toLowerCase()
+  return value.includes('seedance_2_5') || value.includes('seedance-2.5') || value.includes('seedance-2-5') || value.includes('seedance 2.5')
+}
+
 export function getVideoResolutionOptions(model?: string) {
   const modelRule = getVideoModelRule(model)
   return modelRule.resolutions ?? [rules.defaults.resolution]
