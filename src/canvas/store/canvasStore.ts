@@ -77,6 +77,29 @@ const pendingNodeDeletionsByProject = new Map<
 >();
 
 /**
+ * 本页已经在服务端删掉的节点。之后它又出现在本地（只可能是撤销 / 重做）并要保存时，
+ * 带上 restoreDeleted 告诉服务端"这是用户要恢复"；不在这张表里的已删除节点，服务端
+ * 一律不许重建（见 canvasRoutes 的删除墓碑），防止旧快照把别处删掉的节点写回来。
+ */
+const deletedHereByProject = new Map<string, Set<string>>();
+
+function deletedHere(projectUuid: string) {
+  const known = deletedHereByProject.get(projectUuid) ?? new Set<string>();
+  deletedHereByProject.set(projectUuid, known);
+  return known;
+}
+
+/** 服务端说这个节点已经被删了：从本地画布摘掉，不进历史、不登记删除意图。 */
+function dropServerDeletedNode(projectUuid: string, nodeKey: string) {
+  const live = useCanvasStore.getState();
+  if (live.projectUuid !== projectUuid) return;
+  const kept = live.nodes.filter((node) => String(node.data.nodeKey || node.id) !== nodeKey);
+  if (kept.length === live.nodes.length) return;
+  console.warn(`[canvas ${projectUuid}] 节点 ${nodeKey} 已在服务端删除，本地副本已移除`);
+  useCanvasStore.setState({ nodes: kept, edges: edgesFromNodeReferences(kept, live.edges) });
+}
+
+/**
  * 远端来源的节点：从服务端加载进来的，以及通过 SSE 推过来的（别的客户端 / Cindy 插件写的）。
  *
  * 只有 undo 用它。撤销要还原的是"本页做过的操作"，而远端推过来的节点从不进任何历史快照，
@@ -453,6 +476,7 @@ async function persistNodesNow(
       versions.delete(nodeKey);
       fingerprints.delete(nodeKey);
       pendingDeletions?.delete(nodeKey);
+      deletedHere(projectUuid).add(nodeKey);
       if (response.eventId)
         nodeEventCursorByProject.set(projectUuid, Number(response.eventId));
       if (response.contentVersion)
@@ -476,6 +500,7 @@ async function persistNodesNow(
           serverNodeFromFlow(projectUuid, node),
           versions.get(nodeKey) ?? Number(node.data._collabVersion || 0),
           CANVAS_CLIENT_ID,
+          { restoreDeleted: deletedHere(projectUuid).has(nodeKey) },
         );
       } catch (error) {
         const conflictData = nodeSaveErrorData(error);
@@ -505,6 +530,14 @@ async function persistNodesNow(
         }
         continue;
       }
+      if (response.skippedDeleted) {
+        // 这一轮保存的快照比服务端的删除旧：节点已经删了，别再写回来
+        versions.delete(nodeKey);
+        fingerprints.delete(nodeKey);
+        dropServerDeletedNode(projectUuid, nodeKey);
+        continue;
+      }
+      deletedHere(projectUuid).delete(nodeKey);
       versions.set(nodeKey, Number(response.nodeVersion || 0));
       fingerprints.set(nodeKey, fingerprint);
       if (response.eventId) nodeEventCursorByProject.set(projectUuid, Number(response.eventId));
@@ -1356,6 +1389,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     );
     // 删除意图不跨加载生效：重新载入后，之前登记的删除一律作废。
     pendingNodeDeletionsByProject.delete(project.projectMeta.uuid);
+    deletedHereByProject.delete(project.projectMeta.uuid);
 
     const initialSnapshot: HistorySnapshot = {
       nodes: JSON.parse(JSON.stringify(nodes)),
@@ -1395,6 +1429,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const closingProjectUuid = get().projectUuid;
     if (closingProjectUuid) {
       pendingNodeDeletionsByProject.delete(closingProjectUuid);
+      deletedHereByProject.delete(closingProjectUuid);
       remoteOriginNodesByProject.delete(closingProjectUuid);
     }
     nodeSaveVersion += 1;

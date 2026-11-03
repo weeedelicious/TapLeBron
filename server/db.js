@@ -1391,6 +1391,46 @@ async function maybeCreateCanvasRevision(canvasId, data, options = {}) {
   );
 }
 
+// 历史版本在后台写，不占画布保存队列。
+//
+// 每次节点保存都会往 canvas_revisions 写一整份画布快照，再删掉超出 100 份的旧快照。
+// 这张表已经 35GB，删旧快照经常要几十秒（2026-11-03 canvas 497：一次节点保存在这一步卡了
+// 39 秒），而它原来是 await 在 queueCanvasMutation 里的，排在后面的删除也跟着卡住、
+// 被刷新打断，最后节点"删了又回来"。历史版本只是事后回溯用的安全网，晚几秒写完不影响任何
+// 读写路径；同一张画布按顺序写，避免新旧快照乱序。
+// 同一张画布同时只写一份；写的过程中又来了新的，只保留最新那份排着（快照本身就是整张画布，
+// 中间版本没有单独留的价值），数据库再慢内存里也最多压一份。
+const revisionWriters = new Map();
+
+function revisionReasonRank(reason) {
+  return reason === 'autosave' || reason === 'node_upsert' ? 0 : 1;
+}
+
+function queueCanvasRevision(canvasId, snapshot, options) {
+  const key = String(canvasId);
+  const writer = revisionWriters.get(key);
+  if (writer) {
+    const previousReason = writer.pending?.options?.reason;
+    const keepReason = previousReason && revisionReasonRank(previousReason) > revisionReasonRank(options.reason);
+    writer.pending = { snapshot, options: keepReason ? { ...options, reason: previousReason } : options };
+    return;
+  }
+  const state = { pending: { snapshot, options } };
+  revisionWriters.set(key, state);
+  void (async () => {
+    while (state.pending) {
+      const job = state.pending;
+      state.pending = null;
+      try {
+        await maybeCreateCanvasRevision(canvasId, job.snapshot, job.options);
+      } catch (error) {
+        console.warn(`save canvas revision failed for ${canvasId}:`, error.message);
+      }
+    }
+    revisionWriters.delete(key);
+  })();
+}
+
 async function saveCanvasData(canvasId, data, options = {}) {
   const serialized = typeof data === 'string' ? data : JSON.stringify(data);
   const parsedData = typeof data === 'string' ? parseJsonDocument(data, {}) : data;
@@ -1409,11 +1449,8 @@ async function saveCanvasData(canvasId, data, options = {}) {
   }
 
   if (!options.skipRevision) {
-    try {
-      await maybeCreateCanvasRevision(canvasId, parsedData, { ...options, ownerId });
-    } catch (error) {
-      console.warn(`save canvas revision failed for ${canvasId}:`, error.message);
-    }
+    // 传序列化好的字符串：调用方之后再改 data 对象也不会影响这份快照
+    queueCanvasRevision(canvasId, serialized, { ...options, ownerId });
   }
 }
 

@@ -3501,6 +3501,21 @@ apiRouter.post('/projects/:uuid/nodes/upsert', async (req, res, next) => {
       if (current && expectedVersion !== currentVersion) {
         return res.status(409).json({ error: '节点已被其他页面更新', errorCode: 'CANVAS_NODE_VERSION_CONFLICT', currentVersion, node: nodeEventSnapshot(current) });
       }
+      // 删除墓碑：画布里没有、但最后一条事件是删除的节点，不许被普通保存重新建回来。
+      // 2026-11-03 canvas 497：删除请求在服务端排了 30 多秒才执行，期间刷新出来的页面
+      // 手里还有这个节点，删除推过来之后又拿删除前排好的保存快照把它当新节点写了回去，
+      // 刷新后节点"删不掉"。只有本页刚删又撤销时客户端才会带 restoreDeleted。
+      // 返回 200 而不是 409：没刷新的旧页面不认识新错误码，409 会让它整轮保存失败、
+      // 别的节点改动也存不进去；200 + skippedDeleted 对旧页面就是"这个节点存过了"。
+      if (!current && req.body?.restoreDeleted !== true) {
+        const [lastEvents] = await getContentPool().query(
+          'SELECT event_type FROM canvas_node_events WHERE canvas_id = ? AND node_key = ? ORDER BY id DESC LIMIT 1',
+          [row.id, nodeKey],
+        );
+        if (lastEvents[0]?.event_type === 'delete') {
+          return res.json({ ok: true, skippedDeleted: true, nodeKey });
+        }
+      }
       const next = {
         data: typeof incoming.data === 'string' ? incoming.data : JSON.stringify(incoming.data || {}),
         name: incoming.name || parseCanvasNodeData(incoming).name || current?.name || '节点',
@@ -3946,6 +3961,9 @@ apiRouter.put('/projects/:uuid/user-shares', async (req, res, next) => {
 
 apiRouter.patch('/projects/:uuid/draft', async (req, res, next) => {
   try {
+    // 草稿会把整份画布读出来再写回去，必须和节点保存 / 删除排在同一个队列里，
+    // 否则读到删除前的节点列表、在删除之后写回，就把删掉的节点又写回来了。
+    await queueCanvasMutation(req.params.uuid, async () => {
     const row = await getSessionWritableCanvasForUser(req, res, req.params.uuid);
     if (!row) {
       res.status(404).json({ error: '濠电姷鏁告慨鐑藉极閸涘﹥鍙忛柣鎴ｆ閺嬩線鏌涘☉姗堟敾闁告瑥绻橀弻锝夊箣濠垫劖缍楅梺閫炲苯澧柛濠傛健閵嗕礁鈻庨幘鏉戔偓閿嬨亜閹烘埈妲圭紓宥嗩殜濮婄粯鎷呴崨濠冨創濠电偛鐪伴崹钘夌暦瑜版帒鎹舵い鎾跺剱濡粍绻濋悽闈浶ｇ痪鏉跨Ч閹€斥枎閹惧磭楠囬梺鍓插亝缁诲倿鍩涢弮鍫熺厽闁挎繂鐗呴崥顐︽煟閵夘喕閭鐐叉椤﹀绱掓径瀣仢闁哄备鈧磭鏆嗛悗锝庡墰閻﹀牓鎮楃憴鍕闁绘牕銈稿畷娲焺閸愨晛顎撶紓浣割儐椤戞瑥螞鎼淬劍鈷掗柛灞剧懅椤︼箓鏌涘顒夊剰妞ゎ厼鐏濊灒濞撴凹鍨抽崝鐑芥⒑鐠恒劌鏋斿┑顔芥尦閹锋垿鎮㈤崫銉ь啎闂佺懓顕崕鎰版倿閹间焦鐓涢柛鎰╁妿婢ф洜绱掗埀顒勫礃椤忓懎鏋戦棅顐㈡处缁嬫帡鍩涢幒鎾变簻闁哄秲鍔岄悞褰掓煛閳ь剚绂掔€ｎ偆鍘介梺褰掑亰閸撴瑧鐥閺屽秶绱掑Ο鑽ゎ槬闂傚洤顦扮换婵囩節閸屾凹浼€缂備胶濮烽崑鐔煎焵椤掑喚娼愭繛鍙夛耿瀹曠銇愰幒鎴犲姦濡炪倖甯掗敃锔剧矓閻㈠憡鐓曢柣妯诲墯濞堟粓鏌熼鍡欑瘈鐎殿喗鎸抽幃銏㈢礄閻樼數娉块梻鍌欑缂嶅﹪宕戞繝鍥х獥闁哄稁鍘奸崙鐘绘煙鏉堥箖妾柣鎾存礋閺屻劌鈹戦崱妤婁患閻庤鎸稿Λ婵嬪蓟閳ュ磭鏆嗛悗锝庡墰閿涚喖姊洪柅鐐茶嫰婢у墽绱撳鍛棦鐎规洘鍨垮畷鍗炍熺紒妯煎娇闂備焦鐪归崹褰掑箟閿熺姵鍋傛繛鍡樺姂娴滄粓鏌￠崘銊モ偓濠氬箺閸屾稓绠鹃柛顐ゅ枔閻帡鏌″畝瀣埌闁宠棄顦靛畷锟犳倷鐎电缍嗛梺璇叉唉椤煤閺嶎偆绀婂┑鐘叉储閳ь兛绀侀埢搴ㄥ箻閺夋垳绨甸梺鐟板悑閹矂宕板Δ鍐闁瑰墽绮埛鎺楁煕鐏炴崘澹橀柍褜鍓涢崗姗€骞婂Δ鍛唶闁哄洦菤閸嬫挻鎷呴崷顓犵槇闂佺鏈〃鍡涙倵濞差亝鈷戦柛婵嗗閸屻劑鏌涢妸銉﹁础缂侇喖鐗婂鍕偓锝庡墰椤旀洟姊虹化鏇炲⒉閽冮亶鎮樿箛鏇熸毄闁逞屽墲椤骞愰悜鑺ュ€块柨鏃傛櫕閳瑰秴鈹戦悩鍙夋悙閸ユ挳姊洪崨濠佺繁闁哥姵鐗曢埢宥夊Χ婢跺鎷虹紓浣割儐椤戞瑩宕曢幇鐗堢厱闁哄啠鍋撴い銊ョ墕鍗遍柟鐗堟緲缁犲鎮楀☉娅亪顢撻幘缁樼厽闁绘ê寮剁粊顐ょ磼鏉堛劍绀嬬€规洘绻堥幃婊堟嚍閵夈垺瀚? ' });
@@ -3962,6 +3980,7 @@ apiRouter.patch('/projects/:uuid/draft', async (req, res, next) => {
       skipRevision: true,
     });
     res.json({ ok: true });
+    });
   } catch (error) {
     next(error);
   }

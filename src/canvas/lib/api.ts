@@ -450,10 +450,12 @@ export const nodesApi = {
       baseContentVersion,
       clientId,
     }),
-  upsert: (projectUuid: string, node: CanvasNode, expectedVersion = 0, clientId = "") =>
-    http.post<{ ok: boolean; node: CanvasNode; nodeVersion: number; contentVersion?: string; eventId?: number }>(
+  // restoreDeleted：这个节点是本页删掉后又撤销回来的。服务端只对它放行"重建已删除节点"，
+  // 其余情况下已删除的节点会被忽略并返回 skippedDeleted，防止旧快照把删掉的节点写回来。
+  upsert: (projectUuid: string, node: CanvasNode, expectedVersion = 0, clientId = "", options: { restoreDeleted?: boolean } = {}) =>
+    http.post<{ ok: boolean; node?: CanvasNode; nodeVersion?: number; contentVersion?: string; eventId?: number; skippedDeleted?: boolean }>(
       `/projects/${projectUuid}/nodes/upsert`,
-      { node, expectedVersion, clientId },
+      { node, expectedVersion, clientId, ...(options.restoreDeleted ? { restoreDeleted: true } : {}) },
     ).then((r) => r.data),
   // 服务端要求显式声明"这是人点的删除"：从本地状态推断出来的节点消失不许删服务端数据，
   // 所以这个函数只应该在用户真的删了东西时被调用。
