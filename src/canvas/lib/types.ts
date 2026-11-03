@@ -27,6 +27,10 @@ export interface ResourceMeta {
   displayHeight?: number;
   displayDurationSec?: number;
   originalUrl?: string;
+  /** 新图片才有：画布节点显示的短边 360 WebP。 */
+  previewUrl?: string;
+  /** 新图片且原图短边大于 1080 才有：全屏查看显示的短边 1080 WebP。 */
+  viewerUrl?: string;
   width?: number;
   height?: number;
   durationSec?: number;
@@ -40,6 +44,17 @@ export interface ResourceMeta {
   pixelFormat?: string;
   audioCodecName?: string;
   formatName?: string;
+}
+
+/**
+ * 服务端给新图片生成的派生图，按原图地址存在节点的 `_assetImageVariants` 里。
+ * width / height 是原图尺寸（已按 EXIF 方向摆正），不是派生图尺寸。
+ */
+export interface ImageVariants {
+  previewUrl: string;
+  viewerUrl?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface NodeRef {
@@ -334,6 +349,7 @@ export interface CanvasNodeData extends Record<string, unknown> {
   _assetCreatedAtMs?: Record<string, number>;
   _assetGenerationMeta?: Record<string, AssetGenerationMeta>;
   _assetPreviewUrls?: Record<string, string>;
+  _assetImageVariants?: Record<string, ImageVariants>;
   _generationVersion?: number;
   // Provenance markers stamped when a node is created by applying a Cindy
   // assistant proposal (see Canvas.tsx applyCindyProposal). Used both for

@@ -19,6 +19,14 @@ export interface ImagePreviewItem {
   name?: string
   /** 缩略图地址；不给就用原图（大图当缩略图会拖慢轨道渲染）。 */
   thumbUrl?: string
+  /**
+   * 大图实际显示的地址（新图片短边大于 1080 时是 1080 的查看图）。不给就显示原图。
+   * 下载、复制、放大镜始终用 url（原图）。
+   */
+  viewerUrl?: string
+  /** 原图像素尺寸。显示的是查看图时，信息栏的「像素尺寸」按它，不按查看图的像素。 */
+  originalWidth?: number
+  originalHeight?: number
   resourceMeta?: ResourceMeta
   generationMeta?: AssetGenerationMeta
   createdAtMs?: number
@@ -30,6 +38,8 @@ interface Props {
   url: string
   onClose: () => void
   name?: string
+  /** 单张模式下大图实际显示的地址，含义同 ImagePreviewItem.viewerUrl。 */
+  viewerUrl?: string
   naturalWidth?: number
   naturalHeight?: number
   resourceMeta?: ResourceMeta
@@ -88,14 +98,14 @@ const formatDate = (value?: number) => !value ? '—' : new Intl.DateTimeFormat(
 
 type VideoMetaStatus = 'loading' | 'ready' | 'failed'
 
-export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, resourceMeta, generationMeta, createdAtMs, items, onSetPrimary, primaryUrl, nodeActions, onRemoveItem, kind = 'image', loadVideoResourceMeta }: Props) {
+export function ImagePreview({ url, viewerUrl, onClose, name, naturalWidth, naturalHeight, resourceMeta, generationMeta, createdAtMs, items, onSetPrimary, primaryUrl, nodeActions, onRemoveItem, kind = 'image', loadVideoResourceMeta }: Props) {
   const isVideo = kind === 'video'
   const mediaLabel = isVideo ? '视频' : '图片'
   const list = useMemo<ImagePreviewItem[]>(() => {
     const provided = (items ?? []).filter((item) => item && typeof item.url === 'string' && item.url)
     if (provided.length) return provided
-    return [{ url, name, resourceMeta, generationMeta, createdAtMs }]
-  }, [items, url, name, resourceMeta, generationMeta, createdAtMs])
+    return [{ url, viewerUrl, originalWidth: naturalWidth, originalHeight: naturalHeight, name, resourceMeta, generationMeta, createdAtMs }]
+  }, [items, url, viewerUrl, naturalWidth, naturalHeight, name, resourceMeta, generationMeta, createdAtMs])
 
   // 大图里点节点功能：默认先把查看器关掉再执行 —— 裁剪 / 局部重绘 / 抠像 / 灯光 这些
   // 都会开自己的弹窗，而查看器是 z-index 99999，不关就被压在下面看不见。
@@ -109,6 +119,9 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
   const [index, setIndex] = useState(initialIndex)
   const active = list[Math.min(index, list.length - 1)] ?? list[0]
   const activeUrl = active.url
+  // 大图显示的是查看图（1080）还是原图；下载 / 复制 / 放大镜一律用 activeUrl（原图）
+  const activeDisplayUrl = !isVideo && active.viewerUrl ? active.viewerUrl : activeUrl
+  const showingViewerCopy = activeDisplayUrl !== activeUrl
   const multiple = list.length > 1
   const [loadedVideoMeta, setLoadedVideoMeta] = useState<Record<string, ResourceMeta>>({})
   const [videoMetaStatus, setVideoMetaStatus] = useState<Record<string, VideoMetaStatus>>({})
@@ -380,7 +393,7 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
     if (!multiple || isVideo) return
     for (const step of [1, -1, 2, -2]) {
       const target = list[((index + step) % list.length + list.length) % list.length]
-      if (target && target.url !== activeUrl) new Image().src = target.url
+      if (target && target.url !== activeUrl) new Image().src = target.viewerUrl || target.url
     }
   }, [index, list, multiple, activeUrl, isVideo])
 
@@ -423,7 +436,8 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
         await writeTextToClipboard(activeUrl)
         setCopyState('done')
       } else {
-        const displayed = imageRef.current instanceof HTMLImageElement ? imageRef.current : null
+        // 屏幕上显示的是 1080 查看图时不拿它复制，交给 writeImageToClipboard 按原图地址取
+        const displayed = !showingViewerCopy && imageRef.current instanceof HTMLImageElement ? imageRef.current : null
         const result = await writeImageToClipboard(activeUrl, displayed)
         setCopyState(result === 'image' ? 'done' : 'failed')
       }
@@ -432,7 +446,7 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
       setCopyState('failed')
     }
     window.setTimeout(() => setCopyState('idle'), 1800)
-  }, [activeUrl, isVideo])
+  }, [activeUrl, isVideo, showingViewerCopy])
   const download = () => {
     const anchor = document.createElement('a')
     anchor.href = activeResourceMeta?.originalUrl || activeUrl
@@ -493,7 +507,12 @@ export function ImagePreview({ url, onClose, name, naturalWidth, naturalHeight, 
             style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale}) rotate(${rotation}deg)`, cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'default' }}
           />
         ) : (
-          <img key={activeUrl} ref={imageRef as React.RefObject<HTMLImageElement>} src={activeUrl} draggable={false} onLoad={event => setImageSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })}
+          <img key={activeUrl} ref={imageRef as React.RefObject<HTMLImageElement>} src={activeDisplayUrl} draggable={false} onLoad={event => {
+            const loaded = { w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight }
+            const originalWidth = active.originalWidth || activeResourceMeta?.width
+            const originalHeight = active.originalHeight || activeResourceMeta?.height
+            setImageSize(showingViewerCopy && originalWidth && originalHeight ? { w: originalWidth, h: originalHeight } : loaded)
+          }}
             style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale}) rotate(${rotation}deg)`, cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'zoom-in' }} />
         )}
       </div>

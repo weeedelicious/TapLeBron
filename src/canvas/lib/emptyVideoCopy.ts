@@ -10,6 +10,7 @@ const OUTPUT_KEYS = [
   "_assetCreatedAtMs",
   "_assetGenerationMeta",
   "_assetPreviewUrls",
+  "_assetImageVariants",
   "uploadInfo",
   "_primaryAssetUrl",
   "_autoGenerate",

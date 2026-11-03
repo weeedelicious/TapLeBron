@@ -7,6 +7,7 @@ const { getDefaultProjectCatalogRow, getProjectCatalogRowById } = require('../pr
 const { hydrateCanvasRow, parseJsonDocument, saveCanvasData } = require('./CanvasService');
 const { queueCanvasMutation } = require('./CanvasMutationQueue');
 const { publishCanvasChange } = require('./CanvasRealtimeService');
+const { imageVariantsFromOutput } = require('./imageVariants');
 
 const NODE_TYPE_INT = Object.freeze({ text: 1, image: 2, video: 3, audio: 6 });
 const NODE_LABELS = Object.freeze({ text: '文本', image: '图片', video: '视频', audio: '音频' });
@@ -663,6 +664,8 @@ function uploadResourceMeta(asset, createdAtMs) {
     width: positive(meta.width),
     height: positive(meta.height),
     durationSec: positive(meta.durationSec),
+    previewUrl: cleanString(asset?.previewUrl || meta.previewUrl, 2_000) || undefined,
+    viewerUrl: cleanString(asset?.viewerUrl || meta.viewerUrl, 2_000) || undefined,
     createdAtMs,
   };
 }
@@ -688,6 +691,7 @@ async function createUploadNodeForPlugin(userId, canvasId, options = {}) {
     const resourceMeta = uploadResourceMeta(asset, createdAtMs);
     const nodeName = uploadNodeName(options.name, asset);
     const assetUrls = [asset.url, asset.thumbUrl, resourceMeta.displayUrl, resourceMeta.originalUrl].filter(Boolean);
+    const imageVariants = resourceMeta.kind === 'image' ? imageVariantsFromOutput(resourceMeta) : null;
     const nodeData = {
       type: 'upload',
       name: nodeName,
@@ -699,6 +703,7 @@ async function createUploadNodeForPlugin(userId, canvasId, options = {}) {
         ? { thumbUrls: [asset.thumbUrl || asset.url] }
         : {},
       _resourceMeta: { items: [resourceMeta] },
+      ...(imageVariants ? { _assetImageVariants: { [asset.url]: imageVariants } } : {}),
       _assetCreatedAtMs: Object.fromEntries(assetUrls.map((url) => [url, createdAtMs])),
       _updatedAtMs: createdAtMs,
     };

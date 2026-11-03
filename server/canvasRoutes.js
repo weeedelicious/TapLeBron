@@ -35,6 +35,7 @@ const {
   rescueUndeclaredNodeRemovals,
 } = require('./services/CanvasNodeDeleteGuard');
 const { isResumableGenerationTask } = require('./services/GenerationTaskRecovery');
+const { mergeImageVariantsFromOutputs, imageVariantsFromOutput } = require('./services/imageVariants');
 const { createGenerationTaskApiKeyRunner } = require('./services/GenerationTaskApiKeyContext');
 const {
   canvasSessionByToken,
@@ -1239,6 +1240,117 @@ async function createDisplayImageAsset(projectUuid, storedName, sourcePath) {
   }
 }
 
+// 新图片的两张派生图：画布节点显示短边 360 的 WebP，全屏查看显示短边 1080 的 WebP。
+// 原图短边不超过 1080 时不生成查看图，查看器直接用原图；下载永远是原图。
+// 文件名跟着原图走（<原图名>_360.webp / _1080.webp），同一张图重复上传不会重复生成。
+const IMAGE_PREVIEW_SHORT_EDGE = 360;
+const IMAGE_VIEWER_SHORT_EDGE = 1080;
+const IMAGE_VARIANT_SOURCE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.avif']);
+const IMAGE_VARIANT_SUFFIX_RE = /_(?:360|1080)\.webp$/i;
+
+function isImageVariantName(storedName) {
+  return IMAGE_VARIANT_SUFFIX_RE.test(String(storedName || ''));
+}
+
+async function writeShortEdgeWebp(sharp, sourcePath, outputPath, shortEdge, landscape, quality) {
+  const tmpOutput = `${outputPath}.${randomId()}.tmp`;
+  try {
+    await sharp(sourcePath, { failOn: 'none' })
+      .rotate()
+      .resize(landscape
+        ? { height: shortEdge, withoutEnlargement: true }
+        : { width: shortEdge, withoutEnlargement: true })
+      .webp({ quality, effort: 4 })
+      .toFile(tmpOutput);
+    fs.renameSync(tmpOutput, outputPath);
+  } finally {
+    fs.rmSync(tmpOutput, { force: true });
+  }
+}
+
+/**
+ * 给一张已落盘的图片生成节点图（短边 360）和查看图（短边 1080，仅原图更大时）。
+ * 返回 { previewUrl, viewerUrl?, width, height }，宽高是按 EXIF 方向摆正后的原图尺寸；
+ * 不是可处理的静态图片（GIF、动图、SVG 等）或生成失败时返回 null，调用方照旧用原图。
+ */
+async function createImageVariants(projectUuid, storedName, sourcePath, mimeType = '') {
+  const sharp = getSharp();
+  if (!sharp || !sourcePath || !fs.existsSync(sourcePath)) return null;
+  const ext = path.extname(String(storedName || '')).toLowerCase();
+  const mime = String(mimeType || '').toLowerCase();
+  // 生成结果有时落盘时没有扩展名，这时按 MIME 判断
+  const supported = ext
+    ? IMAGE_VARIANT_SOURCE_EXTS.has(ext)
+    : mime.startsWith('image/') && !/gif|svg/.test(mime);
+  if (!supported) return null;
+  if (isImageVariantName(storedName)) return null;
+  try {
+    const metadata = await sharp(sourcePath, { failOn: 'none' }).metadata();
+    if (Number(metadata.pages || 1) > 1) return null;
+    const rotated = Number(metadata.orientation) >= 5;
+    const width = Number(rotated ? metadata.height : metadata.width) || 0;
+    const height = Number(rotated ? metadata.width : metadata.height) || 0;
+    if (!width || !height) return null;
+    const landscape = width >= height;
+    const shortEdge = Math.min(width, height);
+    const base = path.parse(storedName).name;
+    const variants = { width, height };
+
+    const previewName = `${base}_${IMAGE_PREVIEW_SHORT_EDGE}.webp`;
+    const previewPath = path.join(assetsDir(projectUuid), previewName);
+    if (!fs.existsSync(previewPath)) {
+      await writeShortEdgeWebp(sharp, sourcePath, previewPath, IMAGE_PREVIEW_SHORT_EDGE, landscape, 80);
+    }
+    await mirrorStoredAsset(projectUuid, previewName, previewPath, 'image/webp');
+    variants.previewUrl = assetUrl(projectUuid, previewName);
+
+    if (shortEdge > IMAGE_VIEWER_SHORT_EDGE) {
+      const viewerName = `${base}_${IMAGE_VIEWER_SHORT_EDGE}.webp`;
+      const viewerPath = path.join(assetsDir(projectUuid), viewerName);
+      if (!fs.existsSync(viewerPath)) {
+        await writeShortEdgeWebp(sharp, sourcePath, viewerPath, IMAGE_VIEWER_SHORT_EDGE, landscape, 86);
+      }
+      await mirrorStoredAsset(projectUuid, viewerName, viewerPath, 'image/webp');
+      variants.viewerUrl = assetUrl(projectUuid, viewerName);
+    }
+    return variants;
+  } catch (error) {
+    console.warn(`image variants failed for ${projectUuid}/${storedName}:`, error.message);
+    return null;
+  }
+}
+
+/** 本画布 /assets/<画布>/<文件> 地址对应的本地文件；不是本画布资产时返回 null。 */
+function localAssetForUrl(projectUuid, url) {
+  const match = String(url || '').match(/^\/assets\/([^/?#]+)\/([^/?#]+)$/);
+  if (!match || match[1] !== String(projectUuid)) return null;
+  const storedName = decodeURIComponent(match[2]);
+  if (storedName.includes('/') || storedName.includes('\\')) return null;
+  return { storedName, filePath: path.join(assetsDir(projectUuid), storedName) };
+}
+
+/** 给生成结果里的每张图片补上 previewUrl / viewerUrl / 原图宽高，视频和失败项原样返回。 */
+async function withImageVariantOutputs(projectUuid, urls, outputs = []) {
+  const list = Array.isArray(urls) ? urls : [];
+  const result = [];
+  for (const [index, url] of list.entries()) {
+    const existing = (Array.isArray(outputs) ? outputs : []).find((item) => item && (item.url === url || item.index === index)) || {};
+    const output = { ...existing, index: existing.index ?? index, url };
+    if (!output.previewUrl) {
+      const local = localAssetForUrl(projectUuid, url);
+      const variants = local ? await createImageVariants(projectUuid, local.storedName, local.filePath) : null;
+      if (variants) {
+        output.previewUrl = variants.previewUrl;
+        if (variants.viewerUrl) output.viewerUrl = variants.viewerUrl;
+        output.width = output.width || variants.width;
+        output.height = output.height || variants.height;
+      }
+    }
+    result.push(output);
+  }
+  return result;
+}
+
 async function storeExternalVideoAsset(projectUuid, canvasRow, sourceFilePath, originalName, mimeType = 'video/mp4', sourceType = 'reference') {
   const sourceSha1 = sha1File(sourceFilePath);
   const rawExt = path.extname(String(originalName || '')) || path.extname(String(sourceFilePath || '')) || '.mp4';
@@ -1415,7 +1527,7 @@ async function backfillAssetRecords(canvasRow) {
   await migrateLegacyAssetRecords(canvasRow);
   const [existingRows] = await getContentPool().query('SELECT stored_name FROM canvas_assets WHERE canvas_id = ?', [canvasRow.id]);
   const existingNames = new Set(existingRows.map((row) => row.stored_name));
-  const files = fs.readdirSync(assetsDir(canvasRow.id)).filter((file) => !file.endsWith('_thumb.webp'));
+  const files = fs.readdirSync(assetsDir(canvasRow.id)).filter((file) => !file.endsWith('_thumb.webp') && !isImageVariantName(file));
 
   for (const file of files) {
     if (existingNames.has(file)) continue;
@@ -2637,7 +2749,7 @@ function collectForeignAssetRefs(value, targetCanvasId) {
     const storedName = match[2];
     if (canvasId === target) continue;
     // 缩略图是派生物，跟着正片一起复制，不单独算一条
-    if (storedName.endsWith('_thumb.webp')) continue;
+    if (storedName.endsWith('_thumb.webp') || isImageVariantName(storedName)) continue;
     const key = `${canvasId}/${storedName}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -4404,6 +4516,15 @@ async function persistUploadedAsset(canvasRow, file, options = {}) {
     meta.sha1 = sha1;
     meta.originalUrl = url;
     meta.createdAtMs = Date.now();
+    const imageVariants = imageExts.has(safeExt.toLowerCase())
+      ? await createImageVariants(projectUuid, storedName, dest)
+      : null;
+    if (imageVariants) {
+      meta.previewUrl = imageVariants.previewUrl;
+      if (imageVariants.viewerUrl) meta.viewerUrl = imageVariants.viewerUrl;
+      meta.width = imageVariants.width;
+      meta.height = imageVariants.height;
+    }
 
     if (isVideoUpload) {
       const display = await createDisplayVideoAsset(projectUuid, sha1, dest, uploadMimeType);
@@ -4416,7 +4537,7 @@ async function persistUploadedAsset(canvasRow, file, options = {}) {
       }
     }
 
-    return { url, thumbUrl, displayUrl: meta.displayUrl, sha1, meta, originalName };
+    return { url, thumbUrl, displayUrl: meta.displayUrl, previewUrl: meta.previewUrl, viewerUrl: meta.viewerUrl, sha1, meta, originalName };
   } finally {
     if (sourcePath) fs.rmSync(sourcePath, { force: true });
   }
@@ -6963,12 +7084,22 @@ async function downloadToAssets(urls, projectUuid, options = {}) {
       }
 
       localUrls.push(finalUrl);
-      outputs.push(taskOutputForStoredAsset(
+      const output = taskOutputForStoredAsset(
         finalUrl,
         finalMeta,
         entry.storedMimeType,
         compatibilityMetadata
-      ));
+      );
+      if (String(entry.storedMimeType).startsWith('image/')) {
+        const variants = await createImageVariants(projectUuid, path.basename(entry.filePath), entry.filePath, entry.storedMimeType);
+        if (variants) {
+          output.previewUrl = variants.previewUrl;
+          if (variants.viewerUrl) output.viewerUrl = variants.viewerUrl;
+          output.width = variants.width;
+          output.height = variants.height;
+        }
+      }
+      outputs.push(output);
       if (options.includePreviews && String(entry.storedMimeType).startsWith('image/')) {
         previewUrls.push(await createDisplayImageAsset(
           projectUuid,
@@ -8571,6 +8702,7 @@ apiRouter.post('/texture-clarity/repair', async (req, res) => {
         resolvedModel: openAIImageProvider.providerModelForImage(normalizeImageModel(model)),
         candidateUrl,
         fusedUrl: '/assets/' + projectUuid + '/' + storedName,
+        fusedImageVariants: imageVariantsFromOutput(await createImageVariants(projectUuid, storedName, fullPath)),
         // 验收要求：一个候选只记一次生图调用
         generationCalls: 1,
         generationMs,
@@ -9227,7 +9359,12 @@ apiRouter.post('/generate/image', async (req, res) => {
           cancelledError.name = 'AbortError';
           throw cancelledError;
         }
-        jobService.setTask(internalId, { status: 2, progressPercent: 100, urls });
+        jobService.setTask(internalId, {
+          status: 2,
+          progressPercent: 100,
+          urls,
+          outputs: await withImageVariantOutputs(projectUuid, urls),
+        });
         await safeUpdateUsageLog(usageLogId, { status: 'succeeded', resultCount: urls.length });
       } catch (error) {
         if (isGenerationCancelled(error, abortController.signal)) {
@@ -10174,6 +10311,8 @@ apiRouter.post('/projects/:projectUuid/tasks/:jobId/recover', async (req, res, n
       nodeData._primaryAssetUrl = keepPrimary ? nodeData._primaryAssetUrl : urls[0];
       nodeData._assetCreatedAtMs = assetCreatedAt;
       nodeData._assetGenerationMeta = assetGenerationMeta;
+      const imageVariants = mergeImageVariantsFromOutputs(nodeData._assetImageVariants, urls, task.meta?.outputs);
+      if (imageVariants) nodeData._assetImageVariants = imageVariants;
       nodeData._generationVersion = Math.max(nodeVersion, taskVersion);
       nodeData._updatedAtMs = completedAtMs;
       node.data = JSON.stringify(nodeData);
@@ -12254,6 +12393,10 @@ apiRouter.post('/toolbox/media-enhance', async (req, res) => {
           mediaType === 'video' ? 'video/mp4' : 'image/png',
           enhanceMetadata,
         );
+        if (mediaType !== 'video') {
+          const [withVariants] = await withImageVariantOutputs(projectUuid, [stored.url], [output]);
+          Object.assign(output, withVariants);
+        }
         await jobService.setTaskAndWait(internalId, {
           status: 2,
           progressPercent: 100,
@@ -12734,7 +12877,7 @@ apiRouter.post('/toolbox/panorama', async (req, res) => {
           status: 2,
           progressPercent: 100,
           urls,
-          outputs,
+          outputs: await withImageVariantOutputs(projectUuid, urls, outputs),
           providerStatus: {
             phase: 'completed',
             aspectRatio: primaryMeasurement?.ratio,
@@ -13044,6 +13187,9 @@ module.exports = {
   // AI 出片的概念图要在服务端无人值守地生图，走的就是这条同步链路（跟细化纹理同一个函数）。
   // StudioService 惰性 require 本模块拿它 —— 这里是九千行的大模块，放到它文件顶部会绕出循环依赖。
   generateOpenAiImages,
+  withImageVariantOutputs,
+  createImageVariants,
+  isImageVariantName,
   generationRuntimeState,
   pauseGenerationPollers,
   persistUploadedAsset,

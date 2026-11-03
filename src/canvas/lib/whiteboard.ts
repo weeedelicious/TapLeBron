@@ -78,6 +78,8 @@ export function resourceMetaFromUploadPayload(
     hashSha1: typeof meta.sha1 === 'string' ? meta.sha1 : undefined,
     displayUrl: typeof meta.displayUrl === 'string' ? meta.displayUrl : undefined,
     originalUrl: typeof meta.originalUrl === 'string' ? meta.originalUrl : undefined,
+    previewUrl: typeof meta.previewUrl === 'string' ? meta.previewUrl : undefined,
+    viewerUrl: typeof meta.viewerUrl === 'string' ? meta.viewerUrl : undefined,
     displayByteSize: Number.isFinite(displayByteSize) && displayByteSize > 0 ? displayByteSize : undefined,
     displayWidth: Number.isFinite(displayWidth) && displayWidth > 0 ? displayWidth : undefined,
     displayHeight: Number.isFinite(displayHeight) && displayHeight > 0 ? displayHeight : undefined,

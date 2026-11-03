@@ -7,6 +7,7 @@ const {
 const { parseJsonDocument, saveCanvasData } = require('./CanvasService');
 const { queueCanvasMutation } = require('./CanvasMutationQueue');
 const { publishCanvasChange } = require('./CanvasRealtimeService');
+const { mergeImageVariantsFromOutputs } = require('./imageVariants');
 
 function nodeList(data) {
   return Array.isArray(data?.nodeList) ? data.nodeList : [];
@@ -91,6 +92,7 @@ async function applyGenerationResult({ jobId, task, ownership }) {
 
     const previousUrls = Array.isArray(currentData.url) ? currentData.url.filter(Boolean) : [];
     const mergedUrls = [...new Set([...previousUrls, ...urls])].slice(-30);
+    const imageVariants = mergeImageVariantsFromOutputs(currentData._assetImageVariants, urls, task.meta?.outputs);
     const nextData = {
       ...currentData,
       url: mergedUrls,
@@ -111,6 +113,7 @@ async function applyGenerationResult({ jobId, task, ownership }) {
       _primaryAssetUrl: urls[0],
       _assetCreatedAtMs: createdAtMap,
       _assetGenerationMeta: generationMeta,
+      ...(imageVariants ? { _assetImageVariants: imageVariants } : {}),
       _updatedAtMs: completedAtMs,
     };
 

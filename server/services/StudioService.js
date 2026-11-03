@@ -1130,6 +1130,33 @@ async function generateConcepts(userId, projectId, payload = {}) {
 }
 
 /**
+ * 生成好的图片包成上传节点要的 asset 形状。图已经在画布资产区里，不再落一份字节；
+ * 只顺手生成画布节点用的 360 图和全屏查看用的 1080 图（见 canvasRoutes 的 createImageVariants）。
+ */
+async function studioImageAsset(canvasId, imageUrl, originalName) {
+  const asset = {
+    url: imageUrl,
+    displayUrl: imageUrl,
+    thumbUrl: '',
+    originalName,
+    meta: { kind: 'image', createdAtMs: Date.now() },
+  };
+  try {
+    const { withImageVariantOutputs } = require('../canvasRoutes');
+    const [output] = await withImageVariantOutputs(String(canvasId), [imageUrl]);
+    if (output?.previewUrl) {
+      asset.previewUrl = output.previewUrl;
+      asset.viewerUrl = output.viewerUrl;
+      asset.meta.width = output.width;
+      asset.meta.height = output.height;
+    }
+  } catch (error) {
+    console.warn('[studio] image variants failed', String(error?.message || error).slice(0, 200));
+  }
+  return asset;
+}
+
+/**
  * 把概念图落成画布上的**上传节点**（不是生图节点）。
  *
  * 上传节点才是语义正确的：概念图是设定素材，后面每一镜都要把它当参考图连进去。
@@ -1167,13 +1194,7 @@ async function pushConceptsToCanvas(userId, projectId) {
         // 分镜那个文本节点占着 (0,0)，概念图从 y=760 起另开一行，四个一排
         x: (slot % 4) * 620,
         y: 760 + Math.floor(slot / 4) * 620,
-        persistAsset: async () => ({
-          url: item.imageUrl,
-          displayUrl: item.imageUrl,
-          thumbUrl: '',
-          originalName: `${item.name || 'concept'}.png`,
-          meta: { kind: 'image', createdAtMs: Date.now() },
-        }),
+        persistAsset: async () => studioImageAsset(project.canvasId, item.imageUrl, `${item.name || 'concept'}.png`),
       });
       const nodeKey = created?.created?.nodeKey || '';
       if (!nodeKey) throw new Error('画布没有返回 nodeKey');
@@ -1773,13 +1794,7 @@ async function pushBoardsToCanvas(userId, projectId) {
         // 概念图占了 y=760 那一行，分镜画从 y=1520 起再另开一行，一排四个
         x: (slot % 4) * 620,
         y: 1520 + Math.floor(slot / 4) * 620,
-        persistAsset: async () => ({
-          url: item.imageUrl,
-          displayUrl: item.imageUrl,
-          thumbUrl: '',
-          originalName: `board-${item.shot}-${item.kind}.png`,
-          meta: { kind: 'image', createdAtMs: Date.now() },
-        }),
+        persistAsset: async () => studioImageAsset(project.canvasId, item.imageUrl, `board-${item.shot}-${item.kind}.png`),
       });
       // 形状跟概念图那条完全一致：nodeKey 在 created.created.nodeKey，别再取错层级
       const nodeKey = created?.created?.nodeKey || '';

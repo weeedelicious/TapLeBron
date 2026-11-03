@@ -25,7 +25,7 @@ import { normalizeImageRatioValue, normalizeImageResolutionValue } from '@/lib/i
 import { inferMultiCameraGridRatio, makeMultiCameraGridParams } from '@/lib/multiCameraGrid'
 import type { CanvasNodeData, ImageParams, ResourceMeta } from '@/lib/types'
 import { mergeAssetCreatedAtMap } from '@/lib/assetTimestamps'
-import { mediaPreviewUrl } from '@/lib/mediaPreview'
+import { imageVariantsForUrl, mediaPixelSize, mediaPreviewUrl, mediaViewerUrl } from '@/lib/mediaPreview'
 import {
   captureVideoFrameFile,
   dataUrlToFile,
@@ -911,7 +911,8 @@ export function UploadNode({ id, data, selected }: Props) {
                   }}
                   onLoad={e => {
                     const img = e.currentTarget
-                    setImgSize({ w: img.naturalWidth, h: img.naturalHeight })
+                    // 显示的是 360 节点图时，尺寸取原图的
+                    setImgSize(mediaPixelSize(data, mainUrl, img.naturalWidth, img.naturalHeight))
                   }}
                   onClick={() => setShowToolbar(v => !v)}
                   onDoubleClick={() => setPreviewUrl(mainUrl)}
@@ -1010,6 +1011,9 @@ export function UploadNode({ id, data, selected }: Props) {
         {previewUrl && (
           <ImagePreview
             url={previewUrl}
+            viewerUrl={mediaViewerUrl(data, previewUrl)}
+            naturalWidth={imageVariantsForUrl(data, previewUrl)?.width}
+            naturalHeight={imageVariantsForUrl(data, previewUrl)?.height}
             name={data.name}
             nodeActions={mediaToolbarActions}
             onClose={() => setPreviewUrl(null)}

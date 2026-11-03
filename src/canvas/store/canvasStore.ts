@@ -25,6 +25,7 @@ import {
   mergeAssetCreatedAtMap,
 } from "@/lib/assetTimestamps";
 import { emptyVideoCopyData } from "@/lib/emptyVideoCopy";
+import { withRegisteredImageVariants } from "@/lib/imageVariants";
 
 const EDGE_INTERACTION_WIDTH = 34;
 /** 这些节点的产出走右侧名为 capture 的输出 handle，而不是节点默认输出点 */
@@ -1718,7 +1719,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       type,
       nodes.filter((n) => n.data.type === type).length + 1,
     );
-    const data = { ...makeNodeData(type, name), ...extraData, nodeKey, projectUuid: projectUuid ?? "" };
+    const data = withRegisteredImageVariants(undefined, {
+      ...makeNodeData(type, name),
+      ...extraData,
+      nodeKey,
+      projectUuid: projectUuid ?? "",
+    });
     const measuredWidth =
       type === "panorama_viewer"
         ? PANORAMA_VIEWER_WIDTH
@@ -1843,7 +1849,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...n,
         type: nextType,
         dragHandle: dragHandleForType(nextType),
-        data: { ...n.data, ...patch },
+        data: { ...n.data, ...withRegisteredImageVariants(n.data, patch) },
       };
     });
     set({ nodes: updated, isDirty: true });

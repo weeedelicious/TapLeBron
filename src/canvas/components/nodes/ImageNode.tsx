@@ -47,7 +47,7 @@ import {
   type PromptChipLiveUrls,
 } from '@/lib/promptChips'
 import { liveRefUrl } from '@/lib/primaryOutput'
-import { mediaPreviewUrl } from '@/lib/mediaPreview'
+import { imageVariantsForUrl, mediaPixelSize, mediaPreviewUrl, mediaViewerUrl } from '@/lib/mediaPreview'
 import { writeTextToClipboard } from '@/lib/clipboard'
 import type { AssetGenerationMeta, CanvasNodeData, ImageParams, NodeRef, ResourceMeta } from '@/lib/types'
 import { hasPendingUpstream } from '@/lib/autoGenerate'
@@ -438,6 +438,11 @@ export function ImageNode({ id, data, selected }: Props) {
       delete nextGenerationMeta[url]
       patch._assetGenerationMeta = nextGenerationMeta
     }
+    if (data._assetImageVariants?.[url]) {
+      const nextImageVariants = { ...data._assetImageVariants }
+      delete nextImageVariants[url]
+      patch._assetImageVariants = nextImageVariants
+    }
     if (data._primaryAssetUrl === url) patch._primaryAssetUrl = nextUrls[0] ?? ''
     pushHistory()
     updateNodeData(id, patch)
@@ -445,7 +450,7 @@ export function ImageNode({ id, data, selected }: Props) {
       setExpanded(false)
       setGalleryLocked(false)
     }
-  }, [data._assetGenerationMeta, data._primaryAssetUrl, data.url, id, pushHistory, updateNodeData])
+  }, [data._assetGenerationMeta, data._assetImageVariants, data._primaryAssetUrl, data.url, id, pushHistory, updateNodeData])
 
   const params = getParams(data)
   const advancedSettings = (params.advancedSettings ?? {}) as Record<string, unknown>
@@ -1501,6 +1506,9 @@ export function ImageNode({ id, data, selected }: Props) {
     url: item.url,
     name: data.name,
     thumbUrl: mediaPreviewUrl(data, item.url),
+    viewerUrl: mediaViewerUrl(data, item.url),
+    originalWidth: imageVariantsForUrl(data, item.url)?.width,
+    originalHeight: imageVariantsForUrl(data, item.url)?.height,
     resourceMeta: data._resourceMeta?.items?.find(
       (meta) => meta.originalUrl === item.url || meta.displayUrl === item.url,
     ) as ResourceMeta | undefined,
@@ -1765,7 +1773,8 @@ export function ImageNode({ id, data, selected }: Props) {
               }}
               onLoad={e => {
                 const img = e.currentTarget
-                setImgSize({ w: img.naturalWidth, h: img.naturalHeight })
+                // 显示的是 360 节点图时，尺寸取原图的（标题尺寸、高清增强输出尺寸都按它算）
+                setImgSize(mediaPixelSize(data, mainImageUrl, img.naturalWidth, img.naturalHeight))
               }}
               onDoubleClick={expandImageNode}
             />
@@ -2633,6 +2642,7 @@ export function ImageNode({ id, data, selected }: Props) {
       <HoverImagePreview entry={hoverPreview} />
       {previewUrl && <ImagePreview
         url={previewUrl}
+        viewerUrl={mediaViewerUrl(data, previewUrl)}
         items={previewItems}
         onSetPrimary={setMainImage}
         primaryUrl={mainImageUrl}

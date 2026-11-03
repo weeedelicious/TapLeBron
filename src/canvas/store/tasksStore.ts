@@ -4,6 +4,7 @@ import { generateApi, type ActiveGenerationTask } from '@/lib/api'
 import { useCanvasStore } from './canvasStore'
 import type { AssetGenerationMeta, VideoParams, VideoHistoryItem, CanvasNodeData, ImageParams, TaskInfo, FailedGeneration } from '@/lib/types'
 import { mergeAssetCreatedAtMap } from '@/lib/assetTimestamps'
+import { mergeImageVariantsFromOutputs } from '@/lib/imageVariants'
 import { estimateTaskFromNodeData } from '@/lib/generationProgress'
 
 interface TaskEntry {
@@ -598,19 +599,23 @@ export const useTasksStore = create<TasksState>((set, get) => ({
                 ) : {}),
               }
             }
+            const imageVariants = mergeImageVariantsFromOutputs(nodeData._assetImageVariants, res.urls, res.meta?.outputs)
             store.updateNodeData(current.nodeKey, {
               url: mergeResultUrls(res.urls, nodeData.url),
               taskInfo: completedTaskInfo,
               _primaryAssetUrl: res.urls[0],
               _assetCreatedAtMs: assetCreatedAtMs,
               _assetGenerationMeta: generatedAssetMeta,
+              ...(imageVariants ? { _assetImageVariants: imageVariants } : {}),
               _updatedAtMs: completedAtMs,
             })
           } else {
+            const imageVariants = mergeImageVariantsFromOutputs(nodeData?._assetImageVariants, res.urls, res.meta?.outputs)
             store.updateNodeData(current.nodeKey, {
               url: res.urls,
               taskInfo: completedTaskInfo,
               _assetCreatedAtMs: assetCreatedAtMs,
+              ...(imageVariants ? { _assetImageVariants: imageVariants } : {}),
               _updatedAtMs: completedAtMs,
             })
           }
@@ -822,8 +827,10 @@ export const useTasksStore = create<TasksState>((set, get) => ({
         await generateApi.recover(projectUuid, jobId).catch(error => console.warn('recover completed generation result failed', error))
         continue
       }
+      const imageVariants = mergeImageVariantsFromOutputs(nodeData._assetImageVariants, urls, task.meta?.outputs)
       canvasStore.updateNodeData(node.id, {
         url: urls,
+        ...(imageVariants ? { _assetImageVariants: imageVariants } : {}),
         taskInfo: taskInfoFromEntry(entry, {
           loading: false,
           status: 2,

@@ -22,6 +22,7 @@ import type {
 } from "./types";
 import { errorToText } from "./display";
 import { prepareAssetForUpload } from "./uploadPrep";
+import { registerImageVariants } from "./imageVariants";
 
 const http = axios.create({ baseURL: "/api" });
 
@@ -1160,7 +1161,10 @@ export const projectAssetLibraryApi = {
   thumbUrl: (projectId: number, relativePath: string, width = 360) =>
     `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&w=${encodeURIComponent(String(width))}`,
   importToCanvas: (canvasUuid: string, projectId: number, relativePath: string, name?: string) =>
-    http.post("/project-asset-library/import", { projectUuid: canvasUuid, projectId, path: relativePath, name }).then((r) => r.data),
+    http.post("/project-asset-library/import", { projectUuid: canvasUuid, projectId, path: relativePath, name }).then((r) => {
+      registerImageVariants(r.data?.url, r.data);
+      return r.data;
+    }),
 };
 
 export const historyAssetsApi = {
@@ -1214,6 +1218,8 @@ export const assetsApi = {
         url: string;
         thumbUrl?: string;
         displayUrl?: string;
+        previewUrl?: string;
+        viewerUrl?: string;
         sha1: string;
         meta: Record<string, unknown>;
       }>("/assets/upload", fd, {
@@ -1222,7 +1228,11 @@ export const assetsApi = {
           if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100));
         },
       })
-      .then((r) => r.data);
+      .then((r) => {
+        // 新图片的 360 / 1080 派生图：登记后由画布 store 写进用到这张图的节点
+        registerImageVariants(r.data.url, r.data);
+        return r.data;
+      });
   },
   listProject: (projectUuid: string) =>
     http
@@ -1480,6 +1490,7 @@ export interface TextureClarityRepair {
   resolvedModel: string | null;
   candidateUrl: string;
   fusedUrl: string;
+  fusedImageVariants?: { previewUrl: string; viewerUrl?: string; width?: number; height?: number } | null;
   generationCalls: number;
   generationMs: number;
   fusionMs: number;
@@ -1546,7 +1557,11 @@ export const textureClarityApi = {
       .post<{ textureClarity: TextureClarityRepair }>("/texture-clarity/repair", payload, {
         timeout: 420_000,
       })
-      .then((r) => r.data.textureClarity),
+      .then((r) => {
+        const result = r.data.textureClarity;
+        registerImageVariants(result?.fusedUrl, result?.fusedImageVariants);
+        return result;
+      }),
 };
 
 export const studioApi = {
