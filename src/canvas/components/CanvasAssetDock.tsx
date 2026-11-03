@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { DragEvent } from 'react'
 import { FavoriteLibraryPanel } from './FavoriteLibraryPanel'
 import type { FavoriteLibraryItem } from '@/lib/types'
+import type { ProjectAssetInsertPayload } from '@/lib/api'
 
 /**
  * 画布左侧的资产库停靠栏。
@@ -43,6 +44,7 @@ interface CanvasAssetDockProps {
   lastMode: AssetDockMode
   onModeChange: (mode: AssetDockMode | null) => void
   onInsert: (item: FavoriteLibraryItem) => void
+  onInsertProjectAsset?: (asset: ProjectAssetInsertPayload) => void
   onDragStart?: (item: FavoriteLibraryItem, event: DragEvent<HTMLElement>) => void
 }
 
@@ -51,6 +53,7 @@ export function CanvasAssetDock({
   lastMode,
   onModeChange,
   onInsert,
+  onInsertProjectAsset,
   onDragStart,
 }: CanvasAssetDockProps) {
   const open = mode !== null
@@ -92,6 +95,7 @@ export function CanvasAssetDock({
           mode={mode}
           onClose={() => onModeChange(null)}
           onInsert={onInsert}
+          onInsertProjectAsset={onInsertProjectAsset}
           onDragStart={onDragStart}
         />
       )}

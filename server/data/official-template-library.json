@@ -2,89 +2,346 @@
   {
     "id": "text-to-image",
     "category": "image",
+    "categories": [
+      "image"
+    ],
     "title": "文生图",
-    "subtitle": "从一句提示词开始，生成并预览图片。",
-    "thumbnailUrl": "",
+    "subtitle": "1.添加文本节点，输入描述词\n2.添加图片节点，连接文本节点，输出图片\n3.上传原参考图\n4.添加图片对比节点，连接生成图片和原参考图，对比效果",
+    "thumbnailUrl": "/assets/376/a0b1d5c395dbbe04776f724b591d07c4b4a8067e.jpg",
     "method": "文本生成图片",
-    "canvasId": "",
+    "canvasId": "376",
     "tone": "#ba8752",
-    "nodes": [{ "type": "text", "label": "提示词" }, { "type": "image", "label": "生成图片" }, { "type": "image_compare", "label": "预览" }]
+    "nodes": [
+      {
+        "type": "text",
+        "label": "提示词"
+      },
+      {
+        "type": "image",
+        "label": "生成图片"
+      },
+      {
+        "type": "image_compare",
+        "label": "预览"
+      }
+    ],
+    "createdAtMs": 1789879746885,
+    "updatedAtMs": 1791452126356
   },
   {
     "id": "image-to-image",
     "category": "image",
+    "categories": [
+      "image"
+    ],
     "title": "图生图",
-    "subtitle": "上传参考图，用提示词进行风格或内容变换。",
-    "thumbnailUrl": "",
+    "subtitle": "1.上传参考图\n2.添加图片节点，输入描述词，输出图片\n3.上传原参考图\n4.添加图片对比节点，连接生成图片和原参考图，对比效果",
+    "thumbnailUrl": "/assets/377/2597b79094387a352ae26f7e0870c0ef74cc5324.jpg",
     "method": "参考图生成",
-    "canvasId": "",
+    "canvasId": "377",
     "tone": "#5b9195",
-    "nodes": [{ "type": "upload", "label": "参考图" }, { "type": "image", "label": "生成图片" }, { "type": "image_compare", "label": "预览" }]
+    "nodes": [
+      {
+        "type": "upload",
+        "label": "参考图"
+      },
+      {
+        "type": "image",
+        "label": "生成图片"
+      },
+      {
+        "type": "image_compare",
+        "label": "预览"
+      }
+    ],
+    "createdAtMs": 1789879746885,
+    "updatedAtMs": 1791453847753
   },
   {
     "id": "image-processing",
     "category": "image",
+    "categories": [
+      "image"
+    ],
     "title": "图片处理",
-    "subtitle": "从输入图片开始，进入细化、抠图或灯光处理流程。",
-    "thumbnailUrl": "",
+    "subtitle": "1.上传参考图\n2.添加图片节点，输入描述词，使用图片节点的工具栏的功能组件，处理图片，输出图片\n3.上传原参考图\n4.添加图片对比节点，连接生成图片和原参考图，对比效果",
+    "thumbnailUrl": "/assets/378/e6d361c1ef75137df4fa3ffe86e661a46dcaa913.jpg",
     "method": "图片生成 / 处理",
-    "canvasId": "",
+    "canvasId": "378",
     "tone": "#769265",
-    "nodes": [{ "type": "upload", "label": "输入图片" }, { "type": "image", "label": "图片处理" }, { "type": "image_compare", "label": "结果" }]
+    "nodes": [
+      {
+        "type": "upload",
+        "label": "输入图片"
+      },
+      {
+        "type": "image",
+        "label": "图片处理"
+      },
+      {
+        "type": "image_compare",
+        "label": "结果"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1791455135567
   },
   {
     "id": "text-to-video",
     "category": "video",
+    "categories": [
+      "video"
+    ],
     "title": "文生视频",
-    "subtitle": "从文字描述开始生成视频，并保留预览节点。",
-    "thumbnailUrl": "",
+    "subtitle": "1.添加文本节点输入描述词\n2.添加多个视频节点，连接文本节点，生成视频\n3.添加视频对比节点，把视频连接节点，对比多个视频效果",
+    "thumbnailUrl": "/assets/379/9811011df3c796e67f9c37629f532e0d7ff82204.jpg",
     "method": "文本生成视频",
-    "canvasId": "",
+    "canvasId": "379",
     "tone": "#b68557",
-    "nodes": [{ "type": "text", "label": "提示词" }, { "type": "video", "label": "生成视频" }, { "type": "video_compare", "label": "预览" }]
+    "nodes": [
+      {
+        "type": "text",
+        "label": "提示词"
+      },
+      {
+        "type": "video",
+        "label": "生成视频"
+      },
+      {
+        "type": "video_compare",
+        "label": "预览"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1791456161966
   },
   {
     "id": "video-enhance",
     "category": "video",
+    "categories": [
+      "video"
+    ],
     "title": "视频高清增强",
-    "subtitle": "输入视频后使用 NVIDIA VSR、FlashVSR 等工具增强细节。",
-    "thumbnailUrl": "",
+    "subtitle": "1.上传视频\n2.添加视频节点，输入描述词，增强画面。并且输入视频后使用 NVIDIA VSR、FlashVSR 等工具增强细节。\n3.输出视频",
+    "thumbnailUrl": "/assets/380/754590f3f513c57fb95f0929f2981c42daac13a8.jpg",
     "method": "视频生成 / 处理",
-    "canvasId": "",
+    "canvasId": "380",
     "tone": "#718d9d",
-    "nodes": [{ "type": "upload", "label": "输入视频" }, { "type": "video", "label": "高清增强" }, { "type": "video", "label": "输出视频" }]
+    "nodes": [
+      {
+        "type": "upload",
+        "label": "输入视频"
+      },
+      {
+        "type": "video",
+        "label": "高清增强"
+      },
+      {
+        "type": "video",
+        "label": "输出视频"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1791449520421
   },
   {
     "id": "frame-interpolation",
     "category": "video",
+    "categories": [
+      "video"
+    ],
     "title": "24fps → 30fps 补帧",
-    "subtitle": "保持首尾帧和时长，将 24 帧视频补到 30 帧。",
-    "thumbnailUrl": "",
+    "subtitle": "1.上传视频\n2.添加视频节点，输入描述词。并且可以保持首尾帧和时长，将 24 帧视频补到 30 帧。\n3.输出视频",
+    "thumbnailUrl": "/assets/381/a1352c7a51188a53115820e58ab00ddd96c617b7.jpg",
     "method": "视频补帧",
-    "canvasId": "",
+    "canvasId": "381",
     "tone": "#8b9b65",
-    "nodes": [{ "type": "upload", "label": "输入视频" }, { "type": "video", "label": "补帧" }, { "type": "video", "label": "输出视频" }]
+    "nodes": [
+      {
+        "type": "upload",
+        "label": "输入视频"
+      },
+      {
+        "type": "video",
+        "label": "补帧"
+      },
+      {
+        "type": "video",
+        "label": "输出视频"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1791445834650
   },
   {
     "id": "multi-view",
     "category": "3d",
+    "categories": [
+      "3d"
+    ],
     "title": "3D 多视图",
-    "subtitle": "导入 3D 模型，生成多角度视图和参考图。",
-    "thumbnailUrl": "",
+    "subtitle": "1.导入 3D 模型，输出模型图片\n2.上传模型原画/截屏参考图\n3.添加图片节点，添加模型图片和模型原画/截屏参考图，给白膜上色\n4.添加图片节点，生成多视图",
+    "thumbnailUrl": "/assets/382/ad12d4708016422ca3f0835076d2187c856e26f9.jpg",
     "method": "3D / 多视图",
-    "canvasId": "",
+    "canvasId": "382",
     "tone": "#8b7660",
-    "nodes": [{ "type": "director_stage", "label": "3D 模型" }, { "type": "image", "label": "多视图" }, { "type": "image", "label": "图片输出" }]
+    "nodes": [
+      {
+        "type": "director_stage",
+        "label": "3D 模型"
+      },
+      {
+        "type": "image",
+        "label": "多视图"
+      },
+      {
+        "type": "image",
+        "label": "图片输出"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1791443481298
   },
   {
     "id": "stage-light",
     "category": "3d",
+    "categories": [
+      "3d"
+    ],
     "title": "三维空间灯光",
-    "subtitle": "在三维空间调整机位、姿态和灯光，再输出图片。",
-    "thumbnailUrl": "",
+    "subtitle": "1.上传一张带人物动作的参考图\n2.添加三维空间节点，调整参考图的动作姿态，输出图片\n3.添加图片节点，把调整后的图片和原参考图上传，输入描述词，更换一下动作姿态\n4.再使用图片节点的灯光重塑功能重新打光",
+    "thumbnailUrl": "/assets/383/0057caf5ce754113e02089eb6d1cb297ce210a36.png",
     "method": "3D 灯光 / 多视图",
-    "canvasId": "",
+    "canvasId": "383",
     "tone": "#687f8c",
-    "nodes": [{ "type": "director_stage", "label": "三维空间" }, { "type": "image", "label": "灯光重塑" }, { "type": "image", "label": "图片输出" }]
+    "nodes": [
+      {
+        "type": "director_stage",
+        "label": "三维空间"
+      },
+      {
+        "type": "image",
+        "label": "灯光重塑"
+      },
+      {
+        "type": "image",
+        "label": "图片输出"
+      }
+    ],
+    "createdAtMs": 1789879746886,
+    "updatedAtMs": 1790601094510
+  },
+  {
+    "id": "a6d2deef-4968-4005-914c-38756cb0d6d7",
+    "category": "image",
+    "categories": [
+      "image"
+    ],
+    "title": "光影拷贝",
+    "subtitle": "1.上传目标图和需要采用色彩灯光氛围的参考图\n2.使用色彩灯光迁移功能，调节参数\n3.点击生成\n4.添加图片对比节点，对比前后生成的效果",
+    "thumbnailUrl": "/assets/404/bf0edea92c01802688f34355930def5df8e7636d.png",
+    "method": "参考图 / 目标图 / 光影迁移",
+    "canvasId": "404",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790147419455,
+    "updatedAtMs": 1790599416629
+  },
+  {
+    "id": "c5958ab0-e752-4721-ad77-b910521990fe",
+    "category": "3d",
+    "categories": [
+      "3d"
+    ],
+    "title": "HDR 全景图",
+    "subtitle": "1.上传参考图\n2.用图片节点HDR功能生成全景图/上传全景图\n3.添加360°查看器节点",
+    "thumbnailUrl": "/assets/405/2565180b9c4ad6169851aa49622c066aa6482ffd.png",
+    "method": "输入图片 / HDR 全景生成 / 全景预览",
+    "canvasId": "405",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790149855133,
+    "updatedAtMs": 1790599614292
+  },
+  {
+    "id": "9494815c-ec06-4338-9948-08c3f15d974b",
+    "category": "image",
+    "categories": [
+      "image"
+    ],
+    "title": "AI 高清增强",
+    "subtitle": "1.上传参考图\n2.使用图片节点的AI高清增强功能，处理参考图\n3.添加图片对比节点\n4.连接参考图和高清增强处理后的图，对比前后处理效果",
+    "thumbnailUrl": "/assets/406/509844164bdd0bbb243cbdb0c0cd8ec003c6cc49.png",
+    "method": "输入图片 / AI 高清增强 / 前后对比",
+    "canvasId": "406",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790150480521,
+    "updatedAtMs": 1790599818126
+  },
+  {
+    "id": "0fe416d1-9867-4207-a2d8-986d4c9a445a",
+    "category": "image",
+    "categories": [
+      "image"
+    ],
+    "title": "多图融合",
+    "subtitle": "1.上传多张参考图\n2.添加文本节点，让AI基于多张参考图生成描述词\n3.添加图片节点，AI基于多张参考图和融合图片的描述词生成融合图",
+    "thumbnailUrl": "/assets/407/a04e13f6829dbe40e7892d50255d9b051100edb3.png",
+    "method": "参考图 / 连接图片 / 描述词 / 生成图片",
+    "canvasId": "407",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790151454661,
+    "updatedAtMs": 1790600120256
+  },
+  {
+    "id": "8e0eaed1-af2f-4843-8b36-fb0aeb819b38",
+    "category": "image",
+    "categories": [
+      "image"
+    ],
+    "title": "人物真人化",
+    "subtitle": "1.上传一张任何风格的人物图\n2.添加图片节点，选择Seedream5Pro  生图模型\n3.输入描述词\n4.生成真人图片",
+    "thumbnailUrl": "/assets/408/9863b07dc6b4fd2fa80db890ff88aa30300be4c9.png",
+    "method": "输入人物图片 / 真人化处理 / 输出图片",
+    "canvasId": "408",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790155155894,
+    "updatedAtMs": 1790599011032
+  },
+  {
+    "id": "f5f26bc1-bec0-49f4-8e1d-98329e13b7ab",
+    "category": "image",
+    "categories": [
+      "image"
+    ],
+    "title": "参考图风格迁移",
+    "subtitle": "1.上传多张参考图\n2.添加文本节点，总结多张参考图的特点\n3.上传目标图\n4.添加文本节点，让AI基于目标图和总结的描述词，生成更换美术风格的描述词\n5.添加图片节点，让AI结合目标图和描述词生成更换美术风格的图",
+    "thumbnailUrl": "/assets/412/2bca05d1c0ea472e566b2d3e4f7ef53e844d4837.jpg",
+    "method": "参考图片 / 提炼描述词 / 输入新图片 / 风格化生成",
+    "canvasId": "412",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1790232059981,
+    "updatedAtMs": 1790600601190
+  },
+  {
+    "id": "99f7ee03-dc18-4e12-a3eb-48a895ccccaf",
+    "category": "image",
+    "categories": [
+      "image",
+      "video"
+    ],
+    "title": "图片生视频",
+    "subtitle": "1.上传图片\n2.添加图片节点，使用图片节点工具栏的工具优化图片\n3.添加多个视频节点，连接优化好的图片，输入描述词，生成视频\n4.添加视频对比节点，对比不同视频的效果",
+    "thumbnailUrl": "/assets/433/a682685c8e1ab74f1fe8b306162b43effaf39f3a.jpg",
+    "method": "输入图片 / 动作描述 / 生成视频 / 预览效果",
+    "canvasId": "433",
+    "tone": "#718d9d",
+    "nodes": [],
+    "createdAtMs": 1791534499724,
+    "updatedAtMs": 1791543080034
   }
 ]

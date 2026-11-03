@@ -188,7 +188,7 @@ describe('② 弹窗全屏', () => {
 
   it('全屏后没有「点外面关闭」了，所以 Esc 和关闭按钮必须都在', () => {
     expect(MODAL_SOURCE).toContain("event.key === 'Escape'")
-    expect(MODAL_SOURCE).toContain('onClick={onCancel}')
+    expect(MODAL_SOURCE).toContain('onClick={closeAndSave}')
   })
 })
 

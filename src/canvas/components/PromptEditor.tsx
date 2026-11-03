@@ -147,40 +147,45 @@ function buildEditorHtml(value: string, chips: ChipRef[]) {
   return wrapper.innerHTML
 }
 
-/** 把洗词结果里的 @图片1 / @视频2 等文字提及还原成可点的素材标签。 */
-export function buildPromptHtmlFromMentions(value: string, candidates: ChipRef[]): { html: string; chips: ChipRef[] } {
-  if (typeof document === 'undefined') return { html: value, chips: [] }
+/**
+ * 将模型返回的 `@图片1` / `@视频1` / `@音频1` 按原文位置渲染为编辑器药丸。
+ * 洗提示词是程序写回，不会经过用户失焦触发 convertTextMentions，因此不能只写普通 prompt。
+ */
+export function buildPromptHtmlFromMentions(value: string, candidates: ChipRef[]) {
+  if (typeof document === 'undefined') return { html: value, chips: [] as ChipRef[] }
   const wrapper = document.createElement('div')
-  const text = String(value || '').replace(/@\s+(?=(?:图片|视频|音频|image|img|pic|picture|video|vid|clip|audio|sound)\s*[0-9]{1,2})/gi, '@')
+  // 兼容模型常见的 `@ 图片1` 写法，先把 @ 与名称之间的空格归一化。
+  const normalizedValue = String(value || '').replace(/@\s+(?=(?:图片|视频|音频|image|img|pic|picture|video|vid|clip|audio|sound)\s*[0-9]{1,2})/gi, '@')
   const chips: ChipRef[] = []
   const byName = new Map<string, ChipRef>()
-  candidates.forEach((candidate) => {
+  candidates.forEach(candidate => {
     const key = String(candidate.name || '').replace(/\s+/g, '').toLowerCase()
     if (key && !byName.has(key)) byName.set(key, candidate)
   })
+  // 允许模型偶尔输出英文别名，但优先匹配 Shotflow 面向用户的中文名称。
   const aliases: Record<string, string> = { image: '图片', img: '图片', pic: '图片', picture: '图片', video: '视频', vid: '视频', clip: '视频', audio: '音频', sound: '音频' }
-  const pattern = /(?:@\s*)?([图片视频音频]|image|img|pic|picture|video|vid|clip|audio|sound)\s*([0-9]{1,2})/gi
+  // 模型有时会输出 `@图片1`，也有时输出 `@ 图片1`；两种写法都要把 @ 一起替换掉。
+  const re = /(?:@\s*)?([图片视频音频]|image|img|pic|picture|video|vid|clip|audio|sound)\s*([0-9]{1,2})/gi
   let cursor = 0
   let match: RegExpExecArray | null
-  while ((match = pattern.exec(text)) !== null) {
-    const kind = aliases[String(match[1]).toLowerCase()] || match[1]
-    const ref = byName.get(`${kind}${Number(match[2])}`.toLowerCase())
-    if (!ref || !ref.url) continue
-    if (match.index > cursor) wrapper.appendChild(document.createTextNode(text.slice(cursor, match.index)))
+  while ((match = re.exec(normalizedValue)) !== null) {
+    const prefix = aliases[String(match[1]).toLowerCase()] || match[1]
+    const candidate = byName.get(`${prefix}${Number(match[2])}`.toLowerCase())
+    if (!candidate || !candidate.url) continue
+    if (match.index > cursor) wrapper.appendChild(document.createTextNode(normalizedValue.slice(cursor, match.index)))
     const tmp = document.createElement('span')
-    tmp.innerHTML = buildChipHtml(ref)
+    tmp.innerHTML = buildChipHtml(candidate)
     const chipNode = tmp.firstElementChild
     if (chipNode) {
       wrapper.appendChild(chipNode)
-      chips.push(ref)
+      chips.push(candidate)
       cursor = match.index + match[0].length
     }
   }
-  if (cursor < text.length) wrapper.appendChild(document.createTextNode(text.slice(cursor)))
-  return {
-    html: chips.length ? wrapper.innerHTML.replace(/@\s*(?=<span[^>]*data-chip=["']1["'])/gi, '') : value,
-    chips,
-  }
+  if (cursor < normalizedValue.length) wrapper.appendChild(document.createTextNode(normalizedValue.slice(cursor)))
+  // 最后一层保护：旧模型结果可能把 @ 单独放在药丸前，直接删掉这个装饰字符。
+  const html = chips.length ? wrapper.innerHTML.replace(/@\s*(?=<span[^>]*data-chip=["']1["'])/gi, '') : value
+  return { html, chips }
 }
 
 const BLOCK_TAGS = new Set(['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'H3'])

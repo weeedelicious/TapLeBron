@@ -1,5 +1,6 @@
 import {
   AudioLines,
+  Box,
   Clapperboard,
   FileText,
   Columns2,
@@ -37,6 +38,9 @@ export function NodeTypeIcon({ type, ...props }: NodeTypeIconProps) {
       return <Columns2 {...props} />
     case 'director_stage':
       return <MonitorPlay {...props} />
+    case 'previs':
+    case 'mstudio':
+      return <Box {...props} />
     case 'group':
       return <SquareStack {...props} />
     default:

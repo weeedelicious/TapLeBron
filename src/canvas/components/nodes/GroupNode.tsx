@@ -25,7 +25,8 @@ type ArrangeMode = 'grid' | 'horizontal' | 'vertical'
 const ARRANGE_GAP = 48
 const NODE_TITLE_SCREEN_HEIGHT = 26
 const GROUP_BOUNDS_PADDING_SCREEN = 10
-const GROUP_TOOLBAR_TOP_OFFSET_SCREEN = 74
+// 工具栏放大到 1.5 倍（以底边为基准），顶距跟着抬高。
+const GROUP_TOOLBAR_TOP_OFFSET_SCREEN = 111
 
 const L = {
   noColor: '\u65e0\u8272',
@@ -509,7 +510,7 @@ export function GroupNode({ id, data, selected }: Props) {
           boxShadow: `0 0 ${selectedHandleGlow}px rgba(103, 190, 255, 0.72)`,
           pointerEvents: 'auto',
         }}
-        lineStyle={{ borderColor: 'transparent', pointerEvents: 'none' }}
+        lineStyle={{ borderColor: 'transparent' }}
       />
 
       {isPanelActive && toolbarPos && createPortal(
@@ -519,7 +520,8 @@ export function GroupNode({ id, data, selected }: Props) {
             position: 'fixed',
             left: toolbarPos.x,
             top: toolbarPos.y - GROUP_TOOLBAR_TOP_OFFSET_SCREEN,
-            transform: 'translateX(-50%)',
+            transform: 'translateX(-50%) scale(1.5)',
+            transformOrigin: 'center bottom',
             display: 'flex',
             alignItems: 'center',
             gap: 1,

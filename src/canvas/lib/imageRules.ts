@@ -76,17 +76,8 @@ export const IMAGE_DEFAULTS = rules.defaults
 export const IMAGE_RATIO_OPTIONS = rules.ratioOptions
 export const IMAGE_RESOLUTION_OPTIONS = rules.resolutionOptions
 
-const RETIRED_IMAGE_MODELS: Record<string, string> = {
-  'seedream-5-lite': 'seedream-5-pro',
-  'bytedance-seed/seedream-5-lite': 'seedream-5-pro',
-  'doubao-seedream-5-0-lite': 'seedream-5-pro',
-  'doubao-seedream-5-0-lite-260128': 'seedream-5-pro',
-  'doubao-seedream-5-0-260128': 'seedream-5-pro',
-  seedream5lite: 'seedream-5-pro',
-  'seedream5-lite': 'seedream-5-pro',
-  'seedream 5 lite': 'seedream-5-pro',
-  'seedream-5.0-lite': 'seedream-5-pro',
-}
+/** 下线模型的改名映射。Seedream 5 Lite 已重新上线，目前没有需要改名的模型。 */
+const RETIRED_IMAGE_MODELS: Record<string, string> = {}
 
 export function normalizeImageModelValue(model?: string): string {
   const value = String(model || '').trim()

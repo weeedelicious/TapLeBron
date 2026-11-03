@@ -93,6 +93,21 @@ function normalizeFavoriteSourceRoot(value) {
   return key ? key.slice(0, 255) : null;
 }
 
+
+function bareLocalAssetUrl(value) {
+  const text = String(value || '').trim().split(/[?#]/)[0];
+  return /^\/assets\/[^/]+\/[^/]+$/.test(text) ? text : '';
+}
+
+function sharedRecordReferencesAsset(payload, previewUrl, assetUrl) {
+  const bare = bareLocalAssetUrl(assetUrl);
+  if (!bare) return false;
+  const preview = String(previewUrl || '').trim();
+  if (preview === bare || preview.startsWith(bare + '?')) return true;
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload || {});
+  const quoted = JSON.stringify(bare);
+  return text.includes(quoted) || text.includes(quoted.slice(0, -1) + '?');
+}
 module.exports = {
   FAVORITE_ITEM_TYPES,
   favoriteFromRow,
@@ -102,4 +117,6 @@ module.exports = {
   normalizeFavoriteSourceProject,
   normalizeFavoriteSourceRoot,
   normalizeFavoriteTags,
+  bareLocalAssetUrl,
+  sharedRecordReferencesAsset,
 };

@@ -57,12 +57,22 @@ export interface StageScene {
   groundColor: string
 }
 
+export interface StageRehearsal {
+  startCamera: StageCamera | null
+  endCamera: StageCamera | null
+  durationSec: number
+}
+
+export const DIRECTOR_REHEARSAL_DURATION_OPTIONS = [4, 5, 8] as const
+export const DEFAULT_DIRECTOR_REHEARSAL_DURATION_SEC = 5
+
 export interface DirectorStageState {
   camera: StageCamera
   pose: Pose
   props: StageProp[]
   models: StageModel[]
   scene: StageScene
+  rehearsal: StageRehearsal
   /** 出图比例（宽:高） */
   ratio: string
   /** 出图短边像素 */
@@ -101,6 +111,11 @@ export const DEFAULT_DIRECTOR_STAGE_STATE: DirectorStageState = {
     backdropVisible: true,
     backdropColor: '#1b1b22',
     groundColor: '#33333d',
+  },
+  rehearsal: {
+    startCamera: null,
+    endCamera: null,
+    durationSec: 5,
   },
   ratio: '16:9',
   resolution: '2K',
@@ -274,6 +289,26 @@ export function normalizeScene(value: unknown): StageScene {
   }
 }
 
+export function normalizeRehearsalDurationSec(value: unknown) {
+  const num = Math.round(Number(value))
+  return (DIRECTOR_REHEARSAL_DURATION_OPTIONS as readonly number[]).includes(num)
+    ? num
+    : DEFAULT_DIRECTOR_REHEARSAL_DURATION_SEC
+}
+
+export function normalizeRehearsal(value: unknown): StageRehearsal {
+  const source = (value ?? {}) as Record<string, unknown>
+  const optionalCamera = (raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return null
+    return normalizeCamera(raw)
+  }
+  return {
+    startCamera: optionalCamera(source.startCamera),
+    endCamera: optionalCamera(source.endCamera),
+    durationSec: normalizeRehearsalDurationSec(source.durationSec),
+  }
+}
+
 export function normalizeDirectorStageState(value: unknown): DirectorStageState {
   const source = (value ?? {}) as Record<string, unknown>
   return {
@@ -282,6 +317,7 @@ export function normalizeDirectorStageState(value: unknown): DirectorStageState 
     props: normalizeProps(source.props),
     models: normalizeModels(source.models),
     scene: normalizeScene(source.scene),
+    rehearsal: normalizeRehearsal(source.rehearsal),
     ratio: normalizeRatio(source.ratio),
     resolution: normalizeResolution(source.resolution),
   }

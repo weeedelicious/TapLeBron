@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -26,8 +27,8 @@ const { studioRouter } = require('./routes/studioRoutes');
 const { cindyAssistantRouter } = require('./routes/cindyAssistantRoutes');
 const { closePools, getPool, migrate } = require('./db');
 const { hydrateCanvasRow, hydrateCanvasRows, saveCanvasData, starterCanvas } = require('./services/CanvasService');
-const { mountUiMask } = require('./uiMaskMount');
 const config = require('./config');
+const { mountUiMask } = require('./uiMaskMount');
 const assetService = require('./services/AssetService');
 const {
   bootstrapSharedProjectCatalog,
@@ -65,9 +66,9 @@ let isShuttingDown = false;
 let shutdownPromise = null;
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 mountUiMask(app, requireAuth);
+app.use(express.json({ limit: '50mb' }));
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -1039,6 +1040,15 @@ app.use('/ui-mask-source', express.static(path.join(__dirname, '..', 'vendor', '
 app.get(APP_ADMIN_PATH, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
 });
+const monoformDistPath = path.join(__dirname, '..', 'vendor', 'monoform-previs-studio', 'dist');
+app.use('/Shotflow/monoform', (req, res, next) => {
+  if (!fs.existsSync(monoformDistPath)) {
+    res.status(503).type('html').send('<!doctype html><meta charset="utf-8"><title>MONOFORM</title><p>白模预演包还没构建。</p>');
+    return;
+  }
+  next();
+});
+app.use('/Shotflow/monoform', express.static(monoformDistPath, { index: 'index.html', redirect: true, fallthrough: false }));
 app.get([APP_HOME_PATH, `${APP_HOME_PATH}/*`], (req, res) => {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('Pragma', 'no-cache');

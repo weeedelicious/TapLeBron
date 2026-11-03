@@ -39,9 +39,17 @@
   top: 154px;
 }
 
+.image-compare-node-handle-c {
+  top: 226px;
+}
+
+.image-compare-node-handle-d {
+  top: 298px;
+}
+
 /* 拼接图产出走右侧这个输出口 */
 .image-compare-node-output-handle {
-  top: 118px;
+  top: 190px;
   background: #8fd7ff;
 }
 
@@ -773,4 +781,48 @@
   .image-compare-viewer-image {
     will-change: auto;
   }
+}
+
+/* 三张以上输入时的四宫格查看 */
+.image-compare-viewer-quad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.image-compare-viewer-quad figure {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.image-compare-viewer-quad img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.image-compare-viewer-quad figcaption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

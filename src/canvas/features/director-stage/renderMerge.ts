@@ -253,3 +253,76 @@ export function stageRenderNodeData(input: StageRenderNodeInput): Record<string,
     },
   }
 }
+
+/** 白模预演视频在 generatorType 里的来源标记。 */
+export const DIRECTOR_STAGE_REHEARSAL_GENERATOR = "director-stage-rehearsal"
+
+export interface StageRehearsalVideoInput {
+  stageNodeId: string
+  stageName?: string
+  url: string
+  width: number
+  height: number
+  durationSec: number
+  fps: number
+  createdAtMs: number
+  resourceMeta?: ResourceMeta
+  state: DirectorStageState
+  baseVideoParams: Record<string, unknown>
+}
+
+export function stageRehearsalVideoNodeData(input: StageRehearsalVideoInput): Record<string, unknown> {
+  const url = typeof input.url === "string" ? input.url.trim() : ""
+  const stageRef = { nodeId: input.stageNodeId, url, mediaType: "video" as const }
+  const baseSettings = (input.baseVideoParams.settings ?? {}) as Record<string, unknown>
+  const durationSec = Math.max(1, Math.round(Number(input.durationSec) || 5))
+  const stageName = input.stageName || "三维空间"
+
+  return {
+    name: stageName + " 白模参考视频",
+    url: [url],
+    action: "video_generate",
+    sourceKind: "derived",
+    generatorType: DIRECTOR_STAGE_REHEARSAL_GENERATOR,
+    ...(input.resourceMeta ? { _resourceMeta: { items: [input.resourceMeta] } } : {}),
+    _primaryAssetUrl: url,
+    _assetCreatedAtMs: { [url]: input.createdAtMs },
+    _assetGenerationMeta: {
+      [url]: {
+        model: "白模预演台",
+        resolution: String(Math.round(input.width)) + "x" + String(Math.round(input.height)),
+        createdAtMs: input.createdAtMs,
+        outputIndex: 0,
+      } satisfies AssetGenerationMeta,
+    },
+    _updatedAtMs: input.createdAtMs,
+    params: {
+      ...input.baseVideoParams,
+      prompt: "",
+      modeType: input.baseVideoParams.modeType || "omni",
+      videoList: [stageRef],
+      mixedList: [stageRef],
+      mixedListOrder: [input.stageNodeId],
+      settings: {
+        ...baseSettings,
+        ratio: input.state.ratio,
+        resolution: "720P",
+        duration: durationSec,
+      },
+      advancedSettings: {
+        directorStageRehearsal: {
+          version: 1,
+          stageNodeId: input.stageNodeId,
+          cameraStart: input.state.rehearsal.startCamera,
+          cameraEnd: input.state.rehearsal.endCamera,
+          ratio: input.state.ratio,
+          width: Math.round(input.width),
+          height: Math.round(input.height),
+          durationSec,
+          fps: Math.round(input.fps),
+          createdAtMs: input.createdAtMs,
+        },
+      },
+    },
+  }
+}

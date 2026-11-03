@@ -11,7 +11,8 @@ const FormData = require('form-data');
  * Video frame interpolation service.
  *
  * GPU methods run on the Windows 4090 worker: OpenFlowFrames drives its pinned
- * rife-ncnn-vulkan runtime with an exact target frame count; Video2X 6.4 makes
+ * rife-ncnn-vulkan runtime with an exact target frame count; RIFE v4.6 uses the
+ * official 20221029 binary and rife-v4.6 custom timestep; Video2X 6.4 makes
  * a lossless integer-multiple intermediate that the worker retimes exactly.
  * The server-side fallback remains FFmpeg's motion-compensated `minterpolate`.
  * The output contract is explicit:
@@ -25,7 +26,7 @@ const DEFAULT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MIN_SOURCE_FPS = 1;
 const MAX_SOURCE_FPS = 240;
 const MAX_TARGET_FPS = 120;
-const SUPPORTED_METHODS = new Set(['quality', 'openflowframes', 'video2x']);
+const SUPPORTED_METHODS = new Set(['quality', 'openflowframes', 'video2x', 'gmfss', 'gimmvfi', 'rife46']);
 const METHOD_IMPLEMENTATIONS = Object.freeze({
   quality: Object.freeze({
     method: 'quality',
@@ -41,6 +42,21 @@ const METHOD_IMPLEMENTATIONS = Object.freeze({
     method: 'video2x',
     provider: 'video2x',
     model: 'Video2X 6.4 · RIFE 4.26',
+  }),
+  gmfss: Object.freeze({
+    method: 'gmfss',
+    provider: 'gmfss',
+    model: 'GMFSS Fortuna',
+  }),
+  gimmvfi: Object.freeze({
+    method: 'gimmvfi',
+    provider: 'gimmvfi',
+    model: 'GIMM-VFI R-P',
+  }),
+  rife46: Object.freeze({
+    method: 'rife46',
+    provider: 'rife-ncnn-vulkan',
+    model: 'RIFE ncnn Vulkan · rife-v4.6',
   }),
 });
 const SAFE_PRESETS = new Set([

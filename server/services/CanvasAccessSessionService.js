@@ -93,6 +93,22 @@ async function canvasSessionState(canvasId) {
   return rows[0] || null;
 }
 
+async function canvasSessionByToken(token, userId = null) {
+  if (!token) return null;
+  const params = [tokenHash(token)];
+  let sql = `SELECT canvas_id, session_epoch, token_hash, user_id, client_id,
+                    created_at, last_seen_at, updated_at
+             FROM canvas_access_sessions
+             WHERE token_hash = ?`;
+  if (userId != null) {
+    sql += ' AND user_id = ?';
+    params.push(userId);
+  }
+  sql += ' LIMIT 1';
+  const [rows] = await getContentPool().query(sql, params);
+  return rows[0] || null;
+}
+
 async function validateCanvasSession({ canvasId, token, userId = null, touch = false }) {
   if (!token) return { ok: false, reason: 'required', state: null };
   const state = await canvasSessionState(canvasId);
@@ -177,6 +193,7 @@ async function requireCanvasSession(req, res, canvasId, { touch = false } = {}) 
 
 module.exports = {
   HEADER_NAME,
+  canvasSessionByToken,
   canvasSessionState,
   enterCanvasSession,
   leaveCanvasSession,

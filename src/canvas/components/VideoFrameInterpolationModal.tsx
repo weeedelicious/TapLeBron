@@ -3,7 +3,14 @@ import { createPortal } from 'react-dom'
 import { Check, Gauge, Loader2, X } from 'lucide-react'
 
 export const VIDEO_FRAME_INTERPOLATION_TARGETS = [30, 60, 120] as const
-export type VideoFrameInterpolationMethod = 'quality' | 'openflowframes' | 'video2x'
+export type VideoFrameInterpolationMethod = 'quality' | 'openflowframes' | 'video2x' | 'gmfss' | 'gimmvfi' | 'rife46'
+
+export function frameInterpolationResultName(sourceName: unknown, method: VideoFrameInterpolationMethod, targetFps: number) {
+  const base = String(sourceName || '视频').trim() || '视频'
+  const methodLabel = method === 'openflowframes' ? 'OpenFlowFrame' : method === 'video2x' ? 'Video2X' : method === 'gmfss' ? 'GMFSS' : method === 'gimmvfi' ? 'GIMMVFI' : method === 'rife46' ? 'RIFEv46' : 'FFmpeg'
+  const fps = Math.max(1, Math.round(Number(targetFps) || 0))
+  return base + '_' + methodLabel + '_' + fps + 'fps'
+}
 
 export const VIDEO_FRAME_INTERPOLATION_METHODS: Array<{
   id: VideoFrameInterpolationMethod
@@ -24,6 +31,24 @@ export const VIDEO_FRAME_INTERPOLATION_METHODS: Array<{
     name: 'Video2X 6.4',
     model: 'RIFE 4.26 · 2× 后精确重定时',
     description: '先用 Video2X RIFE 生成高帧率无损中间帧，再按时间轴精确输出 30fps。',
+  },
+  {
+    id: 'gmfss',
+    name: 'GMFSS Fortuna',
+    model: '动漫补帧标杆',
+    description: '线条和遮挡比 RIFE 更干净，适合二次元/卡通。比 OpenFlowFrames 更慢。',
+  },
+  {
+    id: 'gimmvfi',
+    name: 'GIMM-VFI R-P',
+    model: '大运动实拍',
+    description: '任意时刻插帧，复杂运动和大幅度位移比 RIFE 更稳，更吃显存。',
+  },
+  {
+    id: 'rife46',
+    name: 'RIFE v4.6',
+    model: 'RIFE ncnn Vulkan 20221029',
+    description: '官方 rife-v4.6 按目标总帧数做自定义时间步，24→30 不丢帧。',
   },
   {
     id: 'quality',

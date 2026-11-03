@@ -4,7 +4,7 @@ import { VIDEO_DEFAULTS, listSelectableVideoModels } from './videoRules'
 
 export const NODE_TYPE_INT: Record<string, number> = {
   text: 1, image: 2, video: 3, video_merge: 4, director_stage: 5, audio: 6, script: 7, upload: 8, group: 9,
-  panorama_viewer: 10, image_compare: 11, video_compare: 12, ui_mask: 16,
+  panorama_viewer: 10, image_compare: 11, video_compare: 12, previs: 13, mstudio: 14, word: 15, ui_mask: 16,
 }
 
 export const NODE_INT_TYPE: Record<number, string> = Object.fromEntries(
@@ -12,10 +12,10 @@ export const NODE_INT_TYPE: Record<number, string> = Object.fromEntries(
 )
 
 export const NODE_LABELS: Record<string, string> = {
-  text: '文本节点', image: '图片节点', video: '视频节点',
+  text: '文本节点', word: 'Word节点', image: '图片节点', video: '视频节点',
   video_merge: '视频合成', director_stage: '三维空间', audio: '音频节点',
   script: '脚本节点', upload: '上传资源', group: '分组', panorama_viewer: '360°查看器',
-  image_compare: '图片对比', video_compare: '视频对比', ui_mask: 'UI遮罩'
+  image_compare: '图片对比', video_compare: '视频对比', previs: 'M-STUDIO', mstudio: 'M-studio工作台'
 }
 
 export const DEFAULT_IMAGE_MODEL = IMAGE_DEFAULTS.model
@@ -84,6 +84,7 @@ export const DEFAULT_TEXT_MODEL = 'codex/gpt-5.6-sol'
 export const TEXT_MODELS = [
   { value: DEFAULT_TEXT_MODEL, label: 'GPT-5.6 Sol' },
   { value: 'gpt-5.6-luna',     label: 'GPT-5.6 Luna' },
+  { value: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5' },
 ]
 
 /** 已经从白名单里下掉的旧模型 → 现在拿谁顶上。
@@ -139,7 +140,7 @@ export function makeNodeData(type: string, name: string): CanvasNodeData {
       // 只看不生成的查看器节点：两路图片输入由连线写进 params.compareRefA / compareRefB。
       // compareMode 只是下次打开全屏的初始模式，滑杆位置和透明度一律不落库。
       return { type: 'image_compare', name, url: [], action: 'image_compare',
-        params: { compareRefA: null, compareRefB: null, compareMode: 'side-by-side' } as unknown as Record<string, unknown> }
+        params: { compareRefA: null, compareRefB: null, compareRefC: null, compareRefD: null, compareMode: 'side-by-side' } as unknown as Record<string, unknown> }
     case 'video_compare':
       // 和图片对比一样：槽位身份必须落在节点 params 里，边从不单独持久化。
       return { type: 'video_compare', name, url: [], action: 'video_compare',
@@ -156,12 +157,14 @@ export function makeNodeData(type: string, name: string): CanvasNodeData {
       }
     case 'upload':
       return { type: 'upload', name, url: [], action: 'image_resource' }
-    case 'ui_mask':
-      return { type: 'ui_mask', name, url: [], action: 'ui_mask', sourceKind: 'ui_mask', contentWidth: 280, contentHeight: 92,
-        params: { videoList: [] } as unknown as Record<string, unknown> }
     case 'group':
       return { type: 'group', name, url: [], action: 'image_resource',
         params: { childIds: [], color: '#252525' } as unknown as Record<string, unknown> }
+    case 'previs':
+      // 预演工程单独存（previs_documents），画布里只记工程 id 和缩略图。
+      return { type: 'previs', name, url: [], action: 'previs',
+        params: { previs: { documentId: '', revision: 0, activeShotId: '', thumbUrl: '' } } as unknown as Record<string, unknown>,
+        contentWidth: 300, contentHeight: 180 }
     default:
       return { type: 'upload', name, url: [], action: 'image_resource' }
   }

@@ -1074,10 +1074,27 @@ function failTask(jobId, error, extra = {}) {
   });
 }
 
+
+function runningJobIdsForNodes(projectUuid, nodeKeys) {
+  const keys = nodeKeys instanceof Set ? nodeKeys : new Set((nodeKeys || []).map((key) => String(key || "").trim()).filter(Boolean));
+  const project = String(projectUuid || "");
+  if (!project || keys.size === 0) return [];
+  const ids = [];
+  for (const [jobId, entry] of Object.entries(tasks)) {
+    if (!entry || String(entry.projectUuid || "") !== project) continue;
+    if (!keys.has(String(entry.nodeKey || ""))) continue;
+    const status = entry.status;
+    if (status === 2 || status === 3 || status === "succeeded" || status === "failed" || status === "cancelled") continue;
+    ids.push(jobId);
+  }
+  return ids;
+}
+
 module.exports = {
   canAccessTask,
   getTaskOwnership,
   cancelPersistentTask,
+  runningJobIdsForNodes,
   createPersistentTask,
   createTask,
   completeTask,

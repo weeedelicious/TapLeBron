@@ -12,6 +12,8 @@ import { PanoramaViewerNode } from '../features/panorama/PanoramaViewerNode'
 import { ImageCompareNode } from '../features/image-compare/ImageCompareNode'
 import { VideoCompareNode } from '../features/video-compare/VideoCompareNode'
 import { UiMaskNode } from './nodes/UiMaskNode'
+import { PrevisNode } from './nodes/PrevisNode'
+import { WordNode } from '../features/word/WordNode'
 
 export const nodeTypes = {
   image: ImageNode,
@@ -22,6 +24,9 @@ export const nodeTypes = {
   video_merge: VideoMergeNode,
   upload: UploadNode,
   director_stage: DirectorStageNode,
+  previs: PrevisNode,
+  mstudio: PrevisNode,
+  word: WordNode,
   group: GroupNode,
   atmosphere_transfer: AtmosphereTransferNode,
   panorama_viewer: PanoramaViewerNode,

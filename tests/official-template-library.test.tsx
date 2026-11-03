@@ -10,6 +10,7 @@ const apiMocks = vi.hoisted(() => ({
   source: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  getProject: vi.fn(async () => ({})),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -18,6 +19,9 @@ vi.mock('@/lib/api', () => ({
     source: apiMocks.source,
     create: apiMocks.create,
     update: apiMocks.update,
+  },
+  projectsApi: {
+    get: apiMocks.getProject,
   },
 }))
 
@@ -56,15 +60,17 @@ afterEach(() => {
 })
 
 describe('linked canvas navigation', () => {
-  it('opens in the current page without creating a competing tab', () => {
+  it('opens in the current page without creating a competing tab', async () => {
     const navigate = vi.fn()
 
-    openLinkedCanvas('101', navigate)
+    await openLinkedCanvas('101', navigate)
 
+    expect(apiMocks.getProject).toHaveBeenCalledWith('101')
     expect(navigate).toHaveBeenCalledTimes(1)
     const destination = new URL(navigate.mock.calls[0][0])
     expect(destination.searchParams.get('project')).toBe('101')
-    expect(destination.searchParams.get('claimCanvasSession')).toBe('1')
+    // 先读一次画布让会话脚本拿到令牌，再整页打开；不能带 claimCanvasSession，否则会把刚拿到的令牌删掉。
+    expect(destination.searchParams.get('claimCanvasSession')).toBeNull()
   })
 })
 

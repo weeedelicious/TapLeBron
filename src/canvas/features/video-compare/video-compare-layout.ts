@@ -40,7 +40,7 @@ function positive(value: unknown) {
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
-function fitContain(
+export function fitContain(
   source: VideoCompareCellSize,
   cellWidth: number,
   cellHeight: number,

@@ -65,14 +65,19 @@ function normalizeVideoDuration(model, duration, mode) {
   return Math.min(durationRule.max, Math.max(durationRule.min, Math.round(value)));
 }
 
-function getVideoGenerationCounts(model, _hasImageReference) {
-  return getVideoModelRule(model).generationCounts || [1];
+function getVideoGenerationCounts(model, _hasImageReference, resolution) {
+  const modelRule = getVideoModelRule(model);
+  const resolutionCounts = resolution && modelRule.generationCountsByResolution
+    ? modelRule.generationCountsByResolution[resolution]
+    : null;
+  return resolutionCounts || modelRule.generationCounts || [1];
 }
 
-function normalizeVideoCount(model, count, hasImageReference) {
-  const options = getVideoGenerationCounts(model, hasImageReference);
+function normalizeVideoCount(model, count, hasImageReference, resolution) {
+  const options = getVideoGenerationCounts(model, hasImageReference, resolution);
   const value = Number(count || 1);
-  return options.includes(value) ? value : options[0] || 1;
+  if (options.includes(value)) return value;
+  return [...options].filter((option) => option <= value).sort((a, b) => b - a)[0] || options[0] || 1;
 }
 
 const REF_KIND_LABEL = { images: '图片', videos: '视频', audios: '音频' };
@@ -237,7 +242,7 @@ function validateVideoCapabilities(input = {}) {
     if (message) throw new Error(message);
   }
 
-  const allowedCounts = getVideoGenerationCounts(model, imageCount > 0);
+  const allowedCounts = getVideoGenerationCounts(model, imageCount > 0, resolution);
   if (!allowedCounts.includes(count)) {
     throw new Error(`${modeRule.label || mode}当前只支持生成 ${allowedCounts.join('/')} 个视频`);
   }

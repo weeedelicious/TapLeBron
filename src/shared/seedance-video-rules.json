@@ -39,6 +39,9 @@
       },
       "audio": ["on", "off"],
       "generationCounts": [1, 2, 4],
+      "generationCountsByResolution": {
+        "4K": [1, 2]
+      },
       "referenceVideo": {
         "maxCount": 3,
         "minDurationSec": 2,

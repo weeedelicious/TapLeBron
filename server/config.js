@@ -80,6 +80,9 @@ module.exports = {
   openaiApiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',
   llmBaseUrl: process.env.LLM_BASE_URL || 'https://llm-proxy.tapsvc.com',
   llmApiKey: process.env.LLM_API_KEY || '',
+  // Dedicated gateway credential for Claude Opus text nodes. Other models
+  // continue using the signed-in user's key or LLM_API_KEY.
+  opusApiKey: process.env.OPUS_API_KEY || '',
   // 后端所有纯文本/对话调用的默认模型。2026-08-17 从 gpt-5.5 换成 GPT-5.6 Sol：
   // 网关账号白名单里已经没有 gpt-5.5 了，写死它的地方会直接报
   // "user not allowed to access model"。目录里没有裸的 gpt-5.6-sol，Sol 只有
@@ -144,6 +147,12 @@ module.exports = {
     pollIntervalMs: Number(process.env.MEDIA_ENHANCE_POLL_INTERVAL_MS || 1_000),
     maxOutputPixels: Number(process.env.MEDIA_ENHANCE_MAX_OUTPUT_PIXELS || 134_217_728),
     maxConvertTimeoutMs: Number(process.env.MEDIA_ENHANCE_MAX_CONVERT_TIMEOUT_MS || 30 * 60_000),
+  },
+  videoDepth: {
+    serviceUrl: normalizeOptionalUrl(process.env.VIDEO_DEPTH_SERVICE_URL || process.env.MEDIA_ENHANCE_SERVICE_URL),
+    serviceToken: process.env.VIDEO_DEPTH_SERVICE_TOKEN || process.env.MEDIA_ENHANCE_SERVICE_TOKEN || '',
+    timeoutMs: Number(process.env.VIDEO_DEPTH_TIMEOUT_MS || process.env.MEDIA_ENHANCE_VIDEO_TIMEOUT_MS || 12 * 60 * 60_000),
+    pollIntervalMs: Number(process.env.VIDEO_DEPTH_POLL_INTERVAL_MS || process.env.MEDIA_ENHANCE_POLL_INTERVAL_MS || 1_000),
   },
   appearanceTransfer: {
     // Lighting-descriptor vision analysis for the atmosphere-transfer tool.

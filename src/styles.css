@@ -160,6 +160,14 @@ textarea:focus {
   flex-shrink: 0;
 }
 
+.brand-wordmark.on-dark {
+  mix-blend-mode: screen;
+}
+
+.brand-wordmark.on-light {
+  mix-blend-mode: multiply;
+}
+
 .brand-wordmark.small {
   height: 32px;
 }

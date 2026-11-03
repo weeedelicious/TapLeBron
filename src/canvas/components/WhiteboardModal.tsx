@@ -9,6 +9,7 @@ import {
   useEditor,
   useToasts,
   useTranslation,
+  type Box,
   type Editor,
   type TLEditorSnapshot,
   type TldrawOptions,
@@ -30,6 +31,11 @@ interface WhiteboardModalProps {
   loadError?: string | null
   onCancel: () => void
   onAccept: (payload: WhiteboardModalAcceptPayload) => Promise<void> | void
+  /** 画在视频上层时，白板下面垫一层播放到 underlayTime 的视频，画布本身透明。 */
+  underlayUrl?: string
+  underlayTime?: number
+  /** 只导出笔迹（去掉垫底的透明底图），导出范围仍按底图对齐，得到和视频同尺寸的透明 PNG。 */
+  strokesOnly?: boolean
 }
 
 const TLDRAW_OPTIONS: Partial<TldrawOptions> = {
@@ -78,6 +84,9 @@ export function WhiteboardModal({
   loadError = null,
   onCancel,
   onAccept,
+  underlayUrl,
+  underlayTime,
+  strokesOnly = false,
 }: WhiteboardModalProps) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -100,19 +109,30 @@ export function WhiteboardModal({
     setIsSaving(true)
     try {
       const shapes = editor.getCurrentPageShapes()
-      if (shapes.length === 0) {
+      const marks = strokesOnly ? shapes.filter((shape) => shape.type !== 'image') : shapes
+      if (marks.length === 0) {
         onCancel()
         return
       }
 
       const pixelRatio = resolveWhiteboardExportPixelRatio(
         editor,
-        shapes as Array<{ type?: string; props?: Record<string, unknown> }>
+        (strokesOnly ? shapes : marks) as Array<{ type?: string; props?: Record<string, unknown> }>
       )
-      const image = await editor.toImageDataUrl(shapes, {
+      let bounds: Box | undefined
+      if (strokesOnly) {
+        const base = shapes.find((shape) => shape.type === 'image')
+        if (base) {
+          const box = editor.getShapePageBounds(base.id)
+          if (box) bounds = box
+        }
+      }
+      const image = await editor.toImageDataUrl(marks, {
         format: 'png',
         pixelRatio,
         padding: 0,
+        background: strokesOnly ? false : undefined,
+        bounds,
       })
       const snapshot = editor.getSnapshot()
       await onAccept({
@@ -124,7 +144,7 @@ export function WhiteboardModal({
     } finally {
       setIsSaving(false)
     }
-  }, [editor, isSaving, onAccept, onCancel])
+  }, [editor, isSaving, onAccept, onCancel, strokesOnly])
 
   return createPortal(
     <div
@@ -237,7 +257,21 @@ export function WhiteboardModal({
           </div>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div className={underlayUrl ? 'wb-video-underlay' : ''} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          {underlayUrl ? (
+            <style>{'.wb-video-underlay .tl-background,.wb-video-underlay .tl-canvas{background:transparent!important}'}</style>
+          ) : null}
+          {underlayUrl ? (
+            <video
+              src={underlayUrl}
+              muted
+              playsInline
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none', background: '#000', zIndex: 0 }}
+              onLoadedMetadata={(event) => {
+                if (Number.isFinite(underlayTime)) event.currentTarget.currentTime = underlayTime as number
+              }}
+            />
+          ) : null}
           <Tldraw
             options={TLDRAW_OPTIONS}
             snapshot={initialSnapshot ?? undefined}

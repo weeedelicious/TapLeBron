@@ -34,7 +34,8 @@ import {
 } from './skeleton'
 import { forwardKinematics, solveIk, type Vec3 } from './ik'
 import { clampFocalMm, focalToFovDeg, orbitToPosition, positionToOrbit } from './cameraMath'
-import type { DirectorStageState, StageProp } from './types'
+import type { DirectorStageState, StageCamera, StageModel, StageProp } from './types'
+import { encodeCanvasFrames } from './rehearsalEncode'
 
 export type StageTool = 'slider' | 'rotate' | 'ik' | 'finger'
 export type PropTool = 'translate' | 'rotate' | 'scale'
@@ -45,8 +46,24 @@ export interface StageCaptureResult {
   height: number
 }
 
+export interface StageRehearsalRecordResult {
+  file: File
+  width: number
+  height: number
+  durationSec: number
+}
+
 export interface DirectorStageThreeHandle {
   capture: (size: { width: number; height: number }) => Promise<StageCaptureResult>
+  applyCamera: (camera: StageCamera) => void
+  recordRehearsal: (input: {
+    cameras: StageCamera[]
+    width: number
+    height: number
+    fps: number
+    fileName: string
+    onProgress?: (done: number, total: number) => void
+  }) => Promise<StageRehearsalRecordResult>
 }
 
 interface Props {
@@ -88,6 +105,81 @@ export function fitDistanceForBoundingSphere(radius: number, verticalFov: number
   const horizontalFov = 2 * Math.atan(Math.tan(safeVerticalFov * 0.5) * safeAspect)
   const limitingHalfFov = Math.max(0.005, Math.min(safeVerticalFov, horizontalFov) * 0.5)
   return Math.max(0.9, (safeRadius / Math.sin(limitingHalfFov)) * 1.18)
+}
+
+const IMPORTED_MODEL_STAGE_SIZE = 2.2
+const IMPORTED_MODEL_PREVIEW_COLOR = 0xd6d8e2
+
+/**
+ * Keep the transform authored by 3ds Max/FBX intact and normalize through an
+ * extra parent. FBX roots often carry a unit conversion scale (for example
+ * centimetres -> metres). Overwriting that root scale makes the model tens or
+ * hundreds of times larger after the next React state update, while the camera
+ * remains at the fitted distance -- the viewport then shows only the feet.
+ */
+export function createNormalizedImportedModelRoot(object: THREE.Object3D): THREE.Group {
+  object.updateMatrixWorld(true)
+  const bounds = new THREE.Box3().setFromObject(object)
+  const size = bounds.getSize(new THREE.Vector3())
+  const center = bounds.getCenter(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001)
+  const normalizationScale = IMPORTED_MODEL_STAGE_SIZE / maxDim
+
+  const normalized = new THREE.Group()
+  normalized.name = 'director-model-normalization'
+  normalized.position.set(
+    -center.x * normalizationScale,
+    -bounds.min.y * normalizationScale,
+    -center.z * normalizationScale,
+  )
+  normalized.scale.setScalar(normalizationScale)
+  normalized.add(object)
+
+  const root = new THREE.Group()
+  root.name = 'director-model-root'
+  root.add(normalized)
+  return root
+}
+
+/**
+ * Max scenes frequently reference renderer-specific materials or external
+ * textures which FBX cannot carry into the browser. FBXLoader then produces
+ * nearly-black materials even though the geometry and normals are valid. Use a
+ * neutral clay preview, the same approach used by DCC model viewers, so form
+ * and surface detail stay readable without depending on missing assets.
+ */
+export function applyImportedModelPreviewMaterial(object: THREE.Object3D): number {
+  const discarded = new Set<THREE.Material>()
+  const preview = new THREE.MeshStandardMaterial({
+    name: 'Shotflow imported model clay preview',
+    color: IMPORTED_MODEL_PREVIEW_COLOR,
+    roughness: 0.68,
+    metalness: 0.03,
+    emissive: 0x20222a,
+    emissiveIntensity: 0.16,
+    side: THREE.DoubleSide,
+  })
+  let meshCount = 0
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    materials.forEach((material) => { if (material) discarded.add(material) })
+    mesh.material = preview
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    meshCount += 1
+  })
+  discarded.forEach((material) => material.dispose())
+  if (meshCount === 0) preview.dispose()
+  return meshCount
+}
+
+function applyImportedModelTransform(root: THREE.Object3D, model: StageModel) {
+  root.position.set(...model.position)
+  root.rotation.set(model.rotation[0] * DEG, model.rotation[1] * DEG, model.rotation[2] * DEG)
+  root.scale.set(...model.scale)
+  root.updateMatrixWorld(true)
 }
 
 const FIGURE_COLOR = 0xe8e6ef
@@ -449,6 +541,84 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
           handle.visible = fingerHandleVisible[index]
           ;(handle.material as THREE.Material).opacity = fingerHandleOpacity[index]
         })
+        runtime.renderer.setPixelRatio(previousPixelRatio)
+        runtime.camera.aspect = previousAspect
+        runtime.camera.updateProjectionMatrix()
+        runtime.resize()
+      }
+    },
+    applyCamera: (camera) => {
+      const runtime = runtimeRef.current
+      if (!runtime) return
+      applyingCameraRef.current = true
+      const [x, y, z] = orbitToPosition(camera)
+      runtime.camera.position.set(x, y, z)
+      runtime.orbit.target.set(camera.target[0], camera.target[1], camera.target[2])
+      runtime.camera.fov = focalToFovDeg(clampFocalMm(camera.focalMm))
+      runtime.camera.updateProjectionMatrix()
+      runtime.orbit.update()
+      applyingCameraRef.current = false
+      cameraLiveRef.current = true
+    },
+    recordRehearsal: async ({ cameras, width, height, fps, fileName, onProgress }) => {
+      const runtime = runtimeRef.current
+      if (!runtime) throw new Error("三维空间还没准备好")
+      if (!cameras.length) throw new Error("还没有预演机位")
+      const captureWidth = Math.max(16, Math.round(width / 2) * 2)
+      const captureHeight = Math.max(16, Math.round(height / 2) * 2)
+      const previousPixelRatio = runtime.renderer.getPixelRatio()
+      const previousAspect = runtime.camera.aspect
+      const orbitWasEnabled = runtime.orbit.enabled
+      const gizmoWasVisible = runtime.transform.getHelper().visible
+      const handleVisible = runtime.handles.map((handle) => handle.visible)
+      const fingerHandleVisible = runtime.fingerHandles.map((handle) => handle.visible)
+      const frameCanvas = document.createElement("canvas")
+      frameCanvas.width = captureWidth
+      frameCanvas.height = captureHeight
+      const ctx = frameCanvas.getContext("2d")
+      if (!ctx) throw new Error("无法创建预演画布")
+      const apply = (camera: StageCamera) => {
+        applyingCameraRef.current = true
+        const [x, y, z] = orbitToPosition(camera)
+        runtime.camera.position.set(x, y, z)
+        runtime.orbit.target.set(camera.target[0], camera.target[1], camera.target[2])
+        runtime.camera.fov = focalToFovDeg(clampFocalMm(camera.focalMm))
+        runtime.camera.aspect = captureWidth / captureHeight
+        runtime.camera.updateProjectionMatrix()
+        runtime.orbit.update()
+        applyingCameraRef.current = false
+      }
+      try {
+        runtime.orbit.enabled = false
+        runtime.transform.getHelper().visible = false
+        runtime.handles.forEach((handle) => { handle.visible = false })
+        runtime.fingerHandles.forEach((handle) => { handle.visible = false })
+        runtime.renderer.setPixelRatio(1)
+        runtime.renderer.setSize(captureWidth, captureHeight, false)
+        runtime.camera.aspect = captureWidth / captureHeight
+        runtime.camera.updateProjectionMatrix()
+        const file = await encodeCanvasFrames({
+          canvas: frameCanvas,
+          frameCount: cameras.length,
+          fps,
+          fileName,
+          onProgress,
+          draw: (index) => {
+            const camera = cameras[Math.min(index, cameras.length - 1)]
+            apply(camera)
+            runtime.renderer.render(runtime.scene, runtime.camera)
+            runtime.renderer.getContext().finish()
+            ctx.drawImage(runtime.renderer.domElement, 0, 0, captureWidth, captureHeight)
+          },
+        })
+        const durationSec = Math.max(0.1, (cameras.length - 1) / Math.max(1, fps))
+        return { file, width: captureWidth, height: captureHeight, durationSec }
+      } finally {
+        runtime.orbit.enabled = orbitWasEnabled
+        runtime.transform.getHelper().visible = gizmoWasVisible
+        runtime.handles.forEach((handle, index) => { handle.visible = handleVisible[index] })
+        runtime.fingerHandles.forEach((handle, index) => { handle.visible = fingerHandleVisible[index] })
+        apply(stateRef.current.camera)
         runtime.renderer.setPixelRatio(previousPixelRatio)
         runtime.camera.aspect = previousAspect
         runtime.camera.updateProjectionMatrix()
@@ -889,35 +1059,21 @@ export const DirectorStageThree = forwardRef<DirectorStageThreeHandle, Props>(fu
     const loader = new FBXLoader()
     for (const model of state.models) {
       if (runtime.modelObjects.has(model.id)) {
-        const object = runtime.modelObjects.get(model.id)!
-        object.position.set(...model.position)
-        object.rotation.set(model.rotation[0] * DEG, model.rotation[1] * DEG, model.rotation[2] * DEG)
-        object.scale.set(...model.scale)
+        const root = runtime.modelObjects.get(model.id)!
+        applyImportedModelTransform(root, model)
         continue
       }
       loader.load(model.sourceUrl, (object) => {
         if (cancelled) { disposeObject(object); return }
-        object.name = 'model:' + model.id
-        object.userData.modelId = model.id
-        const bounds = new THREE.Box3().setFromObject(object)
-        const size = bounds.getSize(new THREE.Vector3())
-        const center = bounds.getCenter(new THREE.Vector3())
-        const maxDim = Math.max(size.x, size.y, size.z, 0.001)
-        object.position.set(-center.x * (2.2 / maxDim), -bounds.min.y * (2.2 / maxDim), -center.z * (2.2 / maxDim))
-        object.scale.setScalar(2.2 / maxDim)
-        object.traverse((child) => {
-          const mesh = child as THREE.Mesh
-          if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true }
-        })
-        runtime.modelGroup.add(object)
-        runtime.modelObjects.set(model.id, object)
+        const root = createNormalizedImportedModelRoot(object)
+        root.name = 'model:' + model.id
+        root.userData.modelId = model.id
+        applyImportedModelPreviewMaterial(object)
+        applyImportedModelTransform(root, model)
+        runtime.modelGroup.add(root)
+        runtime.modelObjects.set(model.id, root)
         // An imported Max/FBX scene replaces the posing mannequin.
         runtime.figure.visible = false
-        object.position.x += model.position[0]
-        object.position.y += model.position[1]
-        object.position.z += model.position[2]
-        object.rotation.set(model.rotation[0] * DEG, model.rotation[1] * DEG, model.rotation[2] * DEG)
-        object.scale.multiply(new THREE.Vector3(...model.scale))
         fitCameraToContent(runtime)
       }, undefined, (error) => console.warn('[三维空间] FBX 加载失败', model.sourceUrl, error))
     }

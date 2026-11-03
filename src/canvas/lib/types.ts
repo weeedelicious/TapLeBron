@@ -12,6 +12,9 @@ export type NodeType =
   | "panorama_viewer"
   | "image_compare"
   | "video_compare"
+  | "previs"
+  | "mstudio"
+  | "word"
   | "ui_mask";
 
 export interface ResourceMeta {
@@ -249,6 +252,12 @@ export interface AssetGenerationMeta {
   audioCodecName?: string;
   formatName?: string;
   frameInterpolation?: boolean;
+  videoDepth?: boolean;
+  depthProvider?: string;
+  depthModel?: string;
+  depthEncoder?: string;
+  depthNear?: 'bright' | 'dark';
+  maxRes?: number;
   interpolationProvider?: string;
   /** RealSR、NVIDIA RTX 视频超分、SeedVR2 或 FlashVSR 增强产物。 */
   mediaEnhance?: boolean;
@@ -291,6 +300,9 @@ export interface CanvasNodeData extends Record<string, unknown> {
     | "audio_generate"
     | "text_node"
     | "script_node"
+    | "word_node"
+    | "ui_mask"
+    | "previs"
     | "video_merge"
     | "director_stage"
     | "atmosphere_transfer"

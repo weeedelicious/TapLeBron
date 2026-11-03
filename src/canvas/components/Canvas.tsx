@@ -47,7 +47,7 @@ import { BottomDock } from './BottomDock'
 import { CindyAssistantPanel } from './CindyAssistantPanel'
 import { CindyModeSelector } from './CindyModeSelector'
 import { OfficialTemplateLibrary } from './OfficialTemplateLibrary'
-import { assetsApi, favoritesApi, historyAssetsApi } from '@/lib/api'
+import { assetsApi, favoritesApi, historyAssetsApi, projectAssetLibraryApi, type ProjectAssetInsertPayload } from '@/lib/api'
 import { PanoramaViewerModal } from '@/features/panorama/PanoramaViewerModal'
 import { isPanoramaNodeData } from '@/features/panorama/panorama'
 import { textPromptFromNodeData } from '@/lib/textPrompt'
@@ -55,6 +55,8 @@ import { isCanvasContextMenuTarget } from '@/lib/canvasContextMenu'
 import { nodePickerFlyoutFixedStyle, nodePickerMaxHeight } from '@/lib/nodePickerLayout'
 import { primaryOutputUrl } from '@/lib/primaryOutput'
 import { clearedStageRef } from '@/features/director-stage/stageReference'
+import { captureWordDropHandles, extractWordText, isWordFile, saveWordHandle, wordDropHandles, wordDropKey, wordNodeHandles, wordNodeStamps } from '@/features/word/wordDocument'
+import { clearedPrevisRef } from '@/features/previs/previsReference'
 import { hoistGroupNodesForRender } from '@/lib/groupRenderOrder'
 import {
   isCanvasMiddleButton,
@@ -158,6 +160,8 @@ function removeEdgeReferencesFromNodes(nodes: FlowNode[], removedEdges: Edge[]) 
     // 「参考图已连」而实际上分析时取不到图。
     const clearedStage = clearedStageRef(params, removeSourceIds)
     if (clearedStage) Object.assign(ensureNextParams(), clearedStage)
+    const clearedPrevis = clearedPrevisRef(params, removeSourceIds)
+    if (clearedPrevis) Object.assign(ensureNextParams(), clearedPrevis)
 
     // 图片对比 / 视频对比的槽位清理不能混用：视频对比的 compareRefA/B 字段名
     // 和图片对比一样，按节点 id 清会把同一多视频占的多个槽一次清光。
@@ -188,6 +192,7 @@ const SHOTFLOW_NODE_CLIPBOARD_MIME = 'application/x-shotflow-nodes'
 const SHOTFLOW_NODE_CLIPBOARD_KIND = 'shotflow.nodes'
 const SHOTFLOW_HISTORY_ASSET_DRAG_MIME = 'application/x-shotflow-history-asset'
 const SHOTFLOW_FAVORITE_ITEM_DRAG_MIME = 'application/x-shotflow-favorite-item'
+const SHOTFLOW_PROJECT_ASSET_DRAG_MIME = 'application/x-shotflow-project-asset'
 const SHOTFLOW_NODE_CLIPBOARD_TEXT = 'Shotflow 节点'
 
 const INTERNAL_NODE_CLIPBOARD_TTL_MS = 30_000
@@ -513,6 +518,7 @@ const CONN_ITEMS = [
   { type: 'video',          icon: '▶',  label: '视频' },
   { type: 'video_merge',    icon: '✂',  label: '视频合成', badge: 'Beta' },
   { type: 'director_stage', icon: '◈',  label: '三维空间', desc: '白模摆姿势出构图', badge: 'NEW' },
+  { type: 'previs', icon: '◻', label: '白模预演', desc: '完整镜头预演，工程单独保存', badge: 'NEW' },
   { type: 'audio',          icon: '♪',  label: '音频' },
   { type: 'script',         icon: '⊞', label: '脚本',    badge: 'Beta' },
   { type: 'panorama_viewer', icon: '◉', label: '360°查看器', desc: '环视 HDR 全景' },
@@ -586,9 +592,10 @@ const CANVAS_NODE_ITEMS = [
   { type: 'video_merge', label: '视频合成', desc: '多个视频片段合为一个', icon: '▥' },
   { type: 'script', label: '脚本', desc: '创意脚本、故事板', icon: '▤' },
   { type: 'panorama_viewer', label: '360°查看器', desc: '连接并环视 2:1 HDR 全景图', icon: '◉' },
-  { type: 'image_compare', label: '图片对比', desc: '连两张图，全屏左右/滑杆/透明度对比', icon: '◫' },
+  { type: 'image_compare', label: '图片对比', desc: '最多连四张图，全屏左右/滑杆/宫格对比', icon: '◫' },
   { type: 'video_compare', label: '视频对比', desc: '左右或四宫格对比视频，可导出对比片', icon: '▥' },
   { type: 'director_stage', label: '三维空间', desc: '摆机位调焦距 + 白模姿势，出图当构图参考', icon: '◈' },
+  { type: 'previs', label: '白模预演', desc: '打开完整预演台，刷新后继续', icon: '◻' },
 ]
 
 type CanvasMenuMode = 'main' | 'node-picker'
@@ -1698,11 +1705,42 @@ function isMarkdownFile(file: File) {
   return file.type === 'text/markdown' || /\.(md|markdown|mdown)$/i.test(file.name)
 }
 
-function localFileKind(file: File): 'image' | 'video' | 'audio' | 'markdown' | null {
+/** 项目资产库的缩略图地址带 w=，插入画布时要换回原图。 */
+function originalProjectAssetUrl(url: string) {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    if (!parsed.pathname.includes('/api/project-asset-library/file') && !url.includes('/api/project-asset-library/file')) return url
+    parsed.searchParams.delete('w')
+    return parsed.pathname + parsed.search + parsed.hash
+  } catch {
+    return url
+  }
+}
+
+function isPlainTextFile(file: File) {
+  return /\.(txt|text)$/i.test(file.name)
+}
+
+/** .txt 常见 GBK 编码：先按 UTF-8（去 BOM）严格解码，失败再退回 GBK。 */
+async function readDroppedText(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const body = bytes.length >= 3 && bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191 ? bytes.subarray(3) : bytes
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(body)
+  } catch {
+    return new TextDecoder('gbk').decode(bytes)
+  }
+}
+
+type LocalFileKind = 'image' | 'video' | 'audio' | 'markdown' | 'word' | 'text'
+
+function localFileKind(file: File): LocalFileKind | null {
   if (isImageFile(file)) return 'image'
   if (isVideoFile(file)) return 'video'
   if (isAudioFile(file)) return 'audio'
   if (isMarkdownFile(file)) return 'markdown'
+  if (isWordFile(file)) return 'word'
+  if (isPlainTextFile(file)) return 'text'
   return null
 }
 
@@ -2188,7 +2226,8 @@ export function Canvas() {
     const types = Array.from(e.dataTransfer.types)
     const acceptsShotflowItem =
       types.includes(SHOTFLOW_HISTORY_ASSET_DRAG_MIME) ||
-      types.includes(SHOTFLOW_FAVORITE_ITEM_DRAG_MIME)
+      types.includes(SHOTFLOW_FAVORITE_ITEM_DRAG_MIME) ||
+      types.includes(SHOTFLOW_PROJECT_ASSET_DRAG_MIME)
     if (!acceptsShotflowItem && !types.includes('Files')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
@@ -2287,15 +2326,15 @@ export function Canvas() {
 
     const supportedFiles = files
       .map((file, index) => ({ file, index, kind: localFileKind(file) }))
-      .filter((entry): entry is { file: File; index: number; kind: 'image' | 'video' | 'audio' | 'markdown' } => Boolean(entry.kind))
+      .filter((entry): entry is { file: File; index: number; kind: LocalFileKind } => Boolean(entry.kind))
     if (!supportedFiles.length) return
 
     for (const entry of supportedFiles) {
-      if (entry.kind !== 'markdown') continue
+      if (entry.kind !== 'markdown' && entry.kind !== 'text') continue
       try {
-        const content = await entry.file.text()
+        const content = entry.kind === 'text' ? await readDroppedText(entry.file) : await entry.file.text()
         addNodeAt('text', flowX + entry.index * 30, flowY + entry.index * 30, {
-          name: stripFileExtension(entry.file.name) || 'Markdown',
+          name: stripFileExtension(entry.file.name) || (entry.kind === 'text' ? '文本' : 'Markdown'),
           action: 'text_node',
           params: {
             ...defaultTextParams(),
@@ -2308,11 +2347,48 @@ export function Canvas() {
           _updatedAtMs: Date.now(),
         })
       } catch (err) {
-        console.error('Read markdown failed', err)
+        console.error('Read text failed', err)
       }
     }
 
-    const uploadableFiles = supportedFiles.filter(entry => entry.kind !== 'markdown')
+    // Word 在本地读正文，不上传原文件；拖入时拿到的原文件句柄让节点之后能跟随原文件更新。
+    for (const entry of supportedFiles) {
+      if (entry.kind !== 'word') continue
+      try {
+        const file = entry.file
+        const handle = wordDropHandles.get(wordDropKey(file))
+        let content = ''
+        try {
+          content = await extractWordText(await file.arrayBuffer())
+        } catch (err) {
+          content = (err instanceof Error && err.message) || 'Word 内容读取失败'
+        }
+        const node = addNodeAt('word', flowX + entry.index * 30, flowY + entry.index * 30, {
+          name: stripFileExtension(file.name) || 'Word',
+          action: 'word_node',
+          params: {
+            content,
+            fileName: file.name,
+            sourceModifiedMs: file.lastModified,
+            sourceSize: file.size,
+            linked: Boolean(handle),
+            wordSyncError: '',
+          } as unknown as Record<string, unknown>,
+          contentWidth: 420,
+          contentHeight: 300,
+          _updatedAtMs: Date.now(),
+        })
+        if (node && handle) {
+          wordNodeHandles.set(node.id, handle)
+          wordNodeStamps.set(node.id, file.lastModified + ':' + file.size)
+          saveWordHandle(node.id, handle)
+        }
+      } catch (err) {
+        console.error('Read word failed', err)
+      }
+    }
+
+    const uploadableFiles = supportedFiles.filter(entry => entry.kind !== 'markdown' && entry.kind !== 'word' && entry.kind !== 'text')
     if (!uploadableFiles.length) return
 
     const pendingFiles = uploadableFiles.map(({ file, index }) => {
@@ -2399,12 +2475,52 @@ export function Canvas() {
     }
   }, [addNodeAt, updateNodeData])
 
+  const insertProjectLibraryAsset = useCallback(async (asset: ProjectAssetInsertPayload, position?: { x: number; y: number }) => {
+    const { projectUuid, viewport: vp } = useCanvasStore.getState()
+    if (!projectUuid || (!asset.url && !(asset.projectId && asset.relativePath))) return
+    const zoom = Number.isFinite(vp.zoom) && vp.zoom > 0 ? vp.zoom : 1
+    const point = position || {
+      x: (-vp.x + window.innerWidth / 2) / zoom,
+      y: (-vp.y + window.innerHeight / 2) / zoom,
+    }
+    try {
+      let uploaded: { url: string; thumbUrl?: string; displayUrl?: string; originalName?: string; meta?: Record<string, unknown> }
+      if (asset.projectId && asset.relativePath) {
+        // 服务端直接从项目目录导入原文件，浏览器不经手原图字节。
+        uploaded = await projectAssetLibraryApi.importToCanvas(projectUuid, asset.projectId, asset.relativePath, asset.name)
+      } else {
+        const response = await fetch(originalProjectAssetUrl(asset.url), { credentials: 'same-origin' })
+        if (!response.ok) throw new Error('读取项目图片失败')
+        const blob = await response.blob()
+        const ext = (blob.type && blob.type.split('/')[1]) || 'png'
+        const fileName = `${asset.name || 'image'}.${ext}`
+        const file = new File([blob], fileName, { type: blob.type || 'image/png' })
+        uploaded = await assetsApi.upload(projectUuid, file, undefined, { sourceType: 'project-library' })
+      }
+      const usedAtMs = Date.now()
+      const isVideo = asset.mediaType === 'video' || /\.(mp4|mov|webm|m4v)$/i.test(String(asset.relativePath || uploaded.originalName || ''))
+      addNodeAt(isVideo ? 'video' : 'upload', point.x, point.y, {
+        url: [uploaded.url],
+        action: 'image_resource',
+        name: asset.name || uploaded.originalName || (isVideo ? 'video' : 'image'),
+        ...(uploaded.meta ? { _resourceMeta: { items: [uploaded.meta as unknown as ResourceMeta] } } : {}),
+        _assetCreatedAtMs: mergeAssetCreatedAtMap(undefined, [uploaded.url, uploaded.thumbUrl, uploaded.displayUrl], usedAtMs),
+        _updatedAtMs: usedAtMs,
+      })
+    } catch (error) {
+      console.error('insert project library asset failed', error)
+    }
+  }, [addNodeAt])
+
   const onDrop = useCallback(async (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer.types)
     const hasShotflowItem =
       types.includes(SHOTFLOW_HISTORY_ASSET_DRAG_MIME) ||
-      types.includes(SHOTFLOW_FAVORITE_ITEM_DRAG_MIME)
-    if (!hasShotflowItem && !types.includes('Files')) return
+      types.includes(SHOTFLOW_FAVORITE_ITEM_DRAG_MIME) ||
+      types.includes(SHOTFLOW_PROJECT_ASSET_DRAG_MIME)
+    // 从别的窗口拖过来的项目资产只带 text/plain 地址
+    const hasTextUrl = types.includes('text/plain') || types.includes('text/uri-list')
+    if (!hasShotflowItem && !types.includes('Files') && !hasTextUrl) return
     e.preventDefault()
     trackPointerPosition(e.clientX, e.clientY)
 
@@ -2419,6 +2535,15 @@ export function Canvas() {
       if (detail.payload.nodes.length === 0) return
       await insertFavoritePayload(detail.payload, flowPoint)
       setDockPanel(null)
+      return
+    }
+
+    const projectAsset = readDragPayload<ProjectAssetInsertPayload>(e.dataTransfer, SHOTFLOW_PROJECT_ASSET_DRAG_MIME) || ((): ProjectAssetInsertPayload | null => {
+      const text = String(e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list') || '').split('\n')[0].trim()
+      return text.includes('/api/project-asset-library/file') ? { url: originalProjectAssetUrl(text), name: 'image' } : null
+    })()
+    if (projectAsset?.url || (projectAsset?.projectId && projectAsset?.relativePath)) {
+      await insertProjectLibraryAsset(projectAsset, flowPoint)
       return
     }
 
@@ -2441,8 +2566,9 @@ export function Canvas() {
       return
     }
 
+    await captureWordDropHandles(e.dataTransfer)
     await uploadFilesAt(Array.from(e.dataTransfer.files), flowPoint.x, flowPoint.y)
-  }, [addNodeAt, getFlowPositionFromClient, insertFavoritePayload, trackPointerPosition, uploadFilesAt])
+  }, [addNodeAt, getFlowPositionFromClient, insertFavoritePayload, insertProjectLibraryAsset, trackPointerPosition, uploadFilesAt])
 
   const focusCanvasBounds = useCallback((
     bounds: { x: number; y: number; width: number; height: number },
@@ -2997,6 +3123,39 @@ export function Canvas() {
    * applyConnection，把源节点塞进 params.imageList —— 那是给生成节点用的引用列表，
    * 对比节点根本不读它，只会留下一条幽灵连线。
    */
+
+  const routePrevisConnection = useCallback((source: string, target: string) => {
+    const { nodes: ns, edges: es } = useCanvasStore.getState()
+    const targetNode = ns.find(n => n.id === target || n.data.nodeKey === target)
+    const targetType = targetNode ? (targetNode.data as CanvasNodeData).type : ''
+    if (!targetNode || (targetType !== 'previs' && targetType !== 'mstudio')) return false
+    const sourceNode = ns.find(n => n.id === source || n.data.nodeKey === source)
+    if (!sourceNode || sourceNode.id === targetNode.id) return true
+    const sourceData = sourceNode.data as CanvasNodeData
+    if (sourceData.type === 'video' || sourceData.type === 'video_merge' || sourceData.type === 'audio' || sourceData.type === 'text') return true
+    const targetParams = (targetNode.data as CanvasNodeData).params ?? {}
+    updateNodeData(targetNode.id, {
+      params: {
+        ...targetParams,
+        previsRef: {
+          nodeId: sourceNode.id,
+          url: primaryOutputUrl(sourceData),
+          name: String(sourceData.name || '参考图'),
+        },
+      },
+    })
+    pushHistory()
+    setEdges(addEdge({
+      id: `e-${sourceNode.id}-${targetNode.id}-previs-reference`,
+      source: sourceNode.id,
+      target: targetNode.id,
+      type: 'glow',
+      selectable: true,
+      interactionWidth: 34,
+    }, es.filter(edge => !(edge.target === targetNode.id && String(edge.id || '').endsWith('-previs-reference')))))
+    return true
+  }, [updateNodeData, setEdges, pushHistory])
+
   const routeImageCompareConnection = useCallback((source: string, target: string, targetHandle?: string | null) => {
     const { nodes: ns, edges: es } = useCanvasStore.getState()
     const targetNode = ns.find(n => n.id === target || n.data.nodeKey === target)
@@ -3083,10 +3242,11 @@ export function Canvas() {
     if (routeAtmosphereConnection(source, target, targetHandle)) return
     if (routePanoramaViewerConnection(source, target)) return
     if (routeDirectorStageConnection(source, target)) return
+    if (routePrevisConnection(source, target)) return
     if (routeImageCompareConnection(source, target, targetHandle)) return
     if (routeVideoCompareConnection(source, target, targetHandle)) return
     applyConnection(source, target)
-  }, [applyConnection, routeAtmosphereConnection, routePanoramaViewerConnection, routeDirectorStageConnection, routeImageCompareConnection, routeVideoCompareConnection, setConnectionHoverTarget])
+  }, [applyConnection, routeAtmosphereConnection, routePanoramaViewerConnection, routeDirectorStageConnection, routePrevisConnection, routeImageCompareConnection, routeVideoCompareConnection, setConnectionHoverTarget])
 
   const onConnectStart = useCallback((_e: unknown, { nodeId, handleType }: { nodeId?: string | null; handleType?: string | null }) => {
     connStartRef.current = { nodeId: nodeId ?? '', handleType: handleType ?? '' }
@@ -3146,13 +3306,14 @@ export function Canvas() {
     if (
       !routePanoramaViewerConnection(connMenu.sourceId, newNode.id) &&
       !routeDirectorStageConnection(connMenu.sourceId, newNode.id) &&
+      !routePrevisConnection(connMenu.sourceId, newNode.id) &&
       !routeImageCompareConnection(connMenu.sourceId, newNode.id) &&
       !routeVideoCompareConnection(connMenu.sourceId, newNode.id)
     ) {
       applyConnection(connMenu.sourceId, newNode.id)
     }
     setConnMenu(null)
-  }, [connMenu, addNodeAt, applyConnection, routePanoramaViewerConnection, routeDirectorStageConnection, routeImageCompareConnection, routeVideoCompareConnection])
+  }, [connMenu, addNodeAt, applyConnection, routePanoramaViewerConnection, routeDirectorStageConnection, routePrevisConnection, routeImageCompareConnection, routeVideoCompareConnection])
 
   const handleMultiMenuSelect = useCallback((type: string) => {
     if (!multiConnMenu) return
@@ -3786,6 +3947,7 @@ export function Canvas() {
         lastMode={lastAssetDockMode}
         onModeChange={changeAssetDockMode}
         onInsert={insertFavoriteItem}
+        onInsertProjectAsset={insertProjectLibraryAsset}
         onDragStart={handleFavoriteItemDragStart}
       />
       <div
@@ -3811,6 +3973,7 @@ export function Canvas() {
         <ReactFlow
           nodes={renderNodes as Node[]}
           edges={renderedEdges}
+          onlyRenderVisibleElements
           onInit={(instance) => {
             reactFlowInstanceRef.current = instance
             setIsFlowReady(true)

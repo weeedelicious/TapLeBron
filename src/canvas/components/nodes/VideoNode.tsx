@@ -1,14 +1,17 @@
 ﻿import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
-import { Camera, Copy, Crop, Download, Expand, Gauge, Library, Loader2, Lock, Scissors, Sparkles, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
+import { Camera, Copy, Crop, Download, Eraser, Expand, Gauge, ScanLine, Library, Loader2, Lock, Palette, Scissors, Sparkles, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
 import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
 import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { GenerationProgress } from '@/components/GenerationProgress'
 import { VideoCropModal } from '@/components/VideoCropModal'
 import { VideoTrimModal } from '@/components/VideoTrimModal'
-import { VideoFrameInterpolationModal, type VideoFrameInterpolationMethod } from '@/components/VideoFrameInterpolationModal'
+import { VideoFrameInterpolationModal, frameInterpolationResultName, type VideoFrameInterpolationMethod } from '@/components/VideoFrameInterpolationModal'
+import { VideoDepthModal } from '@/components/VideoDepthModal'
+import { videoDepthModelLabel, videoDepthNodeName, videoDepthPhaseLabel, type VideoDepthRequest } from '@/lib/videoDepth'
 import { VideoUiRemovalModal, type VideoUiRemovalMethod } from '@/components/VideoUiRemovalModal'
+import { VideoColorGradeModal, type VideoColorGradeParams } from '@/components/VideoColorGradeModal'
 import { useMediaEnhance } from '@/features/media-enhance/useMediaEnhance'
 import { WhiteboardModal } from '@/components/WhiteboardModal'
 import { NodeShell } from './NodeShell'
@@ -67,6 +70,7 @@ import { hasPendingUpstream } from '@/lib/autoGenerate'
 import {
   captureVideoFrameFile,
   captureVideoFrameFileFromUrl,
+  createVideoOverlayBoardFile,
   dataUrlToFile,
   readWhiteboardState,
   resourceMetaFromUploadPayload,
@@ -93,11 +97,12 @@ type VideoMode = VideoModeKey
 
 type PromptWashMode = 'conservative' | 'cinematic' | 'references' | 'timeline' | 'minimax'
 
-type PromptWashTextChoice = 'opus' | 'luna'
+type PromptWashTextChoice = 'opus' | 'luna' | 'opus_optimize'
 
 const PROMPT_WASH_TEXT_CHOICES: Array<{ value: PromptWashTextChoice; label: string; model: string }> = [
   { value: 'opus', label: 'Opus', model: 'anthropic/claude-opus-5-5' },
   { value: 'luna', label: 'GPT Luna', model: 'gpt-5.6-luna' },
+  { value: 'opus_optimize', label: 'Opus 优化', model: 'anthropic/claude-opus-5-5' },
 ]
 
 function promptWashTextModelId(value: unknown) {
@@ -116,7 +121,7 @@ const PROMPT_WASH_MODES: Array<{ value: PromptWashMode; label: string; descripti
 function promptWashResultName(_sourceName: unknown, mode: PromptWashMode, choice: PromptWashTextChoice, skillId?: string) {
   const skillLabel = seedancePromptSkillById(skillId)?.shortName
   const modeLabel = skillLabel || PROMPT_WASH_MODES.find(item => item.value === mode)?.label || '保守优化'
-  const modelLabel = choice === 'luna' ? 'Luna' : 'Opus'
+  const modelLabel = choice === 'luna' ? 'Luna' : choice === 'opus_optimize' ? 'Opus优化' : 'Opus'
   return '洗提示词_' + modeLabel + '_' + modelLabel
 }
 
@@ -406,14 +411,22 @@ export function VideoNode({ id, data, selected }: Props) {
   const [whiteboardSourceFile, setWhiteboardSourceFile] = useState<File | null>(null)
   const [whiteboardPreparing, setWhiteboardPreparing] = useState(false)
   const [whiteboardError, setWhiteboardError] = useState<string | null>(null)
+  /** 白板标注先选画在哪：当前帧 / 指定秒 / 视频上层。 */
+  const [videoBoardPickOpen, setVideoBoardPickOpen] = useState(false)
+  const [videoBoardSec, setVideoBoardSec] = useState('')
+  const videoBoardKindRef = useRef<'frame' | 'time' | 'overlay'>('frame')
   const [cropOpen, setCropOpen] = useState(false)
   const [cropSubmitting, setCropSubmitting] = useState(false)
   const [trimOpen, setTrimOpen] = useState(false)
   const [trimSubmitting, setTrimSubmitting] = useState(false)
   const [frameInterpolationOpen, setFrameInterpolationOpen] = useState(false)
   const [frameInterpolationSubmitting, setFrameInterpolationSubmitting] = useState(false)
+  const [videoDepthProvider, setVideoDepthProvider] = useState<VideoDepthRequest['provider'] | null>(null)
+  const [videoDepthSubmitting, setVideoDepthSubmitting] = useState(false)
   const [uiRemovalOpen, setUiRemovalOpen] = useState(false)
   const [uiRemovalSubmitting, setUiRemovalSubmitting] = useState(false)
+  const [colorGradeOpen, setColorGradeOpen] = useState(false)
+  const [colorGradeSubmitting, setColorGradeSubmitting] = useState(false)
   const [frameMode, setFrameMode] = useState(false)
   const [frameNumber, setFrameNumber] = useState(1)
   const [frameCapturing, setFrameCapturing] = useState(false)
@@ -426,7 +439,6 @@ export function VideoNode({ id, data, selected }: Props) {
   const [promptWashModelMenu, setPromptWashModelMenu] = useState<PromptWashMode | null>(null)
   const [promptSkillOpen, setPromptSkillOpen] = useState(false)
   const [promptSkillCategory, setPromptSkillCategory] = useState(SEEDANCE_PROMPT_SKILL_CATEGORIES[0]?.id || 'structure')
-  const [promptSkillHoverId, setPromptSkillHoverId] = useState<string | null>(null)
   const [promptSkillMenu, setPromptSkillMenu] = useState<string | null>(null)
 
   useEffect(() => {
@@ -1282,6 +1294,7 @@ export function VideoNode({ id, data, selected }: Props) {
     const created = addNodeAt('video', (sourceNode.position?.x ?? 0) + sourceWidth + 100, sourceNode.position?.y ?? 0, {
       name: promptWashResultName(sourceName, requestedMode, requestedTextChoice, skillId), url: [], action: 'video_generate', taskInfo: undefined, params: copiedParams,
       _promptWashStatus: 'loading', _promptWashProgress: 8, _promptWashMode: requestedMode, _promptWashModel: requestedTextChoice, _promptWashSkillId: skillId || undefined, _promptWashSourceName: sourceName, _promptWashStarted: false,
+      _promptWashMessage: requestedTextChoice === 'opus_optimize' ? 'Opus 正在整理原意、增强细节，最后按 Skill 洗词…' : undefined,
     })
     setSelected([created.id])
     setActivePanelNode(created.id)
@@ -1322,6 +1335,7 @@ export function VideoNode({ id, data, selected }: Props) {
         projectUuid: data.projectUuid, nodeKey: created.id, sourceText, mode: requestedMode,
         skillId: skillId || undefined, nodeName: sourceName,
         textModel: promptWashTextModelId(requestedTextChoice), thinkingMode: 'fast',
+        workflow: requestedTextChoice === 'opus_optimize' ? 'opus-optimize' : undefined,
         target: { model: sourceParams.model || 'Seedance_2_0', modeType: sourceParams.modeType || 'omni', duration: targetSettings.duration, ratio: targetSettings.ratio, resolution: targetSettings.resolution, enableSound: targetSettings.enableSound ?? 'on' },
         references: { imageCount: imageList.length, videoCount: videoList.length, audioCount: audioList.length, names },
       })
@@ -1378,6 +1392,7 @@ export function VideoNode({ id, data, selected }: Props) {
           projectUuid: data.projectUuid, nodeKey: id, sourceText, mode,
           skillId: skillId || undefined, nodeName,
           textModel: promptWashTextModelId(data._promptWashModel), thinkingMode: 'fast',
+          workflow: data._promptWashModel === 'opus_optimize' ? 'opus-optimize' : undefined,
           target: { model: washParams.model || 'Seedance_2_0', modeType: washParams.modeType || 'omni', duration: targetSettings.duration, ratio: targetSettings.ratio, resolution: targetSettings.resolution, enableSound: targetSettings.enableSound ?? 'on' },
           references: { imageCount: imageList.length, videoCount: videoList.length, audioCount: audioList.length, names },
         })
@@ -1494,24 +1509,39 @@ export function VideoNode({ id, data, selected }: Props) {
     }
   }, [openVideoPreview, videoUrl])
 
-  const openWhiteboard = useCallback(async () => {
+  const openWhiteboard = useCallback(() => {
     if (!videoRef.current || !videoUrl || whiteboardPreparing) return
+    const video = videoRef.current
+    setVideoBoardSec(Number.isFinite(video.currentTime) ? video.currentTime.toFixed(2) : '0')
+    setVideoBoardPickOpen(true)
+  }, [videoUrl, whiteboardPreparing])
+
+  const openVideoBoard = useCallback(async (kind: 'frame' | 'time' | 'overlay') => {
+    if (!videoRef.current || !videoUrl || whiteboardPreparing) return
+    setVideoBoardPickOpen(false)
+    videoBoardKindRef.current = kind
     setGenError(null)
     setWhiteboardError(null)
     setWhiteboardSourceFile(null)
     setWhiteboardOpen(true)
     setWhiteboardPreparing(true)
     try {
-      const file = await captureVideoFrameFile(videoRef.current, data.name || 'video')
+      const sec = Number(videoBoardSec)
+      const file = kind === 'overlay'
+        ? await createVideoOverlayBoardFile(videoRef.current, data.name || 'video')
+        : kind === 'time'
+          ? await captureVideoFrameFileFromUrl(videoUrl, Number.isFinite(sec) ? sec : 0, data.name || 'video')
+          : await captureVideoFrameFile(videoRef.current, data.name || 'video')
       setWhiteboardSourceFile(file)
     } catch (error) {
       const message = error instanceof Error ? error.message : '白板资源加载失败'
       setGenError(message)
       setWhiteboardError(message)
+      setWhiteboardOpen(false)
     } finally {
       setWhiteboardPreparing(false)
     }
-  }, [data.name, videoUrl, whiteboardPreparing])
+  }, [data.name, videoBoardSec, videoUrl, whiteboardPreparing])
 
   const openTrimModal = useCallback(() => {
     if (!videoUrl || trimSubmitting) return
@@ -1668,6 +1698,8 @@ export function VideoNode({ id, data, selected }: Props) {
       window.removeEventListener('scroll', measure, true)
     }
   }, [isControlsPanelVisible, progressRows.length, panelSize?.height, panelExpanded, portalRect?.bottom, portalRect?.left, zoom, vpX, vpY])
+  // 补帧进度统一挂在节点下方（和普通生成一样），空节点中间不再单独画一条。
+  const showInNodeInterpolationProgress = false
   const showDetachedProgress = Boolean(progressRows.length > 0 && !panelExpanded && (panelRect || portalRect))
   const handleCancelGeneration = useCallback(() => {
     const taskId = data.taskInfo?.taskId
@@ -1995,6 +2027,65 @@ export function VideoNode({ id, data, selected }: Props) {
     }
   }, [addNodeAt, addTask, data.name, data.projectUuid, id, persistNodesAndWait, shellWidth, startPolling, uiRemovalSubmitting, videoUrl])
 
+  const handleColorGradeAccept = useCallback(async (colorGrade: VideoColorGradeParams) => {
+    if (!videoUrl || colorGradeSubmitting) return
+    setGenError(null)
+    setColorGradeSubmitting(true)
+    let createdNodeId = ''
+    let taskStarted = false
+    try {
+      const state = useCanvasStore.getState()
+      const sourceNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 }
+      const outgoingCount = state.edges.filter((edge) => edge.source === id || edge.source === sourceNode?.id).length
+      const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+      const implementation = { provider: 'opencolorio', model: 'OpenColorIO 2.4.2 + FFmpeg' }
+      const createdNode = addNodeAt('video', sourcePosition.x + shellWidth + 140, sourcePosition.y + outgoingCount * 44, {
+        name: (data.name || '视频') + ' · 影视校色',
+        url: [],
+        action: 'image_resource',
+        sourceKind: 'color_grade',
+        params: {
+          ...defaultVideoParams(),
+          modeType: 'video-edit',
+          videoList: [sourceRef],
+          mixedList: [sourceRef],
+          mixedListOrder: [id],
+          colorGrade: { ...colorGrade, ...implementation },
+        } as unknown as Record<string, unknown>,
+      })
+      createdNodeId = createdNode.id
+      const saved = await persistNodesAndWait()
+      if (!saved) throw new Error('影视校色输出节点保存失败，请刷新画布后重试')
+      const result = await toolboxApi.videoColorGrade(
+        data.projectUuid,
+        createdNode.id,
+        videoUrl,
+        colorGrade,
+        id,
+      )
+      if (!result?.jobId) throw new Error('影视校色任务未创建')
+      taskStarted = true
+      addTask(result.jobId, createdNode.id, result.generationVersion, {
+        phaseLabel: '影视校色',
+        model: implementation.model,
+        taskKind: 'video',
+      })
+      startPolling(result.jobId, data.projectUuid)
+      setColorGradeOpen(false)
+    } catch (error) {
+      const message = errorToText(error, '影视校色失败')
+      setGenError(message)
+      if (createdNodeId && !taskStarted) {
+        const liveNode = useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)
+        if (liveNode) useCanvasStore.getState().deleteNodes([createdNodeId])
+      }
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setColorGradeSubmitting(false)
+    }
+  }, [addNodeAt, addTask, colorGradeSubmitting, data.name, data.projectUuid, id, persistNodesAndWait, shellWidth, startPolling, videoUrl])
+
   const openFrameInterpolationModal = useCallback(() => {
     if (!videoUrl || frameInterpolationSubmitting) return
     setGenError(null)
@@ -2017,7 +2108,13 @@ export function VideoNode({ id, data, selected }: Props) {
         ? { provider: 'openflowframes', model: 'OpenFlowFrames · RIFE 4.26', preset: 'slow' }
         : method === 'video2x'
           ? { provider: 'video2x', model: 'Video2X 6.4 · RIFE 4.26', preset: 'slow' }
-          : { provider: 'ffmpeg-minterpolate', model: 'FFmpeg MCI 光流', preset: 'medium' }
+          : method === 'gmfss'
+            ? { provider: 'gmfss', model: 'GMFSS Fortuna', preset: 'slow' }
+            : method === 'gimmvfi'
+              ? { provider: 'gimmvfi', model: 'GIMM-VFI R-P', preset: 'slow' }
+              : method === 'rife46'
+                ? { provider: 'rife-ncnn-vulkan', model: 'RIFE ncnn Vulkan · rife-v4.6', preset: 'slow' }
+                : { provider: 'ffmpeg-minterpolate', model: 'FFmpeg MCI 光流', preset: 'medium' }
       const marker = {
         sourceFps: sourceFpsHint,
         targetFps,
@@ -2036,7 +2133,7 @@ export function VideoNode({ id, data, selected }: Props) {
         sourcePosition.x + shellWidth + 140,
         sourcePosition.y + outgoingCount * 44,
         {
-          name: `${data.name || '视频'} ${targetFps}fps`,
+          name: frameInterpolationResultName(data.name, method, targetFps),
           url: [],
           action: 'image_resource',
           sourceKind: 'frame_interpolation',
@@ -2089,6 +2186,85 @@ export function VideoNode({ id, data, selected }: Props) {
       setFrameInterpolationSubmitting(false)
     }
   }, [addNodeAt, addTask, data.name, data.projectUuid, frameInterpolationSubmitting, id, persistNodesAndWait, shellWidth, sourceDurationHint, sourceFpsHint, sourceHeightHint, sourceWidthHint, startPolling, videoUrl])
+
+
+  const handleVideoDepthAccept = useCallback(async (request: VideoDepthRequest) => {
+    if (!videoUrl || videoDepthSubmitting) return
+    setGenError(null)
+    setVideoDepthSubmitting(true)
+    let createdNodeId = ''
+    let taskStarted = false
+    try {
+      const state = useCanvasStore.getState()
+      const sourceNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+      const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 }
+      const outgoingCount = state.edges.filter((edge) => edge.source === id || edge.source === sourceNode?.id).length
+      const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
+      const model = videoDepthModelLabel(request.provider, request.encoder)
+      const marker = {
+        provider: request.provider,
+        encoder: request.encoder,
+        model,
+        maxRes: request.maxRes,
+        near: request.near,
+        sourceFps: sourceFpsHint,
+        width: sourceWidthHint,
+        height: sourceHeightHint,
+        durationSec: sourceDurationHint,
+      }
+      const createdNode = addNodeAt(
+        'video',
+        sourcePosition.x + shellWidth + 140,
+        sourcePosition.y + outgoingCount * 44,
+        {
+          name: videoDepthNodeName(data.name || '', request.provider),
+          url: [],
+          action: 'image_resource',
+          sourceKind: 'video_depth',
+          params: {
+            ...defaultVideoParams(),
+            modeType: 'video-edit',
+            videoList: [sourceRef],
+            mixedList: [sourceRef],
+            mixedListOrder: [id],
+            videoDepth: marker,
+          } as unknown as Record<string, unknown>,
+        },
+      )
+      createdNodeId = createdNode.id
+      const saved = await persistNodesAndWait()
+      if (!saved) throw new Error('深度视频节点保存失败，请刷新画布后重试')
+      const result = await toolboxApi.videoDepth(
+        data.projectUuid,
+        createdNode.id,
+        videoUrl,
+        request.provider,
+        request.encoder,
+        request.maxRes,
+        request.near,
+        id,
+      )
+      if (!result?.jobId) throw new Error('深度视频任务未创建')
+      taskStarted = true
+      addTask(result.jobId, createdNode.id, result.generationVersion, {
+        phaseLabel: videoDepthPhaseLabel(request.provider),
+        model,
+        taskKind: 'video',
+      })
+      startPolling(result.jobId, data.projectUuid)
+      setVideoDepthProvider(null)
+    } catch (error) {
+      const message = errorToText(error, '视频转深度失败')
+      setGenError(message)
+      if (createdNodeId && !taskStarted) {
+        const liveNode = useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)
+        if (liveNode) useCanvasStore.getState().deleteNodes([createdNodeId])
+      }
+      throw error instanceof Error ? error : new Error(message)
+    } finally {
+      setVideoDepthSubmitting(false)
+    }
+  }, [addNodeAt, addTask, data.name, data.projectUuid, id, persistNodesAndWait, shellWidth, sourceDurationHint, sourceFpsHint, sourceHeightHint, sourceWidthHint, startPolling, videoDepthSubmitting, videoUrl])
 
   const captureCurrentFrameToImageNode = useCallback(async () => {
     const video = videoRef.current
@@ -2288,29 +2464,51 @@ export function VideoNode({ id, data, selected }: Props) {
           disabled: cropSubmitting,
         },
         {
+          key: 'ui-removal',
+          label: uiRemovalSubmitting ? '正在去除UI' : '去除UI',
+          icon: uiRemovalSubmitting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Eraser size={14} strokeWidth={1.9} />,
+          onClick: () => { if (videoUrl && !uiRemovalSubmitting) { setGenError(null); setUiRemovalOpen(true) } },
+          disabled: uiRemovalSubmitting,
+        },
+        {
           key: 'ui-mask',
           label: 'UI遮罩',
-          icon: <Scissors size={14} strokeWidth={1.9} />,
+          icon: <Eraser size={14} strokeWidth={1.9} />,
           onClick: () => {
             if (!videoUrl) return
             const state = useCanvasStore.getState()
-            const sourceNode = state.nodes.find((node) => node.id === id)
-            const outgoing = state.edges.filter((edge) => edge.source === id).length
+            const sourceNode = state.nodes.find((node) => node.id === id || node.data.nodeKey === id)
+            const sourcePosition = sourceNode?.position ?? { x: 0, y: 0 }
+            const outgoing = state.edges.filter((edge) => edge.source === id || edge.source === sourceNode?.id).length
             const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
-            const created = addNodeAt('ui_mask', (sourceNode?.position.x ?? 0) + shellWidth + 80, (sourceNode?.position.y ?? 0) + outgoing * 44, {
+            const created = addNodeAt('ui_mask', sourcePosition.x + (Number(shellWidth) || 620) + 80, sourcePosition.y + outgoing * 44, {
+              type: 'ui_mask',
               name: 'UI遮罩',
+              url: [],
+              action: 'ui_mask',
+              sourceKind: 'ui_mask',
+              contentWidth: 280,
+              contentHeight: 92,
               params: { videoList: [sourceRef] } as unknown as Record<string, unknown>,
-            })
-            state.setSelected([created.id])
-            state.setActivePanelNode(null)
+            } as Partial<CanvasNodeData>)
+            const latest = useCanvasStore.getState()
+            latest.setSelected([created.id])
+            latest.setActivePanelNode(null)
           },
         },
         {
-          key: 'ui-removal',
-          label: uiRemovalSubmitting ? '正在去除UI' : '去除UI',
-          icon: uiRemovalSubmitting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Scissors size={14} strokeWidth={1.9} />,
-          onClick: () => { if (videoUrl && !uiRemovalSubmitting) { setGenError(null); setUiRemovalOpen(true) } },
-          disabled: uiRemovalSubmitting,
+          key: 'color-grade',
+          label: colorGradeSubmitting ? '正在校色' : '影视校色',
+          icon: colorGradeSubmitting
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Palette size={14} strokeWidth={1.9} />,
+          onClick: () => {
+            if (videoUrl && !colorGradeSubmitting) {
+              setGenError(null)
+              setColorGradeOpen(true)
+            }
+          },
+          disabled: colorGradeSubmitting,
         },
         {
           key: 'frame-interpolation',
@@ -2320,6 +2518,15 @@ export function VideoNode({ id, data, selected }: Props) {
             : <Gauge size={14} strokeWidth={1.9} />,
           onClick: openFrameInterpolationModal,
           disabled: frameInterpolationSubmitting,
+        },
+        {
+          key: 'depthcrafter',
+          label: videoDepthSubmitting && videoDepthProvider === 'depthcrafter' ? '正在创建深度' : '转深度视频',
+          icon: videoDepthSubmitting && videoDepthProvider === 'depthcrafter'
+            ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            : <ScanLine size={14} strokeWidth={1.9} />,
+          onClick: () => { if (videoUrl && !videoDepthSubmitting) { setGenError(null); setVideoDepthProvider('depthcrafter') } },
+          disabled: videoDepthSubmitting,
         },
         {
           key: 'media-enhance',
@@ -2366,61 +2573,24 @@ export function VideoNode({ id, data, selected }: Props) {
     <MediaNodeToolbar actions={mediaToolbarActions} />
   ) : undefined
 
-  const handleWhiteboardAccept = useCallback(async ({ dataUrl, snapshot }: { dataUrl: string; snapshot: unknown }) => {
-    const file = await dataUrlToFile(dataUrl, data.name || 'video')
-    const uploaded = await assetsApi.upload(data.projectUuid, file)
-    const resourceMeta = resourceMetaFromUploadPayload(uploaded.meta as Record<string, unknown> | undefined, 'image')
-    const updatedAtMs = Date.now()
-    const resultNodeId = whiteboardState?.resultNodeId
-    const existingResultNode = resultNodeId ? nodes.find((node) => node.id === resultNodeId) : undefined
-    const sourceNode = nodes.find((node) => node.id === id)
-    const sourceRef = { nodeId: id, url: videoUrl, mediaType: 'video' as const }
-    let resolvedResultNodeId = existingResultNode?.id
-
-    if (existingResultNode) {
-      pushHistory()
-      const resultParams = ((existingResultNode.data.params as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>
-      const existingImageList = Array.isArray(resultParams.imageList) ? resultParams.imageList : []
-      const existingOrder = Array.isArray(resultParams.imageListOrder) ? resultParams.imageListOrder as string[] : []
-
-      updateNodeData(existingResultNode.id, {
-        type: 'upload',
-        url: [uploaded.url],
-        action: 'image_resource',
-        sourceKind: 'derived',
-        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
-        params: {
-          ...resultParams,
-          imageList: existingImageList.some((entry) => (entry as { nodeId?: string }).nodeId === id)
-            ? existingImageList
-            : [...existingImageList, sourceRef],
-          imageListOrder: existingOrder.includes(id) ? existingOrder : [...existingOrder, id],
-          whiteboard: {
-            ...(readWhiteboardState(resultParams) ?? {}),
-            snapshot,
-            updatedAtMs,
-          },
-        },
-      })
-    } else {
-      const createdNode = addNodeAt('upload', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
+  /**
+   * 白板只导出笔迹（和视频同尺寸的透明 PNG），服务端把它叠到整段视频上，
+   * 结果放进右侧一个新的视频节点。原视频不改。
+   */
+  const handleWhiteboardAccept = useCallback(async ({ dataUrl }: { dataUrl: string }) => {
+    try {
+      const file = await dataUrlToFile(dataUrl, (data.name || 'video') + '-annotate')
+      const uploaded = await assetsApi.upload(data.projectUuid, file)
+      const annotated = await toolboxApi.videoAnnotate(data.projectUuid, id, videoUrl ?? '', uploaded.url)
+      const resourceMeta = resourceMetaFromUploadPayload(annotated.meta as Record<string, unknown> | undefined, 'video')
+      const sourceNode = nodes.find((node) => node.id === id)
+      const createdNode = addNodeAt('video', (sourceNode?.position.x ?? 0) + shellWidth + 140, sourceNode?.position.y ?? 0, {
         name: `${data.name || '视频'} 标注`,
-        url: [uploaded.url],
+        url: [annotated.url],
         action: 'image_resource',
-        sourceKind: 'derived',
+        sourceKind: 'video_annotate',
         ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
-        params: {
-          ...defaultImageParams(),
-          imageList: [sourceRef],
-          imageListOrder: [id],
-          whiteboard: {
-            snapshot,
-            updatedAtMs,
-          },
-        } as unknown as Record<string, unknown>,
       })
-
-      resolvedResultNodeId = createdNode.id
       const edgeId = `e-${id}-${createdNode.id}`
       if (!edges.some((edge) => edge.id === edgeId)) {
         setEdges(addEdge({
@@ -2432,23 +2602,16 @@ export function VideoNode({ id, data, selected }: Props) {
           interactionWidth: 34,
         }, edges))
       }
+      if (!await persistNodesAndWait()) throw new Error('标注视频节点保存失败，请刷新画布后重试')
+      setWhiteboardOpen(false)
+      setWhiteboardSourceFile(null)
+      setPreviewUrl(null)
+    } catch (error) {
+      const message = errorToText(error, '标注视频生成失败')
+      setGenError(message)
+      setWhiteboardError(message)
     }
-
-    updateNodeData(id, {
-      params: {
-        ...params,
-        advancedSettings: writeWhiteboardState(advancedSettings, {
-          snapshot,
-          resultNodeId: resolvedResultNodeId,
-          updatedAtMs,
-        }),
-      } as unknown as Record<string, unknown>,
-    })
-
-    setWhiteboardOpen(false)
-    setWhiteboardSourceFile(null)
-    setPreviewUrl(null)
-  }, [addNodeAt, advancedSettings, data.name, data.projectUuid, edges, id, nodes, params, pushHistory, setEdges, shellWidth, updateNodeData, videoUrl, whiteboardState?.resultNodeId])
+  }, [addNodeAt, data.name, data.projectUuid, edges, id, nodes, persistNodesAndWait, setEdges, shellWidth, videoUrl])
 
   return (
     <>
@@ -2546,6 +2709,7 @@ export function VideoNode({ id, data, selected }: Props) {
               </div>
             )
           })}
+          <div style={{ position: 'relative', width: shellWidth, maxWidth: '100%' }}>
           <video
             ref={videoRef}
             src={displayVideoUrl}
@@ -2604,6 +2768,15 @@ export function VideoNode({ id, data, selected }: Props) {
               if (frameMode) updateFrameNumberFromVideo(e.currentTarget)
             }}
           />
+          {(params as unknown as { videoOverlayUrl?: string }).videoOverlayUrl ? (
+            <img
+              src={(params as unknown as { videoOverlayUrl?: string }).videoOverlayUrl}
+              alt=""
+              draggable={false}
+              style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none', zIndex: 3 }}
+            />
+          ) : null}
+          </div>
           <div className="shotflow-media-lod-placeholder" aria-hidden="true">
             <NodeTypeIcon type="video" size={18} strokeWidth={1.8} />
             <span>视频</span>
@@ -2661,7 +2834,7 @@ export function VideoNode({ id, data, selected }: Props) {
           <div className="flex flex-col items-center justify-center gap-2"
             style={{ height: previewFrame.height, padding: 24 }}
           >
-            {isFrameInterpolationNode && progressRows.length > 0 ? (
+            {showInNodeInterpolationProgress ? (
               <div
                 className="nodrag"
                 aria-label="视频补帧进度"
@@ -2781,7 +2954,7 @@ export function VideoNode({ id, data, selected }: Props) {
               variant={panelRect ? 'panel' : 'card'}
               compact={!panelRect && (portalRect?.width ?? 0) < 260}
               taskInfo={info}
-              label={progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
+              label={isFrameInterpolationNode ? '视频补帧' : progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
               onCancel={() => cancelProgressRow(info.taskId)}
             />
           ))}
@@ -3010,7 +3183,7 @@ export function VideoNode({ id, data, selected }: Props) {
         {connectedImages.map((ref, i) => (
           <div key={ref.nodeId}
             className="relative nodrag reference-thumb"
-            style={{ flexShrink: 0, width: 44, height: 42, overflow: 'visible' }}
+            style={{ flexShrink: 0, width: 66, height: 63, overflow: 'visible' }}
             draggable
             onDragStart={e => e.dataTransfer.setData('thumb-idx', String(i))}
             onDragOver={e => e.preventDefault()}
@@ -3023,7 +3196,7 @@ export function VideoNode({ id, data, selected }: Props) {
             <div
               className="rounded overflow-hidden"
               style={{
-                width: 44, height: 42, border: '1px solid rgba(124,92,252,0.18)', cursor: 'zoom-in',
+                width: 66, height: 63, border: '1px solid rgba(124,92,252,0.18)', cursor: 'zoom-in',
                 // 当前模式收不了这类素材：置灰 + 说明，别等点了生成才知道
                 ...(unusableRefKinds.images ? { filter: 'grayscale(1)', opacity: 0.42 } : {}),
               }}
@@ -3051,10 +3224,10 @@ export function VideoNode({ id, data, selected }: Props) {
                 handleReferenceMention(ref)
               }}
               style={{
-                position: 'absolute', left: -5, bottom: -5, zIndex: 3, width: 17, height: 17,
+                position: 'absolute', left: -8, bottom: -8, zIndex: 3, width: 26, height: 26,
                 borderRadius: 999, border: '1px solid rgba(225,218,255,0.5)',
                 background: 'rgba(12,18,32,0.18)', color: 'rgba(246,243,255,0.92)',
-                fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
+                fontSize: 15, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 boxShadow: '0 3px 10px rgba(0,0,0,0.32)',
               }}
@@ -3074,9 +3247,9 @@ export function VideoNode({ id, data, selected }: Props) {
                 e.stopPropagation()
               }}
               style={{
-                position: 'absolute', top: -6, right: -6, width: 15, height: 15,
+                position: 'absolute', top: -9, right: -9, width: 23, height: 23,
                 borderRadius: '50%', background: '#312550', border: '1px solid #5a4080',
-                color: '#c4b5fd', fontSize: 9, cursor: 'pointer', lineHeight: 1,
+                color: '#c4b5fd', fontSize: 14, cursor: 'pointer', lineHeight: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
               onClick={e => {
@@ -3088,15 +3261,15 @@ export function VideoNode({ id, data, selected }: Props) {
             {/* Order label */}
             <div style={{
               position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center',
-              fontSize: 7, color: 'rgba(255,255,255,0.66)', background: 'rgba(0,0,0,0.5)',
-              lineHeight: '12px', pointerEvents: 'none',
+              fontSize: 11, color: 'rgba(255,255,255,0.66)', background: 'rgba(0,0,0,0.5)',
+              lineHeight: '18px', pointerEvents: 'none',
             }}>{ref.orderName}</div>
           </div>
         ))}
         {connectedVideos.map(ref => (
           <div key={ref.nodeId}
             className="relative nodrag reference-thumb"
-            style={{ flexShrink: 0, width: 44, height: 42, overflow: 'visible' }}
+            style={{ flexShrink: 0, width: 66, height: 63, overflow: 'visible' }}
             onMouseEnter={e => {
               scheduleHoverPreview(
                 ref.nodeId,
@@ -3112,11 +3285,11 @@ export function VideoNode({ id, data, selected }: Props) {
               className="rounded overflow-hidden"
               title={unusableRefKinds.videos ? `${ref.orderName}：当前模式不用参考视频` : `预览${ref.orderName}`}
               style={{
-                width: 44, height: 42, border: '1px solid rgba(124,92,252,0.18)', background: '#151022', position: 'relative', cursor: 'zoom-in',
+                width: 66, height: 63, border: '1px solid rgba(124,92,252,0.18)', background: '#151022', position: 'relative', cursor: 'zoom-in',
                 ...(unusableRefKinds.videos ? { filter: 'grayscale(1)', opacity: 0.42 } : {}),
               }}
             >
-              <ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={13} />
+              <ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={20} />
             </div>
             <button
               type="button"
@@ -3137,10 +3310,10 @@ export function VideoNode({ id, data, selected }: Props) {
                 handleReferenceMention(ref)
               }}
               style={{
-                position: 'absolute', left: -5, bottom: -5, zIndex: 3, width: 17, height: 17,
+                position: 'absolute', left: -8, bottom: -8, zIndex: 3, width: 26, height: 26,
                 borderRadius: 999, border: '1px solid rgba(225,218,255,0.5)',
                 background: 'rgba(12,18,32,0.18)', color: 'rgba(246,243,255,0.92)',
-                fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
+                fontSize: 15, fontWeight: 700, lineHeight: 1, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 boxShadow: '0 3px 10px rgba(0,0,0,0.32)',
               }}
@@ -3159,9 +3332,9 @@ export function VideoNode({ id, data, selected }: Props) {
                 e.stopPropagation()
               }}
               style={{
-                position: 'absolute', top: -6, right: -6, width: 15, height: 15,
+                position: 'absolute', top: -9, right: -9, width: 23, height: 23,
                 borderRadius: '50%', background: '#312550', border: '1px solid #5a4080',
-                color: '#c4b5fd', fontSize: 9, cursor: 'pointer', lineHeight: 1,
+                color: '#c4b5fd', fontSize: 14, cursor: 'pointer', lineHeight: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
               onClick={e => {
@@ -3172,8 +3345,8 @@ export function VideoNode({ id, data, selected }: Props) {
             >×</button>
             <div style={{
               position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center',
-              fontSize: 7, color: 'rgba(255,255,255,0.72)', background: 'rgba(0,0,0,0.5)',
-              lineHeight: '12px', pointerEvents: 'none',
+              fontSize: 11, color: 'rgba(255,255,255,0.72)', background: 'rgba(0,0,0,0.5)',
+              lineHeight: '18px', pointerEvents: 'none',
             }}>{ref.orderName}</div>
           </div>
         ))}
@@ -3485,19 +3658,19 @@ export function VideoNode({ id, data, selected }: Props) {
                 <div className="text-xs mb-2" style={{ color: '#5a5070' }}>样片</div>
                 <div className="flex gap-2">
                   <button type="button" className="flex-1 text-sm py-2 rounded nodrag"
-                    style={{ background: !draft ? '#3a2a78' : '#1e1830', color: !draft ? '#fff' : '#8a7aaa', border: !draft ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    style={{ background: draft ? '#1e1830' : '#7c5cfc', color: draft ? '#8a7aaa' : '#fff', border: draft ? '1px solid #312550' : 'none', cursor: 'pointer' }}
                     onClick={() => setDraftMode(false)}><SettingCheck on={!draft} />关闭</button>
                   <button type="button" className="flex-1 text-sm py-2 rounded nodrag"
-                    title="先出 480P 样片确认构图和运镜，再生成 1080P 成片。两次分开计费，样片任务 7 天内有效。"
-                    style={{ background: draft ? '#3a2a78' : '#1e1830', color: draft ? '#fff' : '#8a7aaa', border: draft ? '1px solid #c4b5fd' : '1px solid #312550', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    title="先出 480P 样片，确认后再生成 1080P 成片。两次分开计费，样片 7 天内有效。"
+                    style={{ background: draft ? '#7c5cfc' : '#1e1830', color: draft ? '#fff' : '#8a7aaa', border: draft ? 'none' : '1px solid #312550', cursor: 'pointer' }}
                     onClick={() => setDraftMode(true)}><SettingCheck on={draft} />480P 样片</button>
                 </div>
-                <div className="text-xs" style={{ color: '#8a7aaa', marginTop: 8 }}>
+                <div className="text-xs" style={{ color: '#c4b5fd', marginTop: 8 }}>
                   {draftTaskId ? '样片已好，点下面出 1080P 成片' : '请先把要转成片的那条 480P 样片设为主视频'}
                 </div>
                 {draftTaskId && (
                   <button type="button" className="w-full text-sm py-2 rounded nodrag"
-                    style={{ marginTop: 8, background: '#2a1f50', color: '#c4b5fd', border: '1px solid #7c5cfc', cursor: 'pointer' }}
+                    style={{ marginTop: 8, background: '#3a2a78', color: '#fff', border: '1px solid #c4b5fd', cursor: 'pointer' }}
                     onClick={() => { finalizeDraftRef.current = draftTaskId; void handleGenerate() }}>
                     用这条样片生成 1080P 成片
                   </button>
@@ -3638,7 +3811,7 @@ export function VideoNode({ id, data, selected }: Props) {
               </button>
               {promptSkillOpen && (
                 <div className="nodrag nopan" style={{ position: 'absolute', right: 0, bottom: 38, width: 300, maxHeight: 420, overflow: 'hidden', padding: 6, borderRadius: 10, background: '#171320', border: '1px solid rgba(124,92,252,0.3)', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', zIndex: 1200, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10, flexShrink: 0 }}>切换分组后点 Skill，再选 Opus 或 GPT Luna。无提示词时按节点名和参考图扩写。</div>
+                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10, flexShrink: 0 }}>切换分组后点 Skill，再选模型。Opus 优化会先整理原意、提升细节，最后按 Skill 洗词（三次调用）。无提示词时按节点名和参考图扩写。</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 8px', flexShrink: 0 }}>
                     {SEEDANCE_PROMPT_SKILL_CATEGORIES.map(category => {
                       const selected = promptSkillCategory === category.id
@@ -3648,7 +3821,7 @@ export function VideoNode({ id, data, selected }: Props) {
                           type="button"
                           className="nodrag nopan"
                           onPointerDown={event => event.stopPropagation()}
-                          onClick={event => { event.stopPropagation(); setPromptSkillCategory(category.id); setPromptSkillMenu(null); setPromptSkillHoverId(null) }}
+                          onClick={event => { event.stopPropagation(); setPromptSkillCategory(category.id); setPromptSkillMenu(null) }}
                           style={{ height: 24, padding: '0 8px', borderRadius: 999, border: '1px solid ' + (selected ? 'rgba(196,181,253,0.55)' : 'rgba(124,92,252,0.22)'), background: selected ? 'rgba(124,92,252,0.38)' : '#1e1830', color: selected ? '#f4efff' : '#b9a9ef', fontSize: 10, fontWeight: selected ? 750 : 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
                         >
                           {category.label}
@@ -3656,32 +3829,33 @@ export function VideoNode({ id, data, selected }: Props) {
                       )
                     })}
                   </div>
-                  <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 6px', overflowY: 'auto', minHeight: 0, flex: 1 }}>
                     {SEEDANCE_PROMPT_SKILLS.filter(skill => skill.category === promptSkillCategory).map(skill => {
-                      const modelMenuOpen = promptSkillMenu === skill.id
-                      const hovered = promptSkillHoverId === skill.id || modelMenuOpen
+                      const selected = promptSkillMenu === skill.id
                       return (
-                        <div key={skill.id}>
-                          <button type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptSkillMenu(modelMenuOpen ? null : skill.id) }} onMouseEnter={() => setPromptSkillHoverId(skill.id)} onMouseLeave={() => setPromptSkillHoverId(null)} style={{ width: '100%', display: 'block', padding: '6px 8px', textAlign: 'left', border: '1px solid ' + (hovered ? 'rgba(196,181,253,0.42)' : 'transparent'), borderRadius: 7, background: hovered ? 'rgba(124,92,252,0.28)' : 'transparent', color: '#e8e1f7', cursor: 'pointer' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700 }}>{skill.name}</span>
-                              <span style={{ color: '#c4b5fd', fontSize: 10 }}>{modelMenuOpen ? '收起' : '选模型'}</span>
-                            </div>
-                            <div style={{ marginTop: 2, color: '#9488ad', fontSize: 10 }}>{skill.description}</div>
-                          </button>
-                          {modelMenuOpen && (
-                            <div className="nodrag nopan" style={{ display: 'flex', gap: 6, padding: '0 4px 6px' }}>
-                              {PROMPT_WASH_TEXT_CHOICES.map(choice => (
-                                <button key={choice.value} type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPromptSkillOpen(false); setPromptSkillMenu(null); void washVideoPrompt('conservative', choice.value, skill.id) }} style={{ flex: 1, height: 28, borderRadius: 7, border: '1px solid rgba(196,181,253,0.4)', background: '#2a2140', color: '#f4efff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                                  {choice.label}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        <button
+                          key={skill.id}
+                          type="button"
+                          className="nodrag nopan"
+                          title={skill.name + ' · ' + skill.description}
+                          onPointerDown={event => event.stopPropagation()}
+                          onClick={event => { event.stopPropagation(); setPromptSkillMenu(selected ? null : skill.id) }}
+                          style={{ height: 24, padding: '0 8px', borderRadius: 999, border: '1px solid ' + (selected ? 'rgba(196,181,253,0.55)' : 'rgba(124,92,252,0.22)'), background: selected ? 'rgba(124,92,252,0.38)' : '#1e1830', color: selected ? '#f4efff' : '#d8cef4', fontSize: 10, fontWeight: selected ? 750 : 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          {skill.shortName}
+                        </button>
                       )
                     })}
                   </div>
+                  {promptSkillMenu && (
+                    <div className="nodrag nopan" style={{ display: 'flex', gap: 6, padding: '2px 4px 4px', flexShrink: 0 }}>
+                      {PROMPT_WASH_TEXT_CHOICES.map(choice => (
+                        <button key={choice.value} type="button" className="nodrag nopan" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); const skillId = promptSkillMenu; setPromptSkillOpen(false); setPromptSkillMenu(null); void washVideoPrompt('conservative', choice.value, skillId) }} style={{ flex: 1, height: 26, borderRadius: 999, border: '1px solid rgba(196,181,253,0.4)', background: '#2a2140', color: '#f4efff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                          {choice.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3700,8 +3874,8 @@ export function VideoNode({ id, data, selected }: Props) {
                 <Wand2 size={15} strokeWidth={1.8} />
               </button>
               {promptWashOpen && (
-                <div className="nodrag nopan" style={{ position: 'absolute', right: 0, bottom: 38, width: 228, padding: 6, borderRadius: 10, background: '#171320', border: '1px solid rgba(124,92,252,0.3)', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', zIndex: 1200 }}>
-                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10 }}>{'\u70b9\u9009\u6a21\u5f0f\uff0c\u518d\u9009 Opus \u6216 GPT Luna'}</div>
+                <div className="nodrag nopan" style={{ position: 'absolute', right: 0, bottom: 38, width: 270, padding: 6, borderRadius: 10, background: '#171320', border: '1px solid rgba(124,92,252,0.3)', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', zIndex: 1200 }}>
+                  <div style={{ padding: '4px 7px 6px', color: '#9488ad', fontSize: 10 }}>点选模式，再选 Opus、GPT Luna 或 Opus 优化。Opus 优化先整理、再提升细节、最后洗词（三次调用）。</div>
                   {PROMPT_WASH_MODES.filter(option => isMiniMaxModel ? option.value === 'minimax' : option.value !== 'minimax').map(option => {
                     const modelMenuOpen = promptWashModelMenu === option.value
                     return (
@@ -3772,7 +3946,7 @@ export function VideoNode({ id, data, selected }: Props) {
               key={info.taskId}
               variant="panel"
               taskInfo={info}
-              label={progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
+              label={isFrameInterpolationNode ? '视频补帧' : progressRows.length > 1 ? `生成视频 ${index + 1}/${progressRows.length}` : '生成视频'}
               onCancel={() => cancelProgressRow(info.taskId)}
             />
           ))}
@@ -3837,6 +4011,14 @@ export function VideoNode({ id, data, selected }: Props) {
         onConfirm={handleUiRemovalAccept}
       />
     )}
+    {colorGradeOpen && videoUrl && (
+      <VideoColorGradeModal
+        url={videoUrl}
+        name={data.name || '视频'}
+        onCancel={() => { if (!colorGradeSubmitting) setColorGradeOpen(false) }}
+        onConfirm={handleColorGradeAccept}
+      />
+    )}
     {frameInterpolationOpen && videoUrl && (
       <VideoFrameInterpolationModal
         url={videoUrl}
@@ -3851,13 +4033,54 @@ export function VideoNode({ id, data, selected }: Props) {
         onConfirm={handleFrameInterpolationAccept}
       />
     )}
+    {videoDepthProvider && videoUrl && (
+      <VideoDepthModal
+        provider={videoDepthProvider}
+        name={data.name || '视频'}
+        durationHintSec={sourceDurationHint}
+        onCancel={() => { if (!videoDepthSubmitting) setVideoDepthProvider(null) }}
+        onConfirm={handleVideoDepthAccept}
+      />
+    )}
     {mediaEnhance.modal}
-    {whiteboardOpen && (
+    {videoBoardPickOpen ? (
+      <div
+        className="nodrag"
+        style={{ position: 'fixed', inset: 0, zIndex: 120000, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onMouseDown={(event) => { if (event.target === event.currentTarget) setVideoBoardPickOpen(false) }}
+      >
+        <div
+          className="nodrag"
+          style={{ width: 340, padding: 16, borderRadius: 14, background: '#16141c', color: '#f4f0ff', display: 'flex', flexDirection: 'column', gap: 8 }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <strong>白板标注</strong>
+          <button type="button" style={{ height: 34, borderRadius: 8, border: 0, background: '#fff', color: '#111', cursor: 'pointer' }} onClick={() => { void openVideoBoard('frame') }}>画在当前帧</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={videoBoardSec}
+              onChange={(event) => setVideoBoardSec(event.target.value)}
+              style={{ flex: 1, height: 34, borderRadius: 8, border: '1px solid #3a3348', background: '#0e0c14', color: '#fff', padding: '0 8px' }}
+            />
+            <button type="button" style={{ height: 34, borderRadius: 8, border: 0, background: '#2a2438', color: '#fff', cursor: 'pointer', padding: '0 10px' }} onClick={() => { void openVideoBoard('time') }}>画在这一帧</button>
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>秒，从当前播放位置带出</div>
+          <button type="button" style={{ height: 34, borderRadius: 8, border: '1px solid #e23b84', background: '#3a2030', color: '#ffd0e4', cursor: 'pointer' }} onClick={() => { void openVideoBoard('overlay') }}>画在视频上层</button>
+          <button type="button" style={{ height: 30, border: 0, background: 'transparent', color: '#aaa', cursor: 'pointer' }} onClick={() => setVideoBoardPickOpen(false)}>取消</button>
+        </div>
+      </div>
+    ) : whiteboardOpen && (
       <WhiteboardModal
         sourceName={data.name}
         sourceFile={whiteboardSourceFile}
         isPreparing={whiteboardPreparing}
         loadError={whiteboardError}
+        underlayUrl={videoBoardKindRef.current === 'overlay' ? videoUrl ?? undefined : undefined}
+        underlayTime={videoRef.current?.currentTime || 0}
+        strokesOnly
         onCancel={() => {
           setWhiteboardOpen(false)
           setWhiteboardSourceFile(null)

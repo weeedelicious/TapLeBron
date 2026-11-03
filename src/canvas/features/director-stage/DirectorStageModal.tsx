@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Box, Camera, Cylinder, Download, Eye, EyeOff, Loader2, PersonStanding, Redo2, RotateCcw, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { Box, Camera, CirclePlay, Cylinder, Download, Eye, EyeOff, Loader2, PersonStanding, Redo2, RotateCcw, Sparkles, Trash2, Undo2, Upload, Video, X } from 'lucide-react'
 import {
   DEFAULT_JOINT_HANDLE_SCALE,
   DirectorStageThree,
@@ -74,6 +74,7 @@ import {
   DEFAULT_DIRECTOR_STAGE_STATE,
   DIRECTOR_RATIO_OPTIONS,
   DIRECTOR_RESOLUTION_OPTIONS,
+  DIRECTOR_REHEARSAL_DURATION_OPTIONS,
   MAX_STAGE_PROPS,
   RESOLUTION_SHORT_EDGE,
   makeStageProp,
@@ -82,6 +83,15 @@ import {
   type PropKind,
   type StageProp,
 } from './types'
+import {
+  DEFAULT_REHEARSAL_DURATION_SEC,
+  REHEARSAL_FPS,
+  dollyCamera,
+  orbitYawCamera,
+  rehearsalCameras,
+  rehearsalVideoSize,
+  riseCamera,
+} from './rehearsal'
 import { assetsApi } from '@/lib/api'
 import { errorToText } from '@/lib/display'
 import './director-stage.css'
@@ -93,6 +103,15 @@ export interface DirectorStageRenderPayload {
   state: DirectorStageState
 }
 
+export interface DirectorStageRehearsalPayload {
+  file: File
+  width: number
+  height: number
+  durationSec: number
+  fps: number
+  state: DirectorStageState
+}
+
 interface Props {
   initialState: DirectorStageState
   projectUuid: string
@@ -100,9 +119,12 @@ interface Props {
   /** 连进来的参考图（用来分析姿势）。没连时传 undefined 或 url 为空。 */
   reference?: { url: string; name: string; missing: boolean }
   busy?: boolean
-  onCancel: () => void
+  /** Close the editor and persist its current camera/pose/model state. */
+  onClose: (state: DirectorStageState) => void
   /** 出图：把 PNG 和当次状态交回节点，由节点负责上传和写回 */
   onRender: (payload: DirectorStageRenderPayload) => void | Promise<void>
+  /** 出白模参考视频：把 WebM 和当次状态交回节点，由节点负责转码上传和写回 */
+  onRenderVideo: (payload: DirectorStageRehearsalPayload) => void | Promise<void>
 }
 
 /**
@@ -159,8 +181,10 @@ function Row({ label, value, children }: { label: string; value?: string; childr
   )
 }
 
-export function DirectorStageModal({ initialState, projectUuid, nodeName, reference, busy = false, onCancel, onRender }: Props) {
+export function DirectorStageModal({ initialState, projectUuid, nodeName, reference, busy = false, onClose, onRender, onRenderVideo }: Props) {
   const [state, setState] = useState<DirectorStageState>(() => normalizeDirectorStageState(initialState))
+  const stateRef = useRef(state)
+  stateRef.current = state
   const [tab, setTab] = useState<PanelTab>('camera')
   const [tool, setTool] = useState<StageTool>('slider')
   const [propTool, setPropTool] = useState<PropTool>('translate')
@@ -169,12 +193,16 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
   const [showJointHandles, setShowJointHandles] = useState(true)
   const [jointHandleScale, setJointHandleScale] = useState(DEFAULT_JOINT_HANDLE_SCALE)
   const [rendering, setRendering] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const [recordProgress, setRecordProgress] = useState('')
   const [error, setError] = useState('')
   const [modelUploading, setModelUploading] = useState(false)
   const [modelProgress, setModelProgress] = useState(0)
   const [modelImportPhase, setModelImportPhase] = useState<'uploading' | 'converting'>('uploading')
   const [modelToSave, setModelToSave] = useState<DirectorStageState['models'][number] | null>(null)
   const viewRef = useRef<DirectorStageThreeHandle>(null)
+  const closeAndSave = useCallback(() => onClose(stateRef.current), [onClose])
 
   // ── 从参考图分析姿势 ──────────────────────────────────────────────────────
   const [analyzing, setAnalyzing] = useState(false)
@@ -185,19 +213,17 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !rendering && !busy) onCancel()
+      if (event.key === 'Escape' && !rendering && !recording && !playing && !busy) closeAndSave()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [busy, onCancel, rendering])
+  }, [busy, closeAndSave, playing, recording, rendering])
 
   // ── 撤销 / 重做 ────────────────────────────────────────────────────────────
   /**
    * 状态的镜像。历史栈要的是「改动之前」那一份，而 React 的 state 是异步的，
    * 在事件回调里读到的可能已经是旧值。
    */
-  const stateRef = useRef(state)
-  stateRef.current = state
   const historyRef = useRef<StageHistory>(emptyStageHistory())
   /** 只为了让上面那两个按钮的 disabled 跟着变 —— 历史本身在 ref 里。 */
   const [historyTick, setHistoryTick] = useState(0)
@@ -472,7 +498,7 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
   )
 
   const handleRender = useCallback(async () => {
-    if (rendering || busy) return
+    if (rendering || recording || playing || busy) return
     setError('')
     setRendering(true)
     try {
@@ -484,7 +510,103 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
     } finally {
       setRendering(false)
     }
-  }, [busy, onRender, rendering, size.height, size.width, state])
+  }, [busy, onRender, playing, recording, rendering, size.height, size.width, state])
+
+  const locked = rendering || recording || playing || busy
+
+  const setRehearsal = useCallback((patch: Partial<DirectorStageState["rehearsal"]>) => {
+    commit((current) => ({
+      ...current,
+      rehearsal: { ...current.rehearsal, ...patch },
+    }), null)
+  }, [commit])
+
+  const markStartCamera = useCallback(() => {
+    setRehearsal({ startCamera: stateRef.current.camera })
+  }, [setRehearsal])
+
+  const markEndCamera = useCallback(() => {
+    setRehearsal({ endCamera: stateRef.current.camera })
+  }, [setRehearsal])
+
+  const applyRehearsalPreset = useCallback((kind: "orbit90" | "orbit180" | "dolly" | "rise") => {
+    const start = stateRef.current.camera
+    const end =
+      kind === "orbit90" ? orbitYawCamera(start, 90) :
+      kind === "orbit180" ? orbitYawCamera(start, 180) :
+      kind === "dolly" ? dollyCamera(start, 0.62) :
+      riseCamera(start, 18, 0.15)
+    commit((current) => ({
+      ...current,
+      rehearsal: { ...current.rehearsal, startCamera: start, endCamera: end },
+    }), null)
+  }, [commit])
+
+  const resolveRehearsalCameras = useCallback(() => {
+    const current = stateRef.current
+    const start = current.rehearsal.startCamera ?? current.camera
+    const end = current.rehearsal.endCamera ?? current.camera
+    return { start, end, durationSec: current.rehearsal.durationSec || DEFAULT_REHEARSAL_DURATION_SEC }
+  }, [])
+
+  const handlePreview = useCallback(async () => {
+    if (locked) return
+    const view = viewRef.current
+    if (!view) return
+    const { start, end, durationSec } = resolveRehearsalCameras()
+    const cameras = rehearsalCameras(start, end, durationSec, REHEARSAL_FPS)
+    setError("")
+    setPlaying(true)
+    try {
+      for (const camera of cameras) {
+        view.applyCamera(camera)
+        await new Promise<void>((resolve) => window.setTimeout(resolve, Math.round(1000 / REHEARSAL_FPS)))
+      }
+    } finally {
+      view.applyCamera(stateRef.current.camera)
+      setPlaying(false)
+    }
+  }, [locked, resolveRehearsalCameras])
+
+  const handleRenderVideo = useCallback(async () => {
+    if (locked) return
+    setError("")
+    setRecording(true)
+    setRecordProgress("准备预演...")
+    try {
+      const current = stateRef.current
+      let start = current.rehearsal.startCamera
+      let end = current.rehearsal.endCamera
+      if (!start) start = current.camera
+      if (!end) end = orbitYawCamera(start, 40)
+      const nextState = {
+        ...current,
+        rehearsal: { ...current.rehearsal, startCamera: start, endCamera: end },
+      }
+      if (!current.rehearsal.startCamera || !current.rehearsal.endCamera) {
+        commit(() => nextState, null)
+      }
+      const durationSec = nextState.rehearsal.durationSec || DEFAULT_REHEARSAL_DURATION_SEC
+      const cameras = rehearsalCameras(start, end, durationSec, REHEARSAL_FPS)
+      const videoSize = rehearsalVideoSize(nextState.ratio)
+      const result = await viewRef.current?.recordRehearsal({
+        cameras,
+        width: videoSize.width,
+        height: videoSize.height,
+        fps: REHEARSAL_FPS,
+        fileName: "stage-rehearsal-" + Date.now() + ".webm",
+        onProgress: (done, total) => setRecordProgress("正在出参考视频 " + done + "/" + total),
+      })
+      if (!result) throw new Error("三维空间还没准备好")
+      await onRenderVideo({ ...result, fps: REHEARSAL_FPS, state: nextState })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "出参考视频失败")
+    } finally {
+      setRecording(false)
+      setRecordProgress("")
+    }
+  }, [commit, locked, onRenderVideo])
+
 
   const selectedProp = state.props.find((prop) => prop.id === selectedPropId) ?? null
   const poseCount = Object.keys(state.pose).length
@@ -495,7 +617,7 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
 
   return createPortal(
     <div className="director-stage-backdrop nodrag" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !rendering && !busy) onCancel()
+      if (event.target === event.currentTarget && !locked) closeAndSave()
     }}>
       <div className="director-stage-shell nodrag" onMouseDown={(event) => event.stopPropagation()}>
         <header className="director-stage-header">
@@ -503,7 +625,7 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
             <span className="director-stage-title-icon"><PersonStanding size={17} /></span>
             <div>
               <strong>三维空间</strong>
-              <small>{nodeName ? `${nodeName} · ` : ''}摆机位 + 调白模姿势，出图当构图参考</small>
+              <small>{nodeName ? `${nodeName} · ` : ''}摆机位和白模姿势，出图或出白模参考视频</small>
             </div>
           </div>
           {/*
@@ -518,7 +640,7 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
               <Redo2 size={15} />
             </button>
           </div>
-          <button type="button" className="director-stage-close" onClick={onCancel} disabled={rendering || busy} aria-label="关闭">
+          <button type="button" className="director-stage-close" onClick={closeAndSave} disabled={locked} aria-label="关闭">
             <X size={16} />
           </button>
         </header>
@@ -658,6 +780,46 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
                   </Row>
                   <button type="button" className="director-stage-ghost" onClick={resetView}>
                     <RotateCcw size={13} /> 重置视角
+                  </button>
+
+                  <div className="director-stage-section-title">白模预演</div>
+                  <p className="director-stage-hint">
+                    记下起点和终点，预演运镜，再出一段无材质参考视频给 Seedance 用。
+                  </p>
+                  <div className="director-stage-chips">
+                    <button type="button" className={state.rehearsal.startCamera ? "is-active" : ""} onClick={markStartCamera} disabled={locked}>
+                      {state.rehearsal.startCamera ? "已记起点" : "记为起点"}
+                    </button>
+                    <button type="button" className={state.rehearsal.endCamera ? "is-active" : ""} onClick={markEndCamera} disabled={locked}>
+                      {state.rehearsal.endCamera ? "已记终点" : "记为终点"}
+                    </button>
+                  </div>
+                  <div className="director-stage-chips">
+                    <button type="button" onClick={() => applyRehearsalPreset("orbit90")} disabled={locked}>右转 90°</button>
+                    <button type="button" onClick={() => applyRehearsalPreset("orbit180")} disabled={locked}>环绕 180°</button>
+                    <button type="button" onClick={() => applyRehearsalPreset("dolly")} disabled={locked}>推进</button>
+                    <button type="button" onClick={() => applyRehearsalPreset("rise")} disabled={locked}>升起</button>
+                  </div>
+                  <div className="director-stage-chips">
+                    {DIRECTOR_REHEARSAL_DURATION_OPTIONS.map((sec) => (
+                      <button
+                        key={sec}
+                        type="button"
+                        className={state.rehearsal.durationSec === sec ? "is-active" : ""}
+                        onClick={() => setRehearsal({ durationSec: sec })}
+                        disabled={locked}
+                      >
+                        {sec}秒
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="director-stage-ghost" onClick={handlePreview} disabled={locked}>
+                    {playing ? <Loader2 size={13} className="director-stage-spin" /> : <CirclePlay size={13} />}
+                    {playing ? "预演中..." : "预演运镜"}
+                  </button>
+                  <button type="button" className="director-stage-primary" onClick={handleRenderVideo} disabled={locked}>
+                    {recording ? <Loader2 size={13} className="director-stage-spin" /> : null}
+                    {recording ? "正在出参考视频" : "出参考视频"}
                   </button>
                 </>
               )}
@@ -1042,7 +1204,7 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
             )}
 
             <footer className="director-stage-footer">
-              <div className="director-stage-section-title">出图</div>
+              <div className="director-stage-section-title">出图 / 出参考视频</div>
               <div className="director-stage-chips">
                 {DIRECTOR_RATIO_OPTIONS.map((ratio) => (
                   <button
@@ -1067,13 +1229,13 @@ export function DirectorStageModal({ initialState, projectUuid, nodeName, refere
                   </button>
                 ))}
               </div>
-              <div className="director-stage-outsize">{size.width} × {size.height}</div>
+              <div className="director-stage-outsize">出图 {size.width} × {size.height} · 参考视频 {rehearsalVideoSize(state.ratio).width} × {rehearsalVideoSize(state.ratio).height} · {state.rehearsal.durationSec}s</div>
               {error && <div className="director-stage-error">{error}</div>}
               <button
                 type="button"
                 className="director-stage-primary"
                 onClick={handleRender}
-                disabled={rendering || busy}
+                disabled={locked}
               >
                 {(rendering || busy) && <Loader2 size={14} className="director-stage-spin" />}
                 出图

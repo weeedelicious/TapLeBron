@@ -263,6 +263,7 @@ export function ImageNode({ id, data, selected }: Props) {
   const [isGridSubmitting, setIsGridSubmitting] = useState(false)
   const cancelRequestedRef = useRef(false)
   const imgRef = useRef<HTMLImageElement>(null)
+  const emptyImageInputRef = useRef<HTMLInputElement>(null)
   const promptEditorRef = useRef<PromptEditorHandle>(null)
   const promptWrapRef = useRef<HTMLDivElement>(null)
   const nodeContainerRef = useRef<HTMLDivElement>(null)
@@ -328,8 +329,6 @@ export function ImageNode({ id, data, selected }: Props) {
       if (e.detail > 1) return
       if (
         !target?.closest('[data-at-mention-dropdown="1"]') &&
-        !target?.closest('.react-flow__node') &&
-        !target?.closest('.shotflow-image-viewer') &&
         !nodeContainerRef.current?.contains(e.target as Node) &&
         !controlsPortalRef.current?.contains(e.target as Node) &&
         !settingsPortalRef.current?.contains(e.target as Node)
@@ -495,6 +494,8 @@ export function ImageNode({ id, data, selected }: Props) {
    * 只解析一次、后面统一用 ref.url —— 以前缩略图用快照、@引用另算一遍 url[0]，
    * 同一张参考图在一个节点里有两个地址。
    */
+  const hasUpstreamMedia = (params.imageList as NodeRef[] | undefined)?.some(ref => ref.nodeId) || (params.videoList as NodeRef[] | undefined)?.some(ref => ref.nodeId)
+
   const connectedImages = orderedConnectedImages.map(ref => {
     const srcNode = nodes.find(n => n.id === ref.nodeId)
     return { ...ref, url: liveRefUrl(srcNode?.data as CanvasNodeData | undefined, ref.url) }
@@ -962,6 +963,27 @@ export function ImageNode({ id, data, selected }: Props) {
       setIsWhiteboardPreparing(false)
     }
   }, [data.name, isWhiteboardPreparing, mainImageUrl])
+
+  const importImageIntoEmptyNode = useCallback(async (file: File | undefined) => {
+    if (!file || !file.type.startsWith('image/')) return
+    setGenError(null)
+    try {
+      const uploaded = await assetsApi.upload(data.projectUuid, file)
+      const resourceMeta = resourceMetaFromUploadPayload(uploaded.meta as Record<string, unknown> | undefined, 'image')
+      const createdAtMs = Date.now()
+      updateNodeData(id, {
+        type: 'upload',
+        name: file.name.replace(/\.[^.]+$/, '') || data.name,
+        url: [uploaded.url],
+        action: 'image_resource',
+        sourceKind: 'uploaded',
+        ...(resourceMeta ? { _resourceMeta: { items: [resourceMeta] } } : {}),
+        _assetCreatedAtMs: { [uploaded.url]: createdAtMs },
+      })
+    } catch (error) {
+      setGenError(error instanceof Error ? error.message : '图片导入失败')
+    }
+  }, [data.name, data.projectUuid, id, updateNodeData])
 
   const openCrop = useCallback(() => {
     if (!mainImageUrl || isCropPreparing) return
@@ -1864,7 +1886,7 @@ export function ImageNode({ id, data, selected }: Props) {
                   loading="lazy"
                   decoding="async"
                   style={{ objectFit: 'cover', height: galleryTileHeight, cursor: 'zoom-in', width: '100%' }}
-                  onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setCollapsed(false); setPreviewUrl(item.url) }}
+                  onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewUrl(item.url) }}
                 />
                 <div style={galleryOrderBadge()}>{item.order}</div>
                 <div style={galleryMetaBadge()}>{galleryMetaContent(item)}</div>
@@ -1920,26 +1942,33 @@ export function ImageNode({ id, data, selected }: Props) {
           onClick={collapsed ? () => setCollapsed(false) : undefined}
           onDoubleClick={expandImageNode}
         >
-          {isLoading && false ? (
-            <div style={{ position: 'absolute', left: '50%', top: '50%', transform: `translate(-50%, -50%) scale(${inverseZoom})`, transformOrigin: 'center' }}>
-            <div className="nodrag flex items-center gap-2 px-4 py-2 rounded-full"
-              style={{ background: 'rgba(20,15,40,0.92)', border: '1px solid #312550' }}>
-              <svg width="14" height="14" viewBox="0 0 14 14" style={{ animation: 'spin 1s linear infinite' }}>
-                <circle cx="7" cy="7" r="5.5" stroke="#312550" strokeWidth="2" fill="none" />
-                <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="#7c5cfc" strokeWidth="2" strokeLinecap="round" fill="none" />
-              </svg>
-              <span style={{ fontSize: 12, color: '#c4b5fd', whiteSpace: 'nowrap' }}>
-                生成中 {data.taskInfo?.progressPercent ?? 0}%
-              </span>
-            </div>
-            </div>
-          ) : (
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" opacity={0.12}>
-              <rect x="3" y="7" width="34" height="26" rx="3" stroke="#c4b5fd" strokeWidth="2" />
-              <circle cx="14" cy="18" r="3.5" stroke="#c4b5fd" strokeWidth="2" />
-              <path d="M3 28l10-8 8 8 6-5 10 9" stroke="#c4b5fd" strokeWidth="2" strokeLinejoin="round" />
-            </svg>
-          )}
+          <>
+            {!hasUpstreamMedia && !isLoading && (
+              <>
+                <input
+                  ref={emptyImageInputRef}
+                  className="nodrag"
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(event) => {
+                    void importImageIntoEmptyNode(event.target.files?.[0])
+                    event.currentTarget.value = ''
+                  }}
+                />
+                <button
+                  type="button"
+                  className="nodrag"
+                  aria-label="上传图片"
+                  title="双击上传图片"
+                  onDoubleClick={(event) => { event.stopPropagation(); emptyImageInputRef.current?.click() }}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '7px 12px', border: '1px dashed rgba(196,181,253,0.45)', borderRadius: 9, background: 'rgba(124,92,252,0.08)', color: '#c4b5fd', cursor: 'pointer', fontSize: 18, fontWeight: 800 }}
+                >
+                  双击上传图片
+                </button>
+              </>
+            )}
+          </>
           {isLoading && false && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 5,
@@ -2031,7 +2060,7 @@ export function ImageNode({ id, data, selected }: Props) {
                   cursor: 'zoom-in',
                   width: '100%',
                 }}
-                onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setCollapsed(false); setPreviewUrl(url) }}
+                onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewUrl(url) }}
               />
               <div style={galleryOrderBadge()}>{order}</div>
               <div style={galleryMetaBadge()}>{galleryMetaContent({ url, order, model, resolution })}</div>
@@ -2131,7 +2160,7 @@ export function ImageNode({ id, data, selected }: Props) {
           <div className="flex items-center gap-1 px-2 pt-1.5 pb-1.5 shotflow-node-popover-reference-row" style={panelSize ? { flexShrink: 0 } : undefined}>
             {connectedImages.map((ref, i) => (
               <div key={ref.nodeId || `${ref.url}-${i}`} className="relative nodrag reference-thumb"
-                style={{ width: 44, height: 42, border: '1px solid rgba(124,92,252,0.18)', borderRadius: 7, flexShrink: 0, cursor: 'zoom-in', overflow: 'visible' }}
+                style={{ width: 66, height: 63, border: '1px solid rgba(124,92,252,0.18)', borderRadius: 10, flexShrink: 0, cursor: 'zoom-in', overflow: 'visible' }}
                 draggable
                 onDragStart={event => {
                   event.dataTransfer.setData('image-ref-index', String(i))
@@ -2153,7 +2182,7 @@ export function ImageNode({ id, data, selected }: Props) {
                 onMouseLeave={() => hideHoverPreview(ref.nodeId)}
               >
                 <img src={mediaPreviewUrl(nodes.find(node => node.id === ref.nodeId)?.data ?? data, ref.url)} alt="" draggable={false}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 7, display: 'block' }} />
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10, display: 'block' }} />
                 <button
                   type="button"
                   className="nodrag nopan reference-thumb-action is-at"
@@ -2174,16 +2203,16 @@ export function ImageNode({ id, data, selected }: Props) {
                   }}
                   style={{
                     position: 'absolute',
-                    left: -5,
-                    bottom: -5,
+                    left: -8,
+                    bottom: -8,
                     zIndex: 3,
-                    width: 17,
-                    height: 17,
+                    width: 26,
+                    height: 26,
                     borderRadius: 999,
                     border: '1px solid rgba(225, 218, 255, 0.5)',
                     background: 'rgba(12, 18, 32, 0.18)',
                     color: 'rgba(246, 243, 255, 0.92)',
-                    fontSize: 10,
+                    fontSize: 15,
                     fontWeight: 700,
                     lineHeight: 1,
                     display: 'flex',
@@ -2215,15 +2244,15 @@ export function ImageNode({ id, data, selected }: Props) {
                   }}
                   style={{
                     position: 'absolute',
-                    top: -6,
-                    right: -6,
-                    width: 15,
-                    height: 15,
+                    top: -9,
+                    right: -9,
+                    width: 23,
+                    height: 23,
                     borderRadius: '50%',
                     background: '#312550',
                     border: '1px solid #5a4080',
                     color: '#efeaff',
-                    fontSize: 10,
+                    fontSize: 15,
                     lineHeight: 1,
                     cursor: 'pointer',
                     display: 'flex',
@@ -2238,7 +2267,7 @@ export function ImageNode({ id, data, selected }: Props) {
                 {/* "图片N" label at bottom */}
                 <div style={{
                   position: 'absolute', bottom: 0, left: 0, right: 0,
-                  background: 'rgba(13,10,26,0.72)', fontSize: 8,
+                  background: 'rgba(13,10,26,0.72)', fontSize: 12,
                   color: '#c4b5fd', textAlign: 'center', padding: '1px 0',
                 }}>图片{i + 1}</div>
               </div>
@@ -2431,6 +2460,7 @@ export function ImageNode({ id, data, selected }: Props) {
                 fontWeight: 500,
               }}
             >
+              {!IMAGE_MODELS.some(m => m.value === normalizedImageModel) && <option value={normalizedImageModel} disabled>{galleryModelLabel(normalizedImageModel)}（历史节点）</option>}
               {IMAGE_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
 

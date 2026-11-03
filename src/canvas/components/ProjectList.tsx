@@ -1098,10 +1098,18 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
           onMouseDown={(event) => event.preventDefault()}
         >
           <img
-            src="/shotflow-logo.svg"
+            src={theme === 'black' ? '/shotflow-logo.svg' : '/shotflow-logo-dark.svg'}
             alt="Shotflow"
+            className="shotflow-adaptive-logo"
             draggable={false}
-            style={{ height: 34, width: 'auto', display: 'block', objectFit: 'contain', pointerEvents: 'none' }}
+            style={{
+              height: 34,
+              width: 'auto',
+              display: 'block',
+              objectFit: 'contain',
+              pointerEvents: 'none',
+              mixBlendMode: theme === 'black' ? 'screen' : 'multiply',
+            }}
           />
           <div style={{ width: 1, height: 16, background: '#333', pointerEvents: 'none' }} />
           <span

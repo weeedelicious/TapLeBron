@@ -12,12 +12,20 @@ import type { CanvasNodeData, ResourceMeta } from "@/lib/types";
 
 export const IMAGE_COMPARE_HANDLE_A = "compare-a";
 export const IMAGE_COMPARE_HANDLE_B = "compare-b";
+export const IMAGE_COMPARE_HANDLE_C = "compare-c";
+export const IMAGE_COMPARE_HANDLE_D = "compare-d";
 
 export type ImageCompareHandle =
   | typeof IMAGE_COMPARE_HANDLE_A
-  | typeof IMAGE_COMPARE_HANDLE_B;
+  | typeof IMAGE_COMPARE_HANDLE_B
+  | typeof IMAGE_COMPARE_HANDLE_C
+  | typeof IMAGE_COMPARE_HANDLE_D;
 
-export type ImageCompareRefKey = "compareRefA" | "compareRefB";
+export type ImageCompareRefKey =
+  | "compareRefA"
+  | "compareRefB"
+  | "compareRefC"
+  | "compareRefD";
 
 export const IMAGE_COMPARE_REF_KEY: Record<
   ImageCompareHandle,
@@ -25,7 +33,21 @@ export const IMAGE_COMPARE_REF_KEY: Record<
 > = {
   [IMAGE_COMPARE_HANDLE_A]: "compareRefA",
   [IMAGE_COMPARE_HANDLE_B]: "compareRefB",
+  [IMAGE_COMPARE_HANDLE_C]: "compareRefC",
+  [IMAGE_COMPARE_HANDLE_D]: "compareRefD",
 };
+
+/** 最多四路输入，按 A→D 的顺序占槽。 */
+export const IMAGE_COMPARE_SLOTS: Array<{
+  handle: ImageCompareHandle;
+  refKey: ImageCompareRefKey;
+  letter: "A" | "B" | "C" | "D";
+}> = [
+  { handle: IMAGE_COMPARE_HANDLE_A, refKey: "compareRefA", letter: "A" },
+  { handle: IMAGE_COMPARE_HANDLE_B, refKey: "compareRefB", letter: "B" },
+  { handle: IMAGE_COMPARE_HANDLE_C, refKey: "compareRefC", letter: "C" },
+  { handle: IMAGE_COMPARE_HANDLE_D, refKey: "compareRefD", letter: "D" },
+];
 
 export const IMAGE_COMPARE_HANDLES: ImageCompareHandle[] = [
   IMAGE_COMPARE_HANDLE_A,
@@ -37,7 +59,8 @@ export type ImageCompareMode =
   | "top-bottom"
   | "wipe"
   | "opacity"
-  | "difference";
+  | "difference"
+  | "grid";
 
 export const IMAGE_COMPARE_MODE_LABELS: Record<ImageCompareMode, string> = {
   "side-by-side": "左右",
@@ -45,6 +68,7 @@ export const IMAGE_COMPARE_MODE_LABELS: Record<ImageCompareMode, string> = {
   wipe: "滑杆",
   opacity: "透明度",
   difference: "差异",
+  grid: "宫格",
 };
 
 /** 左右 / 上下这两种是并排看，其余三种是两图重叠 */
@@ -84,6 +108,7 @@ const KNOWN_MODES = new Set<string>([
   "wipe",
   "opacity",
   "difference",
+  "grid",
 ]);
 
 export function normalizeImageCompareMode(value: unknown): ImageCompareMode {
@@ -103,10 +128,30 @@ export function imageCompareSizeMismatch(
   return inputA.width !== inputB.width || inputA.height !== inputB.height;
 }
 
+/** 多路输入里只要有一张尺寸和第一张不同就提示。 */
+export function imageCompareInputsSizeMismatch(
+  inputs: Array<ImageCompareInput | null>,
+): boolean {
+  const sized = (inputs || []).filter(
+    (input): input is ImageCompareInput => Boolean(input?.width && input.height),
+  );
+  return (
+    sized.length >= 2 &&
+    sized.some(
+      (input) => input.width !== sized[0].width || input.height !== sized[0].height,
+    )
+  );
+}
+
 export function isImageCompareHandle(
   value: unknown,
 ): value is ImageCompareHandle {
-  return value === IMAGE_COMPARE_HANDLE_A || value === IMAGE_COMPARE_HANDLE_B;
+  return (
+    value === IMAGE_COMPARE_HANDLE_A ||
+    value === IMAGE_COMPARE_HANDLE_B ||
+    value === IMAGE_COMPARE_HANDLE_C ||
+    value === IMAGE_COMPARE_HANDLE_D
+  );
 }
 
 export function isImageCompareNodeData(
@@ -142,16 +187,18 @@ export function canBeImageCompareSource(
   return true;
 }
 
-/** 连线落在节点体上（没指定槽）时：A 空占 A，A 满占 B。 */
+/** 连线落在节点体上（没指定槽）时：按 A→D 占第一个空槽，全满时落在 D。 */
 export function resolveImageCompareHandle(
   requested: unknown,
-  occupied: { compareRefA?: unknown; compareRefB?: unknown },
+  occupied: Partial<Record<ImageCompareRefKey, unknown>>,
 ): ImageCompareHandle {
   if (isImageCompareHandle(requested)) return requested;
-  const aTaken = Boolean(
-    (occupied.compareRefA as ImageCompareRef | null | undefined)?.nodeId,
-  );
-  return aTaken ? IMAGE_COMPARE_HANDLE_B : IMAGE_COMPARE_HANDLE_A;
+  for (const slot of IMAGE_COMPARE_SLOTS) {
+    if (!(occupied[slot.refKey] as ImageCompareRef | null | undefined)?.nodeId) {
+      return slot.handle;
+    }
+  }
+  return IMAGE_COMPARE_HANDLE_D;
 }
 
 export function compareRefFromNode(
@@ -171,7 +218,12 @@ export function readImageCompareRefs(data: CanvasNodeData | null | undefined) {
     const value = params[key] as ImageCompareRef | null | undefined;
     return value?.nodeId ? value : null;
   };
-  return { compareRefA: read("compareRefA"), compareRefB: read("compareRefB") };
+  return {
+    compareRefA: read("compareRefA"),
+    compareRefB: read("compareRefB"),
+    compareRefC: read("compareRefC"),
+    compareRefD: read("compareRefD"),
+  };
 }
 
 export type ImageCompareAssignment =
@@ -202,11 +254,11 @@ export function planImageCompareAssignment(args: {
   const refs = readImageCompareRefs(targetData);
   const handle = resolveImageCompareHandle(args.requestedHandle, refs);
   const refKey = IMAGE_COMPARE_REF_KEY[handle];
-  const otherKey: ImageCompareRefKey =
-    refKey === "compareRefA" ? "compareRefB" : "compareRefA";
-  // 同一张图不许同时占 A 和 B
-  if (refs[otherKey]?.nodeId === sourceNodeId) {
-    return { ok: false, reason: "duplicate-source" };
+  // 同一张图不许同时占两个槽
+  for (const slot of IMAGE_COMPARE_SLOTS) {
+    if (slot.refKey !== refKey && refs[slot.refKey]?.nodeId === sourceNodeId) {
+      return { ok: false, reason: "duplicate-source" };
+    }
   }
   return { ok: true, handle, refKey };
 }
@@ -251,13 +303,16 @@ export function resolveImageCompareInputs(
   nodes: NodeLike[],
 ) {
   const refs = readImageCompareRefs(data);
-  const inputA = resolveOne(refs.compareRefA, nodes);
-  const inputB = resolveOne(refs.compareRefB, nodes);
+  // slots 按 A→D 保留空位，inputs 只含已连上的输入（按槽位顺序）。
+  const slots = IMAGE_COMPARE_SLOTS.map((slot) => resolveOne(refs[slot.refKey], nodes));
+  const inputs = slots.filter((input): input is ImageCompareInput => Boolean(input));
   return {
-    inputA,
-    inputB,
-    connectedCount: (inputA ? 1 : 0) + (inputB ? 1 : 0),
-    ready: Boolean(inputA && inputB),
+    inputA: inputs[0] || null,
+    inputB: inputs[1] || null,
+    inputs,
+    slots,
+    connectedCount: inputs.length,
+    ready: inputs.length >= 2,
   };
 }
 
@@ -270,7 +325,7 @@ export function clearedImageCompareRefs(
   removedNodeIds: Set<string>,
 ): Partial<Record<ImageCompareRefKey, null>> | null {
   const patch: Partial<Record<ImageCompareRefKey, null>> = {};
-  for (const key of ["compareRefA", "compareRefB"] as ImageCompareRefKey[]) {
+  for (const key of ["compareRefA", "compareRefB", "compareRefC", "compareRefD"] as ImageCompareRefKey[]) {
     const ref = params[key] as ImageCompareRef | null | undefined;
     if (ref?.nodeId && removedNodeIds.has(String(ref.nodeId))) patch[key] = null;
   }
@@ -281,6 +336,6 @@ export function imageCompareResolutionLabel(
   input: ImageCompareInput | null,
 ): string {
   if (!input) return "";
-  if (input.width && input.height) return `${input.width}×${input.height}`;
+  if (input.width && input.height) return input.width + "×" + input.height;
   return "尺寸未知";
 }

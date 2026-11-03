@@ -1,32 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Box,
   CopyPlus,
   FileText,
+  Expand,
+  FolderOpen,
   Image as ImageIcon,
   Layers3,
   RefreshCw,
   Search,
-  Settings,
   Share2,
   Star,
   Trash2,
   Video,
   X,
 } from 'lucide-react'
-import { favoritesApi } from '@/lib/api'
+import { favoritesApi, projectAssetLibraryApi, type ProjectAssetInsertPayload, type ProjectAssetLibraryItem, type ProjectAssetLibraryProject } from '@/lib/api'
+import { ImagePreview, type ImagePreviewItem } from '@/components/ImagePreview'
 import type { FavoriteLibraryItem, FavoriteLibraryItemType } from '@/lib/types'
-import {
-  ASSET_FILTER_ALL,
-  ASSET_LABEL_OPTIONS,
-  ASSET_PROJECT_OPTIONS,
-  ASSET_TYPE_OPTIONS,
-  readAssetLabel,
-  readAssetProject,
-  visibleAssetTags,
-  withAssetLabel,
-  withAssetProject,
-} from '@/lib/libraryTaxonomy'
 
 type FavoriteLibraryMode = 'assets' | 'shared'
 type FavoriteCategory = 'text' | 'image' | 'video' | 'group' | 'other'
@@ -34,10 +26,6 @@ type FavoriteTypeFilter = 'all' | FavoriteCategory
 type FavoriteSortOrder = 'shared_desc' | 'shared_asc'
 type FavoritePanelMemory = {
   type: FavoriteTypeFilter
-  /** 标签筛选，空串 = 全部 */
-  label: string
-  /** 项目筛选，空串 = 全部 */
-  project: string
   sortOrder: FavoriteSortOrder
   query: string
   scrollTop: number
@@ -47,13 +35,21 @@ interface FavoriteLibraryPanelProps {
   mode?: FavoriteLibraryMode
   onClose: () => void
   onInsert: (item: FavoriteLibraryItem) => void
+  onInsertProjectAsset?: (asset: ProjectAssetInsertPayload) => void
   onDragStart?: (item: FavoriteLibraryItem, event: DragEvent<HTMLElement>) => void
 }
 
+const TYPE_LABELS: Array<{ key: FavoriteTypeFilter; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '图片' },
+  { key: 'video', label: '视频' },
+  { key: 'group', label: '组' },
+  { key: 'other', label: '其他' },
+]
+
 const DEFAULT_PANEL_MEMORY: FavoritePanelMemory = {
   type: 'all',
-  label: ASSET_FILTER_ALL,
-  project: ASSET_FILTER_ALL,
   sortOrder: 'shared_desc',
   query: '',
   scrollTop: 0,
@@ -78,9 +74,6 @@ function readFavoritePanelMemory(mode: FavoriteLibraryMode): FavoritePanelMemory
     const parsed = raw ? JSON.parse(raw) as Partial<FavoritePanelMemory> : {}
     return {
       type: isFavoriteTypeFilter(parsed.type) ? parsed.type : DEFAULT_PANEL_MEMORY.type,
-      // 选项列表以后会改，记住的值不在列表里就退回"全部"，不要留一个筛不出任何东西的旧值
-      label: ASSET_LABEL_OPTIONS.includes(String(parsed.label)) ? String(parsed.label) : ASSET_FILTER_ALL,
-      project: ASSET_PROJECT_OPTIONS.includes(String(parsed.project)) ? String(parsed.project) : ASSET_FILTER_ALL,
       sortOrder: isFavoriteSortOrder(parsed.sortOrder) ? parsed.sortOrder : DEFAULT_PANEL_MEMORY.sortOrder,
       query: typeof parsed.query === 'string' ? parsed.query : DEFAULT_PANEL_MEMORY.query,
       scrollTop: Number.isFinite(Number(parsed.scrollTop)) ? Math.max(0, Number(parsed.scrollTop)) : DEFAULT_PANEL_MEMORY.scrollTop,
@@ -339,7 +332,7 @@ function GroupLibraryPreview({ item }: { item: FavoriteLibraryItem }) {
   )
 }
 
-export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDragStart }: FavoriteLibraryPanelProps) {
+export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onInsertProjectAsset, onDragStart }: FavoriteLibraryPanelProps) {
   const [panelMemory, setPanelMemory] = useState<Record<FavoriteLibraryMode, FavoritePanelMemory>>(() => ({
     assets: readFavoritePanelMemory('assets'),
     shared: readFavoritePanelMemory('shared'),
@@ -348,13 +341,12 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [cardMenu, setCardMenu] = useState<{ item: FavoriteLibraryItem; x: number; y: number } | null>(null)
-  const [settingsItem, setSettingsItem] = useState<FavoriteLibraryItem | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const [projectLibraryOpen, setProjectLibraryOpen] = useState(true)
   const isSharedMode = mode === 'shared'
   const currentMemory = panelMemory[mode] ?? DEFAULT_PANEL_MEMORY
-  const { type, label: labelFilter, project: projectFilter, sortOrder, query } = currentMemory
-  const title = isSharedMode ? '共享空间' : '资产库'
+  const { type, sortOrder, query } = currentMemory
+  const title = isSharedMode ? '共享空间' : projectLibraryOpen ? '项目资产库' : '我的资产库'
   const kicker = isSharedMode ? '团队共享库' : '节点收藏库'
   const emptyTitle = isSharedMode ? '还没有共享内容' : '还没有收藏内容'
   const emptyHint = isSharedMode
@@ -405,13 +397,11 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
     return { sharedTotal: items.length, myShared: mine }
   }, [items])
 
-  const filteredItems = useMemo(() => items.filter(item => {
-    if (type !== 'all' && favoriteItemCategory(item) !== type) return false
-    // 没打标签 / 没归项目的资产只出现在"全部"里
-    if (labelFilter && readAssetLabel(item.tags) !== labelFilter) return false
-    if (projectFilter && readAssetProject(item.tags) !== projectFilter) return false
-    return true
-  }), [items, labelFilter, projectFilter, type])
+  const filteredItems = useMemo(() => (
+    type === 'all'
+      ? items
+      : items.filter(item => favoriteItemCategory(item) === type)
+  ), [items, type])
 
   const sortedItems = useMemo(() => {
     const direction = sortOrder === 'shared_asc' ? 1 : -1
@@ -447,32 +437,6 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
       setBusyId(null)
     }
   }, [isSharedMode, onInsert])
-
-  // 标签和项目都写在收藏记录原有的 tags 数组里（带 label: / project: 前缀），
-  // 所以这里只要 PATCH tags —— 服务端本来就收这个字段，没加接口也没改表。
-  const saveItemTaxonomy = useCallback(async (
-    item: FavoriteLibraryItem,
-    next: { label: string; project: string },
-  ) => {
-    const tags = withAssetProject(withAssetLabel(item.tags, next.label), next.project)
-    setBusyId(item.id)
-    try {
-      const updated = await (isSharedMode
-        ? favoritesApi.updateShared(item.id, { tags })
-        : favoritesApi.update(item.id, { tags }))
-      // 用服务端回的那份（tags 会被规范化：去重、截长度），别拿本地猜的顶上去
-      const serverTags = updated.item?.tags ?? tags
-      setItems(current => current.map(entry => (
-        entry.id === item.id ? { ...entry, tags: serverTags } : entry
-      )))
-      setSettingsItem(null)
-    } catch (err) {
-      console.error('update favorite taxonomy failed', err)
-      window.alert('保存标签 / 项目失败')
-    } finally {
-      setBusyId(null)
-    }
-  }, [isSharedMode])
 
   const shareItem = useCallback(async (item: FavoriteLibraryItem) => {
     setBusyId(item.id)
@@ -526,7 +490,7 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
           <h2>{title}</h2>
         </div>
         <div className="favorite-library-header-actions">
-          <button type="button" title="刷新" onClick={() => void loadItems()}>
+          <button type="button" title="刷新" onClick={() => { if (projectLibraryOpen) window.dispatchEvent(new Event("shotflow:project-assets-refresh")); else void loadItems() }}>
             <RefreshCw size={15} className={loading ? 'favorite-spin' : undefined} />
           </button>
           <button type="button" title="关闭" onClick={onClose}>
@@ -535,6 +499,15 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
         </div>
       </header>
 
+      <div className="favorite-library-tabs" role="tablist" aria-label="资产库切换">
+        <button type="button" className={projectLibraryOpen ? 'is-active' : undefined} onClick={() => setProjectLibraryOpen(true)}>项目资产库</button>
+        <button type="button" className={!projectLibraryOpen ? 'is-active' : undefined} onClick={() => setProjectLibraryOpen(false)}>我的资产库</button>
+      </div>
+
+      {projectLibraryOpen ? (
+        <ProjectAssetLibraryPane onInsertProjectAsset={onInsertProjectAsset} />
+      ) : (
+      <>
       {isSharedMode && (
         <div className="favorite-library-stats">
           <span>{stats.sharedTotal}<small>共享总数</small></span>
@@ -551,55 +524,38 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
         />
       </div>
 
-      <div className="favorite-library-filter-row">
-        <select
-          className="favorite-library-filter-select"
-          value={type}
-          onChange={(event) => updateMemory({ type: event.currentTarget.value as FavoriteTypeFilter, scrollTop: 0 })}
-          aria-label="按类型筛选"
-        >
-          {ASSET_TYPE_OPTIONS.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
+      <div className="favorite-library-type-row">
+        <div className="favorite-library-type-buttons">
+          {TYPE_LABELS.map(option => (
+            <button
+              key={option.key}
+              type="button"
+              value={option.key}
+              className={type === option.key ? 'is-active' : ''}
+              onClick={() => updateMemory({ type: option.key, scrollTop: 0 })}
+            >
+              {option.label}
+            </button>
           ))}
-        </select>
-        <select
-          className="favorite-library-filter-select"
-          value={labelFilter}
-          onChange={(event) => updateMemory({ label: event.currentTarget.value, scrollTop: 0 })}
-          aria-label="按标签筛选"
-        >
-          <option value={ASSET_FILTER_ALL}>全部标签</option>
-          {ASSET_LABEL_OPTIONS.map(option => (
-            <option key={option} value={option}>{option}</option>
-          ))}
-        </select>
-        <select
-          className="favorite-library-filter-select"
-          value={projectFilter}
-          onChange={(event) => updateMemory({ project: event.currentTarget.value, scrollTop: 0 })}
-          aria-label="按项目筛选"
-        >
-          <option value={ASSET_FILTER_ALL}>全部项目</option>
-          {ASSET_PROJECT_OPTIONS.map(option => (
-            <option key={option} value={option}>{option}</option>
-          ))}
-        </select>
-        <select
-          className="favorite-library-filter-select"
-          value={sortOrder}
-          onChange={(event) => updateMemory({ sortOrder: event.currentTarget.value as FavoriteSortOrder, scrollTop: 0 })}
-          aria-label="共享时间排序"
-        >
-          <option value="shared_desc">{sortPrefix}由近到远</option>
-          <option value="shared_asc">{sortPrefix}由远到近</option>
-        </select>
+        </div>
+        <div className="favorite-library-sort-wrap">
+          <select
+            className="favorite-library-sort-select"
+            value={sortOrder}
+            onChange={(event) => updateMemory({ sortOrder: event.currentTarget.value as FavoriteSortOrder, scrollTop: 0 })}
+            aria-label="时间排序"
+          >
+            <option value="shared_desc">{sortPrefix} · 由近到远</option>
+            <option value="shared_asc">{sortPrefix} · 由远到近</option>
+          </select>
+        </div>
       </div>
 
       {error && <div className="favorite-library-error">{error}</div>}
 
       <div
         ref={listRef}
-        className="favorite-library-list favorite-library-tile-grid"
+        className="favorite-library-list"
         onScroll={(event) => updateMemory({ scrollTop: event.currentTarget.scrollTop })}
       >
         {loading && items.length === 0 ? (
@@ -612,243 +568,386 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onDra
           </div>
         ) : sortedItems.map(item => {
           const category = favoriteItemCategory(item)
-          const itemLabel = readAssetLabel(item.tags)
-          const itemProject = readAssetProject(item.tags)
-          const busy = busyId === item.id
-          const meta = [
-            categoryLabel(category),
-            `${item.nodeCount} 个节点`,
-            item.ownerName,
-            formatTime(item.updatedAtMs),
-            itemLabel && `标签 ${itemLabel}`,
-            itemProject && `项目 ${itemProject}`,
-            ...visibleAssetTags(item.tags),
-          ].filter(Boolean).join(' · ')
           return (
             <article
               key={item.id}
-              className={`favorite-library-tile is-${category}${busy ? ' is-busy' : ''}`}
-              title={`${item.title}\n${meta}\n右键更多操作`}
+              className={`favorite-library-card is-${category}`}
               draggable
               onDragStart={(event) => onDragStart?.(item, event)}
-              onDoubleClick={() => void insertItem(item)}
-              onContextMenu={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                setSettingsItem(null)
-                setCardMenu({ item, x: event.clientX, y: event.clientY })
-              }}
             >
-              <div className="favorite-library-tile-thumb">
-                {item.itemType === 'group' ? (
-                  <GroupLibraryPreview item={item} />
-                ) : item.previewUrl ? (
-                  previewLooksVideo(item.previewUrl) ? (
-                    <video src={item.previewUrl} muted playsInline preload="metadata" draggable={false} />
-                  ) : (
-                    <img src={item.previewUrl} alt="" loading="lazy" draggable={false} />
-                  )
+            <div className="favorite-library-card-preview">
+              {item.itemType === 'group' ? (
+                <GroupLibraryPreview item={item} />
+              ) : item.previewUrl ? (
+                previewLooksVideo(item.previewUrl) ? (
+                  <video src={item.previewUrl} muted playsInline preload="metadata" draggable={false} />
                 ) : (
-                  <div className="favorite-library-preview-placeholder">
-                    {itemTypeIcon(item.itemType)}
-                  </div>
-                )}
-                <span className={`favorite-library-tile-kind is-${category}`} aria-hidden="true">
-                  {categoryIcon(category, 12)}
-                </span>
-                <div className="favorite-library-tile-buttons">
-                  <button
-                    type="button"
-                    title="插入画布"
-                    aria-label="插入画布"
-                    disabled={busy}
-                    onClick={(event) => { event.stopPropagation(); void insertItem(item) }}
-                  >
-                    <CopyPlus size={13} strokeWidth={2.2} />
-                  </button>
-                  <button
-                    type="button"
-                    title={item.canManage ? '设置标签与项目' : '只有拥有者能改标签与项目'}
-                    aria-label="设置标签与项目"
-                    disabled={busy || !item.canManage}
-                    onClick={(event) => { event.stopPropagation(); setCardMenu(null); setSettingsItem(item) }}
-                  >
-                    <Settings size={13} strokeWidth={2.2} />
-                  </button>
+                  <img src={item.previewUrl} alt="" loading="lazy" draggable={false} />
+                )
+              ) : (
+                <div className="favorite-library-preview-placeholder">
+                  {itemTypeIcon(item.itemType)}
                 </div>
-                {(itemLabel || itemProject) && (
-                  <div className="favorite-library-tile-chips">
-                    {itemProject && <span className="is-project">{itemProject}</span>}
-                    {itemLabel && <span>{itemLabel}</span>}
-                  </div>
+              )}
+              <span className={`favorite-library-type-badge is-${category}`}>
+                {categoryIcon(category)}
+                {categoryLabel(category)}
+              </span>
+            </div>
+            <div className="favorite-library-card-body">
+              <div className="favorite-library-card-title-row">
+                <h3 title={item.title}>{item.title}</h3>
+                {isSharedMode && <span className="favorite-library-shared-pill">共享</span>}
+              </div>
+              <p>
+                {item.nodeCount} 个节点
+                {item.ownerName ? ` · ${item.ownerName}` : ''}
+                {item.updatedAtMs ? ` · ${formatTime(item.updatedAtMs)}` : ''}
+              </p>
+              {item.tags.length > 0 && (
+                <div className="favorite-library-tags">
+                  {item.tags.slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+              <div className="favorite-library-card-actions">
+                <button type="button" className="is-primary" disabled={busyId === item.id} onClick={() => void insertItem(item)}>
+                  <CopyPlus size={14} />
+                  插入副本
+                </button>
+                {!isSharedMode && (
+                  <button
+                    type="button"
+                    onClick={() => void shareItem(item)}
+                    disabled={busyId === item.id}
+                  >
+                    <Share2 size={14} />
+                    共享
+                  </button>
+                )}
+                {item.canManage && (
+                  <button
+                    type="button"
+                    className="is-danger"
+                    onClick={() => void deleteItem(item)}
+                    disabled={busyId === item.id}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 )}
               </div>
-              <span className="favorite-library-tile-title">{item.title}</span>
+            </div>
             </article>
           )
         })}
       </div>
-
-      {cardMenu && (
-        <FavoriteTileMenu
-          x={cardMenu.x}
-          y={cardMenu.y}
-          item={cardMenu.item}
-          isSharedMode={isSharedMode}
-          onClose={() => setCardMenu(null)}
-          onInsert={() => { const target = cardMenu.item; setCardMenu(null); void insertItem(target) }}
-          onSettings={() => { const target = cardMenu.item; setCardMenu(null); setSettingsItem(target) }}
-          onShare={() => { const target = cardMenu.item; setCardMenu(null); void shareItem(target) }}
-          onDelete={() => { const target = cardMenu.item; setCardMenu(null); void deleteItem(target) }}
-        />
-      )}
-
-      {settingsItem && (
-        <FavoriteTileSettings
-          item={settingsItem}
-          busy={busyId === settingsItem.id}
-          onCancel={() => setSettingsItem(null)}
-          onSave={(next) => void saveItemTaxonomy(settingsItem, next)}
-        />
+      </>
       )}
     </aside>
   )
 }
 
-interface FavoriteTileMenuProps {
-  x: number
-  y: number
-  item: FavoriteLibraryItem
-  isSharedMode: boolean
-  onClose: () => void
-  onInsert: () => void
-  onSettings: () => void
-  onShare: () => void
-  onDelete: () => void
+const PROJECT_ASSET_HOVER_DELAY_MS = 160
+const PROJECT_ASSET_HOVER_MAX_WIDTH = 420
+const PROJECT_ASSET_HOVER_MAX_HEIGHT = 460
+
+function placeProjectAssetHover(rect: DOMRect) {
+  const maxWidth = Math.min(PROJECT_ASSET_HOVER_MAX_WIDTH, Math.max(220, window.innerWidth * 0.38))
+  const maxHeight = Math.min(PROJECT_ASSET_HOVER_MAX_HEIGHT, Math.max(220, window.innerHeight * 0.72))
+  const gap = 14
+  let left = rect.right + gap
+  if (left + maxWidth > window.innerWidth - 12) left = Math.max(12, rect.left - gap - maxWidth)
+  let top = rect.top
+  if (top + maxHeight > window.innerHeight - 12) top = Math.max(12, window.innerHeight - 12 - maxHeight)
+  return { left, top, maxWidth, maxHeight }
 }
 
-function FavoriteTileMenu({
-  x,
-  y,
-  item,
-  isSharedMode,
-  onClose,
-  onInsert,
-  onSettings,
-  onShare,
-  onDelete,
-}: FavoriteTileMenuProps) {
-  useEffect(() => {
-    const closeOnPointerDown = (event: MouseEvent) => {
-      if (!(event.target as Element)?.closest?.('.favorite-library-tile-menu')) onClose()
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('mousedown', closeOnPointerDown, true)
-    document.addEventListener('keydown', closeOnEscape, true)
-    return () => {
-      document.removeEventListener('mousedown', closeOnPointerDown, true)
-      document.removeEventListener('keydown', closeOnEscape, true)
-    }
-  }, [onClose])
+const PROJECT_ASSET_STAGES = [
+  { id: 'all', label: '全部' },
+  { id: '2d', label: '2D美术' },
+  { id: '3d', label: '3D美术' },
+  { id: 'atmosphere', label: '氛围图' },
+] as const
+const PROJECT_ASSET_TYPES = [
+  { id: 'all', label: '全部' },
+  { id: 'character', label: '角色' },
+  { id: 'scene', label: '场景' },
+  { id: 'hero', label: '英雄' },
+] as const
 
-  // 贴着窗口右下角右键时把菜单收回可视区
-  const width = 196
-  const height = isSharedMode ? 132 : 168
-  const left = Math.max(8, Math.min(x, window.innerWidth - width - 8))
-  const top = Math.max(8, Math.min(y, window.innerHeight - height - 8))
+function readProjectAssetFilter<T extends string>(key: string, allow: readonly T[]): T {
+  try {
+    const value = window.localStorage.getItem(key) || ''
+    return (allow as readonly string[]).includes(value) ? value as T : allow[0]
+  } catch {
+    return allow[0]
+  }
+}
+
+function rememberProjectAssetSetting(key: string, value: string) {
+  try { window.localStorage.setItem(key, value) } catch {}
+}
+
+function projectAssetErrorText(err: unknown, fallback: string) {
+  const data = (err as { response?: { data?: { error?: unknown; message?: unknown } } } | null)?.response?.data
+  const message = data?.error ?? data?.message
+  return typeof message === 'string' && message.trim() ? message : fallback
+}
+
+/**
+ * 项目资产库：按游戏列出 CGTeamWork 资产表里登记的 2D / 3D 美术和氛围图，可按环节、类型（含英雄）筛选。
+ * 拖进画布或双击时交给服务端导入（projectId + relativePath），不在浏览器里转存原图。
+ */
+function ProjectAssetLibraryPane({
+  onInsertProjectAsset,
+}: {
+  onInsertProjectAsset?: (asset: ProjectAssetInsertPayload) => void
+}) {
+  type StageId = typeof PROJECT_ASSET_STAGES[number]['id']
+  type TypeId = typeof PROJECT_ASSET_TYPES[number]['id']
+  const [games, setGames] = useState<ProjectAssetLibraryProject[]>([])
+  const [gameId, setGameId] = useState<number | ''>(() => {
+    try {
+      const value = Number(window.localStorage.getItem('shotflow:project-asset-library:project-id'))
+      return Number.isFinite(value) && value > 0 ? value : ''
+    } catch {
+      return ''
+    }
+  })
+  const [assets, setAssets] = useState<ProjectAssetLibraryItem[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [stage, setStage] = useState<StageId>(() => readProjectAssetFilter('shotflow:project-asset-library:stage', PROJECT_ASSET_STAGES.map((item) => item.id)))
+  const [assetType, setAssetType] = useState<TypeId>(() => readProjectAssetFilter('shotflow:project-asset-library:asset-type', PROJECT_ASSET_TYPES.map((item) => item.id)))
+  const [query, setQuery] = useState('')
+  const [viewer, setViewer] = useState<{ url: string; name: string; kind: 'image' | 'video'; items: ImagePreviewItem[] } | null>(null)
+  const [hover, setHover] = useState<{
+    previewUrl: string
+    thumbUrl: string
+    name: string
+    left: number
+    top: number
+    maxWidth: number
+    maxHeight: number
+  } | null>(null)
+  const hoverTimerRef = useRef<number | null>(null)
+  // 切换游戏时旧请求可能晚到，用序号丢掉过期结果。
+  const requestSeqRef = useRef(0)
+
+  const clearHover = useCallback(() => {
+    if (hoverTimerRef.current) {
+      window.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+    setHover(null)
+  }, [])
+
+  useEffect(() => () => {
+    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current)
+  }, [])
+
+  const loadGames = useCallback(async () => {
+    try {
+      const list = await projectAssetLibraryApi.listProjects()
+      setGames(Array.isArray(list) ? list : [])
+      setError('')
+    } catch (err) {
+      setGames([])
+      setError(projectAssetErrorText(err, '游戏列表加载失败'))
+    }
+  }, [])
+
+  const loadAssets = useCallback(async (id: number, token: number) => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await projectAssetLibraryApi.listModules(id)
+      if (token !== requestSeqRef.current) return
+      setAssets(Array.isArray(data.assets) ? data.assets : [])
+      rememberProjectAssetSetting('shotflow:project-asset-library:project-id', String(id))
+    } catch (err) {
+      if (token !== requestSeqRef.current) return
+      setAssets([])
+      setError(projectAssetErrorText(err, '项目资产库加载失败'))
+    } finally {
+      if (token === requestSeqRef.current) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadGames() }, [loadGames])
+  useEffect(() => {
+    const refresh = () => { void loadGames() }
+    window.addEventListener('shotflow:project-assets-refresh', refresh)
+    return () => window.removeEventListener('shotflow:project-assets-refresh', refresh)
+  }, [loadGames])
+  useEffect(() => {
+    if (!games.length) return
+    const selected = games.some((item) => item.id === gameId) ? gameId : games[0].id
+    if (selected !== gameId) {
+      setGameId(selected)
+      return
+    }
+    const token = requestSeqRef.current + 1
+    requestSeqRef.current = token
+    void loadAssets(Number(selected), token)
+  }, [gameId, games, loadAssets])
+
+  const keyword = query.trim().toLowerCase()
+  const filtered = assets.filter((item) => (
+    (stage === 'all' || item.stage === stage)
+    && (assetType === 'all' || (assetType === 'hero' ? Boolean(item.hero) : item.assetType === assetType))
+    && (!keyword || String(item.name || '').toLowerCase().includes(keyword))
+  ))
+
+  const chooseStage = (value: StageId) => {
+    setStage(value)
+    rememberProjectAssetSetting('shotflow:project-asset-library:stage', value)
+    clearHover()
+  }
+  const chooseType = (value: TypeId) => {
+    setAssetType(value)
+    rememberProjectAssetSetting('shotflow:project-asset-library:asset-type', value)
+    clearHover()
+  }
 
   return (
-    <div className="favorite-library-tile-menu" style={{ left, top, width }} role="menu">
-      <div className="favorite-library-tile-menu-title" title={item.title}>{item.title}</div>
-      <button type="button" onClick={onInsert}>
-        <CopyPlus size={14} />
-        插入画布
-      </button>
-      <button type="button" disabled={!item.canManage} onClick={onSettings}>
-        <Settings size={14} />
-        设置标签与项目
-      </button>
-      {!isSharedMode && (
-        <button type="button" onClick={onShare}>
-          <Share2 size={14} />
-          共享到团队
-        </button>
-      )}
-      {item.canManage && (
-        <button type="button" className="is-danger" onClick={onDelete}>
-          <Trash2 size={14} />
-          {isSharedMode ? '取消共享' : '删除收藏'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-interface FavoriteTileSettingsProps {
-  item: FavoriteLibraryItem
-  busy: boolean
-  onCancel: () => void
-  onSave: (next: { label: string; project: string }) => void
-}
-
-function FavoriteTileSettings({ item, busy, onCancel, onSave }: FavoriteTileSettingsProps) {
-  const [label, setLabel] = useState(() => readAssetLabel(item.tags))
-  const [project, setProject] = useState(() => readAssetProject(item.tags))
-
-  useEffect(() => {
-    setLabel(readAssetLabel(item.tags))
-    setProject(readAssetProject(item.tags))
-  }, [item])
-
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    document.addEventListener('keydown', closeOnEscape, true)
-    return () => document.removeEventListener('keydown', closeOnEscape, true)
-  }, [onCancel])
-
-  return (
-    <div className="favorite-library-settings-backdrop" onMouseDown={onCancel}>
-      <div
-        className="favorite-library-settings"
-        role="dialog"
-        aria-label="设置标签与项目"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <h3 title={item.title}>{item.title}</h3>
-        <label>
-          <span>标签</span>
-          <select value={label} onChange={(event) => setLabel(event.currentTarget.value)}>
-            <option value={ASSET_FILTER_ALL}>未设置</option>
-            {ASSET_LABEL_OPTIONS.map(option => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>项目</span>
-          <select value={project} onChange={(event) => setProject(event.currentTarget.value)}>
-            <option value={ASSET_FILTER_ALL}>未设置</option>
-            {ASSET_PROJECT_OPTIONS.map(option => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </label>
-        <div className="favorite-library-settings-actions">
-          <button type="button" onClick={onCancel} disabled={busy}>取消</button>
-          <button
-            type="button"
-            className="is-primary"
-            disabled={busy}
-            onClick={() => onSave({ label, project })}
-          >
-            {busy ? '保存中...' : '保存'}
-          </button>
+    <>
+      <div className="favorite-library-sort-wrap project-asset-game">
+        <select
+          className="favorite-library-sort-select"
+          aria-label="选择游戏"
+          value={gameId}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value)
+            setGameId(Number.isFinite(next) && next > 0 ? next : '')
+          }}
+        >
+          {games.length === 0 ? <option value="">暂无游戏</option> : null}
+          {games.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </div>
+      <div className="favorite-library-search project-asset-search">
+        <Search size={15} />
+        <input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索名称" aria-label="搜索资产" />
+      </div>
+      <div className="project-asset-filters">
+        <div className="favorite-library-type-buttons project-asset-filter-row">
+          {PROJECT_ASSET_STAGES.map((item) => (
+            <button key={item.id} type="button" className={stage === item.id ? 'is-active' : undefined} onClick={() => chooseStage(item.id)}>{item.label}</button>
+          ))}
+        </div>
+        <div className="favorite-library-type-buttons project-asset-filter-row">
+          {PROJECT_ASSET_TYPES.map((item) => (
+            <button key={item.id} type="button" className={assetType === item.id ? 'is-active' : undefined} onClick={() => chooseType(item.id)}>{item.label}</button>
+          ))}
         </div>
       </div>
-    </div>
+      {error ? <div className="favorite-library-error">{error}</div> : null}
+      <div className="favorite-library-list favorite-library-tile-grid" onScroll={clearHover}>
+        {loading ? (
+          <div className="favorite-library-empty">正在加载项目资产库...</div>
+        ) : gameId ? (
+          filtered.length === 0 ? (
+            <div className="favorite-library-empty">
+              <FolderOpen size={24} />
+              <strong>{keyword ? '没有找到匹配的资产' : '这个筛选下没有资产'}</strong>
+              <span>{keyword ? '换个关键词再试。' : '换个环节或类型看看。'}</span>
+            </div>
+          ) : filtered.map((item) => {
+            const projectNumber = Number(gameId)
+            const originalUrl = projectAssetLibraryApi.fileUrl(projectNumber, item.relativePath)
+            const thumbUrl = projectAssetLibraryApi.thumbUrl(projectNumber, item.relativePath)
+            const previewUrl = projectAssetLibraryApi.thumbUrl(projectNumber, item.relativePath, 960)
+            const payload: ProjectAssetInsertPayload = {
+              projectId: projectNumber,
+              relativePath: item.relativePath,
+              url: originalUrl,
+              name: item.name,
+              mediaType: item.mediaType,
+            }
+            return (
+              <article
+                key={item.relativePath}
+                className="favorite-library-tile is-image"
+                title={item.name}
+                draggable
+                onMouseEnter={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current)
+                  hoverTimerRef.current = window.setTimeout(() => {
+                    setHover({ previewUrl, thumbUrl, name: item.name, ...placeProjectAssetHover(rect) })
+                  }, PROJECT_ASSET_HOVER_DELAY_MS)
+                }}
+                onMouseLeave={clearHover}
+                onDragStart={(event) => {
+                  clearHover()
+                  event.dataTransfer.effectAllowed = 'copy'
+                  event.dataTransfer.setData('application/x-shotflow-project-asset', JSON.stringify(payload))
+                  event.dataTransfer.setData('text/plain', originalUrl)
+                }}
+                onDoubleClick={() => onInsertProjectAsset?.(payload)}
+              >
+                <div
+                  className="favorite-library-tile-thumb"
+                  style={{ backgroundImage: 'url("' + thumbUrl + '")', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                >
+                  {item.mediaType === 'video' ? <span className="project-asset-video-mark">视频</span> : null}
+                  <button
+                    type="button"
+                    className="project-asset-preview-btn"
+                    title="浏览大图"
+                    draggable={false}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      clearHover()
+                      setViewer({
+                        url: originalUrl,
+                        name: item.name,
+                        kind: item.mediaType === 'video' ? 'video' : 'image',
+                        items: filtered.map((entry) => ({
+                          url: projectAssetLibraryApi.fileUrl(projectNumber, entry.relativePath),
+                          thumbUrl: projectAssetLibraryApi.thumbUrl(projectNumber, entry.relativePath),
+                          name: entry.name,
+                        })),
+                      })
+                    }}
+                  >
+                    <Expand size={13} strokeWidth={1.9} />
+                  </button>
+                </div>
+                <div className="project-asset-caption">
+                  <strong>{item.name}</strong>
+                </div>
+              </article>
+            )
+          })
+        ) : (
+          <div className="favorite-library-empty">
+            <FolderOpen size={24} />
+            <strong>资产表里还没有可显示的内容</strong>
+            <span>表格补上游戏和文件路径后，这里会出现对应资产。</span>
+          </div>
+        )}
+      </div>
+      {hover && !viewer ? createPortal(
+        <div className="project-asset-hover-preview" style={{ left: hover.left, top: hover.top, maxWidth: hover.maxWidth }}>
+          <img
+            src={hover.previewUrl}
+            alt={hover.name}
+            style={{ maxWidth: hover.maxWidth - 16, maxHeight: hover.maxHeight - 40 }}
+            onError={(event) => {
+              if (event.currentTarget.src !== hover.thumbUrl) event.currentTarget.src = hover.thumbUrl
+            }}
+          />
+          <strong title={hover.name}>{hover.name}</strong>
+        </div>,
+        document.body,
+      ) : null}
+      {viewer ? (
+        <ImagePreview url={viewer.url} name={viewer.name} items={viewer.items} kind={viewer.kind} onClose={() => setViewer(null)} />
+      ) : null}
+    </>
   )
 }

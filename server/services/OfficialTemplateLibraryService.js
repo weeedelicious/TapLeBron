@@ -11,6 +11,18 @@ function text(value, maxLength = 200) {
   return String(value ?? '').trim().slice(0, maxLength);
 }
 
+function normalizeThumbnailUrl(value) {
+  const raw = String(value ?? '').trim().replace(/^[\s'\"`]+|[\s'\"`]+$/g, '');
+  if (!raw) return '';
+  if (raw.startsWith('/assets/') && !raw.includes('..') && !raw.includes('\\')) return raw.slice(0, 2048);
+  let parsed = null;
+  try { parsed = new URL(raw); } catch { parsed = null; }
+  if (parsed && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) return parsed.toString().slice(0, 2048);
+  const error = new Error('thumbnail must be an http(s) URL or an /assets image');
+  error.status = 400;
+  throw error;
+}
+
 function normalizeNodes(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 24).map((node) => ({
@@ -54,7 +66,7 @@ function normalizeTemplate(value, previous = null) {
     categories,
     title,
     subtitle: text(value?.subtitle, 260),
-    thumbnailUrl: text(value?.thumbnailUrl, 2048),
+    thumbnailUrl: normalizeThumbnailUrl(value?.thumbnailUrl),
     method: text(value?.method, 120),
     canvasId,
     tone: /^#[0-9a-f]{6}$/i.test(text(value?.tone, 7))

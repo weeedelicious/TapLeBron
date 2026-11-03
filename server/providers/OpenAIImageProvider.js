@@ -10,17 +10,7 @@ const aliasToModel = Object.entries(rules.models).reduce((acc, [model, rule]) =>
   return acc;
 }, {});
 
-const RETIRED_IMAGE_MODELS = {
-  'seedream-5-lite': 'seedream-5-pro',
-  'bytedance-seed/seedream-5-lite': 'seedream-5-pro',
-  'doubao-seedream-5-0-lite': 'seedream-5-pro',
-  'doubao-seedream-5-0-lite-260128': 'seedream-5-pro',
-  'doubao-seedream-5-0-260128': 'seedream-5-pro',
-  seedream5lite: 'seedream-5-pro',
-  'seedream5-lite': 'seedream-5-pro',
-  'seedream 5 lite': 'seedream-5-pro',
-  'seedream-5.0-lite': 'seedream-5-pro',
-};
+const RETIRED_IMAGE_MODELS = {};
 
 function normalizeImageModel(model) {
   const value = String(model || '').trim();

@@ -135,7 +135,8 @@ body {
 /* Group nodes have no wrapper ::after, so they keep a static pink ring + glow via
    box-shadow on their drag surface. The solid ring layer is identical across
    keyframes (does not move); only the blurred glow layers breathe. */
-.group-node-frame.is-cindy-origin {
+.group-node-frame.is-cindy-origin,
+.group-node-drag-surface.is-cindy-origin {
   animation: canvas-node-pink-breathe 2.2s ease-in-out infinite;
 }
 @keyframes canvas-node-pink-breathe {
@@ -846,17 +847,130 @@ body {
   flex: 1;
   padding: 8px 10px;
 }
+.project-asset-module {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.project-asset-module-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 2px 8px;
+  color: rgba(238, 233, 255, 0.92);
+  font-size: 13px;
+  font-weight: 700;
+}
+.project-asset-module-title small {
+  color: rgba(220, 211, 255, 0.58);
+  font-size: 11px;
+  font-weight: 600;
+}
+.project-asset-module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.project-asset-preview-btn {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(8, 6, 14, 0.78);
+  color: rgba(238, 233, 255, 0.95);
+  cursor: pointer;
+  z-index: 2;
+}
+.project-asset-preview-btn:hover {
+  border-color: var(--library-accent, rgba(160, 130, 255, 0.6));
+  background: var(--library-accent, rgba(120, 92, 220, 0.92));
+  color: #fff;
+}
+.project-asset-caption {
+  min-width: 0;
+  padding: 1px 2px 0;
+}
+.project-asset-caption strong {
+  display: block;
+  overflow: hidden;
+  color: rgba(232, 226, 255, 0.9);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.project-asset-caption span {
+  display: block;
+  color: rgba(220, 211, 255, 0.52);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.project-asset-hover-preview {
+  position: fixed;
+  z-index: 240;
+  pointer-events: none;
+  padding: 8px 8px 6px;
+  border: 1px solid rgba(205, 190, 255, 0.2);
+  border-radius: 14px;
+  background: rgba(14, 12, 22, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+.project-asset-hover-preview img {
+  display: block;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #0b0912;
+}
+.project-asset-hover-preview strong {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  overflow: hidden;
+  color: rgba(236, 230, 255, 0.9);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+:root[data-shotflow-theme="white"] .project-asset-hover-preview,
+:root[data-shotflow-theme="warm"] .project-asset-hover-preview {
+  border-color: var(--sf-border);
+  background: var(--sf-panel-bg, rgba(255, 255, 255, 0.96));
+  box-shadow: var(--sf-shadow-float, 0 16px 40px rgba(0, 0, 0, 0.18));
+}
+:root[data-shotflow-theme="white"] .project-asset-hover-preview strong,
+:root[data-shotflow-theme="warm"] .project-asset-hover-preview strong {
+  color: var(--sf-text-title);
+}
+
+
 
 .favorite-library-type-row {
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
   flex-wrap: nowrap;
 }
 
 .favorite-library-type-buttons {
   min-width: 0;
+  width: 100%;
   flex: 0 0 auto;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .favorite-library-type-buttons button {
@@ -917,18 +1031,38 @@ body {
   background: rgba(170, 170, 190, 0.12);
 }
 
+.favorite-library-sort-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.favorite-library-sort-wrap::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid rgba(226, 218, 255, 0.7);
+  border-bottom: 1.5px solid rgba(226, 218, 255, 0.7);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
 .favorite-library-sort-select {
-  flex: 1 1 220px;
-  min-width: 220px;
-  height: 30px;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
   border: 1px solid rgba(205, 190, 255, 0.18);
-  border-radius: 999px;
-  padding: 0 30px 0 12px;
+  border-radius: 10px;
+  padding: 0 32px 0 12px;
   color: rgba(238, 233, 255, 0.88);
   background: rgba(255, 255, 255, 0.055);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 650;
   outline: none;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .favorite-library-sort-select:focus {
@@ -3799,9 +3933,9 @@ body {
 
 .shotflow-node-popover-reference-row {
   order: 10;
-  min-height: 44px !important;
-  gap: 5px !important;
-  padding: 6px 9px !important;
+  min-height: 66px !important;
+  gap: 8px !important;
+  padding: 10px 12px !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.006)) !important;
@@ -4489,6 +4623,62 @@ body {
     right: 6px !important;
     max-height: min(62dvh, 560px) !important;
   }
+
+  .shotflow-node-popover-image,
+  .shotflow-node-popover-video {
+    top: auto !important;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    overflow: hidden !important;
+    box-sizing: border-box;
+  }
+
+  .shotflow-node-popover-image > .shotflow-node-popover-shell,
+  .shotflow-node-popover-video > .shotflow-node-popover-shell {
+    height: auto !important;
+    max-height: min(62dvh, 560px) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-gutter,
+  .shotflow-node-popover-image .shotflow-node-popover-content {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-scroll,
+  .shotflow-node-popover-video .shotflow-node-popover-scroll {
+    max-height: min(24dvh, 210px) !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-bottom-bar,
+  .shotflow-node-popover-video .shotflow-node-popover-bottom-wrap {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    flex-shrink: 0;
+    background: #171320 !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-bottom-bar {
+    min-width: 0;
+    overflow-x: hidden !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-bottom-bar > select:first-child {
+    flex: 1 1 90px !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
+  .shotflow-node-popover-image .shotflow-node-popover-bottom-bar > button:not(.shotflow-node-primary-action) {
+    min-width: 0;
+    padding-left: 3px !important;
+    padding-right: 3px !important;
+  }
 }
 
 /* User-selectable workspace themes. Media itself keeps its original colors. */
@@ -5015,6 +5205,7 @@ body {
 .shotflow-mark img {
   width: 22px !important;
   height: 22px !important;
+  border-radius: 7px;
   filter: none !important;
 }
 
@@ -6820,9 +7011,9 @@ select option:checked {
      .shotflow-group-toolbar button { color: rgba(226,232,240,.78) !important }
    ——深色画布用的浅灰字。没有 !important 的覆盖压不动它，浅色画布上就是米色底
    配浅灰字（用户截图里那排几乎看不见的按钮）。媒体节点工具栏在白/暖色下清楚，
-   正是因为它那份主题覆盖带了 !important；这里跟它取同一个变量，外观保持一致。 */
+   正是因为它那份主题覆盖带了 !important；这里跟它取同一个变量，外观保持一致。
    弹出层里的按钮（.shotflow-group-menu-item）排除掉：它们的配色由下面各自的
-   .shotflow-group-arrange-menu / -color-menu 规则管，不然这条会跟那些抢。 */
+   arrange-menu、color-menu 规则管，不然这条会跟那些抢。 */
 :root[data-shotflow-theme="white"] .shotflow-group-toolbar button:not(.shotflow-group-menu-item),
 :root[data-shotflow-theme="warm"] .shotflow-group-toolbar button:not(.shotflow-group-menu-item) {
   color: var(--sf-text-body) !important;
@@ -7564,4 +7755,129 @@ select option:checked {
 .shotflow-missing-apikey-hint:hover {
   color: #ff7a7a;
   text-decoration: underline;
+}
+
+:root[data-shotflow-theme="white"] .project-asset-preview-btn,
+:root[data-shotflow-theme="warm"] .project-asset-preview-btn {
+  border-color: rgba(40, 30, 70, 0.16);
+  background: rgba(255, 255, 255, 0.86);
+  color: rgba(40, 32, 70, 0.88);
+}
+
+:root[data-shotflow-theme="white"] .project-asset-caption strong,
+:root[data-shotflow-theme="warm"] .project-asset-caption strong {
+  color: rgba(40, 32, 70, 0.88);
+}
+:root[data-shotflow-theme="white"] .project-asset-caption span,
+:root[data-shotflow-theme="warm"] .project-asset-caption span {
+  color: rgba(70, 58, 110, 0.55);
+}
+
+/* 白色/暖色主题下资产库的页签和筛选按钮 */
+:root[data-shotflow-theme="white"] .favorite-library-tabs button,
+:root[data-shotflow-theme="warm"] .favorite-library-tabs button,
+:root[data-shotflow-theme="white"] .favorite-library-type-buttons button,
+:root[data-shotflow-theme="warm"] .favorite-library-type-buttons button {
+  color: var(--sf-text-title);
+  background: rgba(20, 31, 41, 0.06);
+  border-color: transparent;
+}
+
+:root[data-shotflow-theme="white"] .favorite-library-tabs button.is-active,
+:root[data-shotflow-theme="warm"] .favorite-library-tabs button.is-active {
+  color: #fff;
+  background: #6d52e6;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+:root[data-shotflow-theme="white"] .favorite-library-type-buttons button.is-active,
+:root[data-shotflow-theme="warm"] .favorite-library-type-buttons button.is-active {
+  color: var(--sf-text-title);
+}
+
+/* M-STUDIO 节点 */
+.shotflow-previs-body {
+  color: var(--sf-text-body);
+}
+
+.shotflow-previs-title {
+  color: var(--sf-text-title);
+}
+
+.shotflow-previs-open {
+  color: var(--sf-text-title);
+  background: var(--sf-panel-soft);
+  border: 1px solid var(--sf-border-strong);
+}
+
+.shotflow-previs-open:hover {
+  background: var(--sf-accent-soft);
+}
+
+/* 项目资产库：游戏选择、搜索、环节/类型筛选、视频角标 */
+.project-asset-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.project-asset-game {
+  margin-bottom: 8px;
+}
+
+.project-asset-filter-row {
+  width: 100%;
+}
+
+.project-asset-search {
+  margin: 0 0 8px;
+}
+
+.project-asset-video-mark {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(8, 6, 14, 0.78);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  pointer-events: none;
+}
+
+:root[data-shotflow-theme="white"] .project-asset-video-mark,
+:root[data-shotflow-theme="warm"] .project-asset-video-mark {
+  background: rgba(255, 255, 255, 0.86);
+  color: rgba(40, 32, 70, 0.88);
+  border: 1px solid rgba(40, 30, 70, 0.16);
+}
+
+/* 拖动节点时由 public/canvas-drag-opt-20261015.js 给画布根节点加 is-dragging：
+   暂时隐藏媒体、连线和浮层，减少拖动时的重绘。 */
+.shotflow-canvas-root.is-dragging .shotflow-canvas-minimap,
+.shotflow-canvas-root.is-dragging .react-flow__minimap,
+.shotflow-canvas-root.is-dragging .shotflow-generation-progress,
+.shotflow-canvas-root.is-dragging .react-flow__edges,
+.shotflow-canvas-root.is-dragging .react-flow__background,
+.shotflow-canvas-root.is-dragging .shotflow-node-popover,
+.shotflow-canvas-root.is-dragging .shotflow-node-popover-backdrop {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.shotflow-canvas-root.is-dragging .react-flow__node img,
+.shotflow-canvas-root.is-dragging .react-flow__node video,
+.shotflow-canvas-root.is-dragging .react-flow__node canvas {
+  visibility: hidden !important;
+}
+.shotflow-canvas-root.is-dragging .react-flow__node {
+  box-shadow: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.shotflow-canvas-root.is-dragging .react-flow__node.dragging {
+  will-change: transform;
 }

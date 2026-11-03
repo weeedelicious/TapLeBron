@@ -78,7 +78,7 @@ interface ImageRepaintModalProps {
 
 const REPAINT_MODELS = [
   { value: 'gemini-3-pro-image', label: 'Nano-banana Pro' },
-  { value: 'gemini-3.1-flash-image', label: 'Nano-banana Flash' },
+  { value: 'gemini-nano-banana-2.1', label: 'Nano-banana 2.1' },
   { value: 'gpt-image-2', label: 'GPT image 2.0' },
   { value: 'seedream-5-pro', label: 'Seedream 5 Pro' },
 ]

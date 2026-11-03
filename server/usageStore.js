@@ -1,10 +1,11 @@
 const crypto = require('crypto');
 const { getUsagePool } = require('./db');
+const { listPaidUsageByProject } = require('./usageProjectStats');
 
 const VALID_TYPES = new Set(['image', 'video', 'text']);
 const VALID_STATUSES = new Set(['submitted', 'succeeded', 'failed', 'cancelled']);
 const VALID_VIDEO_TASK_STATUSES = new Set(['submitted', 'running', 'succeeded', 'failed', 'cancelled']);
-const PERIODS = new Set(['day', 'week', 'month', 'year']);
+const PERIODS = new Set(['day', 'week', 'month', 'year', 'all']);
 
 function safeJson(value, fallback = null) {
   if (value == null || value === '') return fallback;
@@ -100,6 +101,9 @@ function rangeForPeriod(periodValue, dateValue) {
   } else if (period === 'year') {
     start = shanghaiDate(`${parts.year}-01-01`);
     end = shanghaiDate(`${parts.year + 1}-01-01`);
+  } else if (period === 'all') {
+    start = shanghaiDate('1970-01-01');
+    end = shanghaiDate('2100-01-01');
   }
 
   return {
@@ -617,6 +621,10 @@ async function listPaidUsage(filters = {}) {
       ...record,
       videoTask: videoTasksByUsage.get(Number(record.id)) || null,
     })),
+    projects: await listPaidUsageByProject(whereSql, params, filters.sort).catch((error) => {
+      console.warn('list paid usage by project failed:', error.message);
+      return [];
+    }),
   };
 }
 

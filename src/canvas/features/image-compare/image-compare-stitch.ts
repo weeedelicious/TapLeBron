@@ -9,6 +9,8 @@
  * 几何计算放在纯函数里，好单测；真正画到 canvas 的部分需要浏览器，单独一层。
  */
 
+import { fitContain } from "../video-compare/video-compare-layout";
+
 /** 对齐边的上限，避免两张 8K 图拼出一张离谱大的 PNG */
 export const STITCH_MAX_HEIGHT = 4096;
 /**
@@ -24,12 +26,15 @@ export const STITCH_DIVIDER_COLOR = "#5a5a5a";
 
 /** lr = A 在左，rl = B 在左，tb = A 在上，bt = B 在上 */
 export type StitchDirection = "lr" | "rl" | "tb" | "bt";
+/** quad = 三到四张图拼成 2×2 宫格（宫格模式导出用） */
+export type StitchExportDirection = StitchDirection | "quad";
 
-export const STITCH_DIRECTION_LABELS: Record<StitchDirection, string> = {
+export const STITCH_DIRECTION_LABELS: Record<StitchExportDirection, string> = {
   lr: "左右",
   rl: "右左",
   tb: "上下",
   bt: "下上",
+  quad: "四宫格",
 };
 
 export function isStitchDirection(value: unknown): value is StitchDirection {
@@ -205,17 +210,26 @@ export function stitchLayout(
   };
 }
 
-/** 拼接图的文件名。不带路径、不带查询串。 */
+/** 拼接图的文件名。不带路径、不带查询串。四宫格时 titleA 传全部标题。 */
 export function stitchFileName(
-  titleA: string,
+  titleA: string | string[],
   titleB: string,
-  direction: StitchDirection = "lr",
+  direction: StitchExportDirection = "lr",
 ) {
   const clean = (value: string) =>
     String(value || "图片")
       .replace(/[\\/:*?"<>|]/g, "")
       .trim()
       .slice(0, 24) || "图片";
+  if (direction === "quad") {
+    const names = (Array.isArray(titleA) ? titleA : [titleA, titleB])
+      .map(clean)
+      .filter(Boolean)
+      .slice(0, 4)
+      .join("_");
+    return `对比拼接四宫格_${names || "对比"}.png`;
+  }
+  titleA = Array.isArray(titleA) ? titleA[0] ?? "" : titleA;
   const reversed = isReversedStitch(direction);
   const firstTitle = clean(reversed ? titleB : titleA);
   const secondTitle = clean(reversed ? titleA : titleB);
@@ -237,7 +251,51 @@ export interface StitchResult {
   file: File;
   width: number;
   height: number;
-  direction: StitchDirection;
+  direction: StitchExportDirection;
+}
+
+/** 三到四张图按 2×2 排成宫格：每格取最大原图尺寸，整体不超过 STITCH_MAX_HEIGHT，各自居中等比放进格子。 */
+async function renderQuadStitchedFile(urls: Array<{ url: string; title: string }>): Promise<StitchResult> {
+  const items = urls.filter((item) => item && item.url).slice(0, 4);
+  const imgs = await Promise.all(items.map((item) => loadImage(item.url)));
+  const cols = 2;
+  const rows = Math.ceil(imgs.length / cols);
+  let cellW = Math.max(...imgs.map((img) => img.naturalWidth || 1));
+  let cellH = Math.max(...imgs.map((img) => img.naturalHeight || 1));
+  const limit = Math.min(1, STITCH_MAX_HEIGHT / (cellW * cols), STITCH_MAX_HEIGHT / (cellH * rows));
+  cellW = Math.max(1, Math.round(cellW * limit));
+  cellH = Math.max(1, Math.round(cellH * limit));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = cellW * cols;
+  canvas.height = cellH * rows;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("browser canvas missing");
+  ctx.fillStyle = "#111111";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  imgs.forEach((img, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const fit = fitContain({ width: img.naturalWidth, height: img.naturalHeight }, cellW, cellH);
+    ctx.drawImage(img, col * cellW + fit.x, row * cellH + fit.y, fit.width, fit.height);
+  });
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    try {
+      canvas.toBlob(resolve, "image/png");
+    } catch {
+      resolve(null);
+    }
+  });
+  if (!blob) throw new Error("export failed");
+  return {
+    file: new File([blob], stitchFileName(items.map((item) => item.title), "", "quad"), { type: "image/png" }),
+    width: canvas.width,
+    height: canvas.height,
+    direction: "quad",
+  };
 }
 
 /**
@@ -249,8 +307,13 @@ export async function renderStitchedFile(args: {
   urlB: string;
   titleA: string;
   titleB: string;
-  direction?: StitchDirection;
+  direction?: StitchExportDirection;
+  /** 四宫格导出时的全部输入；少于三张时退回左右拼接。 */
+  urls?: Array<{ url: string; title: string }>;
 }): Promise<StitchResult> {
+  if (args.direction === "quad" && Array.isArray(args.urls) && args.urls.length >= 3) {
+    return await renderQuadStitchedFile(args.urls);
+  }
   const direction = normalizeStitchDirection(args.direction);
   const [imgA, imgB] = await Promise.all([
     loadImage(args.urlA),

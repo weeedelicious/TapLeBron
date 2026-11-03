@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ExternalLink, Loader2, Pencil, Plus, Search, X } from 'lucide-react'
 import {
+  assetsApi,
   officialTemplatesApi,
+  projectsApi,
   type OfficialTemplateCategory,
   type OfficialTemplateItem,
 } from '@/lib/api'
@@ -31,6 +33,17 @@ const EDITABLE_CATEGORIES = CATEGORIES.filter(
   (item): item is { id: OfficialTemplateCategory; label: string } => item.id !== 'all',
 )
 
+function subtitleFontSize(subtitle: string) {
+  const text = String(subtitle || '').replace(/\r\n/g, '\n').trim()
+  const lines = text ? text.split('\n') : []
+  const chars = Array.from(text.replace(/\s+/g, '')).length
+  const longest = lines.reduce((max, line) => Math.max(max, Array.from(line.trim()).length), 0)
+  if (chars > 170 || lines.length > 6 || longest > 46) return 12
+  if (chars > 110 || lines.length > 4 || longest > 34) return 13
+  if (chars > 58 || lines.length > 2 || longest > 24) return 14
+  return 15
+}
+
 function templateCategories(item: Pick<OfficialTemplateItem, 'category'> & Partial<Pick<OfficialTemplateItem, 'categories'>>) {
   return item.categories?.length ? item.categories : [item.category]
 }
@@ -57,18 +70,19 @@ function projectAsTemplatePayload(project: Project): FavoriteLibraryPayload {
   return { version: 1, rootIds: nodes.map((node) => node.id), nodes, edges: [], sourceProjectUuid: project.projectMeta.uuid, sourceProjectName: project.projectMeta.name }
 }
 
-export function openLinkedCanvas(
+export async function openLinkedCanvas(
   canvasId: string,
   navigate: (url: string) => void = (url) => window.location.assign(url),
 ) {
   if (!canvasId) return
+  // Reading the project makes the page session script enter that canvas and
+  // store its token. A full reload can then open it directly. Do not set
+  // claimCanvasSession: that flag deletes the token just obtained and the
+  // next page comes back with "re-enter from the canvas list".
+  await projectsApi.get(canvasId)
   const url = new URL(window.location.href)
   url.searchParams.set('project', canvasId)
-  // This is an explicit user action from the template editor. Mark it as a
-  // one-shot session claim so a full-page navigation can safely replace a
-  // stale token for the linked canvas without weakening normal revoked-page
-  // protection. The exclusive-session bootstrap consumes and removes it.
-  url.searchParams.set('claimCanvasSession', '1')
+  url.searchParams.delete('claimCanvasSession')
   navigate(url.toString())
 }
 
@@ -86,6 +100,8 @@ export function OfficialTemplateLibrary({ onClose }: { onClose: () => void }) {
   const [editingId, setEditingId] = useState('')
   const [draft, setDraft] = useState<TemplateDraft>(EMPTY_DRAFT)
   const [saving, setSaving] = useState(false)
+  const [thumbnailUploading, setThumbnailUploading] = useState(false)
+  const [thumbnailBroken, setThumbnailBroken] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -114,6 +130,23 @@ export function OfficialTemplateLibrary({ onClose }: { onClose: () => void }) {
     setEditingId(item.id)
     setDraft({ categories: templateCategories(item), title: item.title, subtitle: item.subtitle, thumbnailUrl: item.thumbnailUrl, method: item.method, canvasId: item.canvasId, tone: item.tone, nodes: item.nodes || [] })
     setActionError(''); setEditorOpen(true)
+  }
+
+  const uploadThumbnail = async (file: File | undefined) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) return setActionError('请选择图片文件')
+    const canvasId = draft.canvasId || String(useCanvasStore.getState().projectUuid || '')
+    if (!canvasId) return setActionError('请先保存模板并打开关联画布，再上传缩略图')
+    setThumbnailUploading(true); setActionError('')
+    try {
+      await projectsApi.get(canvasId)
+      const uploaded = await assetsApi.upload(canvasId, file)
+      setDraft((current) => ({ ...current, thumbnailUrl: uploaded.url }))
+    } catch (error) {
+      setActionError(errorText(error, '缩略图上传失败'))
+    } finally {
+      setThumbnailUploading(false)
+    }
   }
 
   const saveDraft = async () => {
@@ -164,7 +197,9 @@ export function OfficialTemplateLibrary({ onClose }: { onClose: () => void }) {
         .shotflow-template-scroll::-webkit-scrollbar-thumb { background: #696969; border: 3px solid #202020; border-radius: 12px; }
         .shotflow-template-field { display: grid; gap: 7px; color: #bbb; font-size: 12px; }
         .shotflow-template-field input, .shotflow-template-field textarea, .shotflow-template-field select { width: 100%; box-sizing: border-box; border: 1px solid #4a4a4a; border-radius: 9px; padding: 10px 11px; outline: none; color: #eee; background: #202020; font: inherit; }
-        .shotflow-template-field textarea { min-height: 88px; resize: vertical; }
+        .shotflow-template-field textarea { min-height: 88px; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .shotflow-template-thumb { aspect-ratio: 20 / 9; }
+        .shotflow-template-thumb img, .shotflow-template-thumb-preview img { width: 100%; height: 100%; object-fit: contain; }
         .shotflow-template-field input:focus, .shotflow-template-field textarea:focus, .shotflow-template-field select:focus { border-color: #7d75a2; }
       `}</style>
       <div className="shotflow-template-library-dialog" style={{ position: 'relative', width: 1080, maxWidth: '96vw', height: 780, maxHeight: '92vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', borderRadius: 22, background: '#292929', color: '#f4f4f4', boxShadow: '0 24px 80px rgba(0,0,0,.5)', pointerEvents: 'auto' }}>
@@ -186,13 +221,13 @@ export function OfficialTemplateLibrary({ onClose }: { onClose: () => void }) {
           {!loading && !loadError && filtered.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>没有符合条件的模板</div>}
           {!loading && !loadError && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
             {filtered.map((template) => <article key={template.id} data-template-id={template.id} style={{ overflow: 'hidden', borderRadius: 16, background: '#202020', border: '1px solid rgba(255,255,255,.06)' }}>
-              <div style={{ height: 132, margin: 14, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'space-evenly', background: 'linear-gradient(180deg,#171c1e,#151718)', borderRadius: 9 }}>
-                {template.thumbnailUrl ? <img src={template.thumbnailUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (template.nodes || []).map((node, index) => <div key={`${template.id}-${node.label}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><div style={{ width: 54, height: 54, display: 'grid', placeItems: 'center', border: `1px solid ${template.tone}`, color: template.tone, background: `${template.tone}18`, fontSize: 10, textAlign: 'center', padding: 3, boxSizing: 'border-box' }}>{node.label}</div>{index < template.nodes.length - 1 && <span style={{ width: 30, height: 1, background: template.tone }} />}</div>)}
+              <div className="shotflow-template-thumb" style={{ margin: 14, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'space-evenly', background: 'linear-gradient(180deg,#171c1e,#151718)', borderRadius: 9 }}>
+                {template.thumbnailUrl && !thumbnailBroken[template.id] ? <img src={template.thumbnailUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} onError={() => setThumbnailBroken((current) => ({ ...current, [template.id]: true }))} /> : (template.nodes || []).map((node, index) => <div key={`${template.id}-${node.label}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><div style={{ width: 54, height: 54, display: 'grid', placeItems: 'center', border: `1px solid ${template.tone}`, color: template.tone, background: `${template.tone}18`, fontSize: 10, textAlign: 'center', padding: 3, boxSizing: 'border-box' }}>{node.label}</div>{index < template.nodes.length - 1 && <span style={{ width: 30, height: 1, background: template.tone }} />}</div>)}
                 {template.method && <span style={{ position: 'absolute', left: 9, bottom: 9, padding: '4px 8px', borderRadius: 99, fontSize: 11, color: '#fff', background: 'rgba(0,0,0,.68)', backdropFilter: 'blur(6px)' }}>{template.method}</span>}
               </div>
               <div style={{ padding: '0 16px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}><h3 style={{ margin: 0, fontSize: 19 }}>{template.title}</h3><span style={{ color: template.canvasId ? '#61e6b2' : '#e4bd68', fontSize: 12 }}>{template.canvasId ? `画布 ${template.canvasId}` : '待关联画布'}</span></div>
-                <p style={{ minHeight: 42, margin: '10px 0 14px', color: '#bbb', lineHeight: 1.5 }}>{template.subtitle}</p>
+                <p style={{ margin: '10px 0 14px', color: '#bbb', lineHeight: 1.55, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: subtitleFontSize(template.subtitle) }}>{template.subtitle}</p>
                 <div style={{ display: 'grid', gridTemplateColumns: canEdit ? 'minmax(0, 1fr) 92px' : '1fr', gap: 8 }}>
                   <button type="button" onClick={() => void addTemplate(template)} disabled={Boolean(addingId)} style={{ height: 39, border: 0, borderRadius: 9, cursor: addingId ? 'wait' : 'pointer', color: '#fff', background: addedId === template.id ? '#2c7b63' : `${template.tone}48` }}>{addingId === template.id ? <><Loader2 size={15} style={{ verticalAlign: 'middle', marginRight: 5 }} />正在复制…</> : addedId === template.id ? <><Check size={15} style={{ verticalAlign: 'middle', marginRight: 5 }} />已添加到画布</> : '添加到画布 →'}</button>
                   {canEdit && <button type="button" data-template-edit={template.id} onClick={() => startEdit(template)} style={{ height: 39, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #4a4a4a', borderRadius: 9, cursor: 'pointer', color: '#ddd', background: '#292929' }}><Pencil size={14} />编辑</button>}
@@ -215,16 +250,16 @@ export function OfficialTemplateLibrary({ onClose }: { onClose: () => void }) {
                   return <button key={item.id} type="button" data-template-category-option={item.id} aria-pressed={selected} onClick={() => setDraft((current) => ({ ...current, categories: selected ? current.categories.filter((category) => category !== item.id) : [...current.categories, item.id] }))} style={{ height: 39, display: 'flex', alignItems: 'center', gap: 6, padding: '0 11px', border: `1px solid ${selected ? '#8178a6' : '#4a4a4a'}`, borderRadius: 9, color: selected ? '#fff' : '#aaa', background: selected ? '#514b68' : '#202020', cursor: 'pointer' }}>{selected && <Check size={14} />}{item.label}</button>
                 })}
               </div></div>
-              <label className="shotflow-template-field" style={{ gridColumn: '1 / -1' }}><span>副标题</span><textarea value={draft.subtitle} onChange={(event) => setDraft({ ...draft, subtitle: event.target.value })} placeholder="说明这个模板能完成什么" /></label>
+              <label className="shotflow-template-field" style={{ gridColumn: '1 / -1' }}><span>副标题</span><textarea value={draft.subtitle} onChange={(event) => setDraft({ ...draft, subtitle: event.target.value })} onKeyDown={(event) => event.stopPropagation()} placeholder="说明这个模板能完成什么" /></label>
               <label className="shotflow-template-field"><span>方法</span><input value={draft.method} onChange={(event) => setDraft({ ...draft, method: event.target.value })} placeholder="例如：参考图生成 / FlashVSR" /></label>
               <label className="shotflow-template-field"><span>强调色</span><input type="color" value={draft.tone} onChange={(event) => setDraft({ ...draft, tone: event.target.value })} style={{ height: 39, padding: 4 }} /></label>
-              <label className="shotflow-template-field" style={{ gridColumn: '1 / -1' }}><span>缩略图地址</span><input value={draft.thumbnailUrl} onChange={(event) => setDraft({ ...draft, thumbnailUrl: event.target.value })} placeholder="https://… 或 /assets/画布ID/图片.png" /></label>
+              <div className="shotflow-template-field" style={{ gridColumn: '1 / -1' }}><span>缩略图</span><label style={{ minHeight: 39, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #5a5a5a', borderRadius: 9, color: '#ddd', background: '#202020', cursor: thumbnailUploading ? 'wait' : 'pointer' }}>{thumbnailUploading ? '上传中…' : '选择图片上传'}<input type="file" accept="image/*" style={{ display: 'none' }} disabled={thumbnailUploading} onChange={(event) => { void uploadThumbnail(event.target.files?.[0]); event.currentTarget.value = '' }} /></label><small style={{ color: '#888' }}>上传后自动生成网页地址，不能填写本机文件路径。</small></div>
               <div className="shotflow-template-field" data-template-canvas style={{ gridColumn: '1 / -1' }}><span>专属画布</span><div style={{ minHeight: 39, display: 'flex', alignItems: 'center', padding: '0 11px', border: '1px solid #4a4a4a', borderRadius: 9, color: draft.canvasId ? '#ddd' : '#999', background: '#202020' }}>{draft.canvasId ? '官方模板 · ' + draft.title + ' · 画布 ' + draft.canvasId : '保存后自动创建一块专属画布'}</div><small style={{ color: '#888' }}>模板内容与专属画布严格 1:1；关联创建后不能更换。</small></div>
-              {draft.thumbnailUrl && <div style={{ gridColumn: '1 / -1', height: 132, overflow: 'hidden', borderRadius: 10, background: '#1d1d1d' }}><img src={draft.thumbnailUrl} alt="缩略图预览" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>}
+              {draft.thumbnailUrl && <div className="shotflow-template-thumb-preview" style={{ gridColumn: '1 / -1', aspectRatio: '20 / 9', overflow: 'hidden', borderRadius: 10, background: '#1d1d1d' }}><img src={draft.thumbnailUrl} alt="缩略图预览" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>}
             </div>
             {actionError && <div role="alert" style={{ margin: '0 20px 12px', padding: '9px 12px', borderRadius: 8, color: '#ffc9c9', background: '#592f2f' }}>{actionError}</div>}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '0 20px 20px' }}>
-              <button type="button" onClick={() => openLinkedCanvas(draft.canvasId)} disabled={!draft.canvasId} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 39, padding: '0 13px', border: '1px solid #4a4a4a', borderRadius: 9, cursor: draft.canvasId ? 'pointer' : 'not-allowed', color: '#ddd', background: '#242424' }}><ExternalLink size={14} />打开关联画布</button>
+              <button type="button" onClick={() => { void (async () => { try { setActionError(''); await openLinkedCanvas(draft.canvasId); onClose() } catch (error) { setActionError(errorText(error, '\u6253\u5f00\u5173\u8054\u753b\u5e03\u5931\u8d25')) } })() }} disabled={!draft.canvasId} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 39, padding: '0 13px', border: '1px solid #4a4a4a', borderRadius: 9, cursor: draft.canvasId ? 'pointer' : 'not-allowed', color: '#ddd', background: '#242424' }}><ExternalLink size={14} />打开关联画布</button>
               <div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={() => setEditorOpen(false)} style={{ height: 39, padding: '0 16px', border: '1px solid #4a4a4a', borderRadius: 9, cursor: 'pointer', color: '#ddd', background: 'transparent' }}>取消</button><button type="button" data-template-save onClick={() => void saveDraft()} disabled={saving} style={{ height: 39, minWidth: 96, padding: '0 16px', border: 0, borderRadius: 9, cursor: saving ? 'wait' : 'pointer', color: '#fff', background: '#665f80' }}>{saving ? '保存中…' : '保存'}</button></div>
             </div>
           </div>

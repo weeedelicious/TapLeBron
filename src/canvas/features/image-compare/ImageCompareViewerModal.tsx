@@ -32,7 +32,7 @@ import {
 import {
   STITCH_DIRECTION_LABELS,
   stitchDirectionFromView,
-  type StitchDirection,
+  type StitchExportDirection,
 } from "./image-compare-stitch";
 import "./image-compare.css";
 
@@ -46,14 +46,17 @@ const MODES: Array<{ id: ImageCompareMode; key: string }> = [
   { id: "wipe", key: "3" },
   { id: "opacity", key: "4" },
   { id: "difference", key: "5" },
+  { id: "grid", key: "6" },
 ];
 
 interface Props {
   inputA: ImageCompareInput;
   inputB: ImageCompareInput;
+  /** 全部已连的输入（最多四张）；宫格模式和三张以上的并排模式用它。 */
+  inputs?: ImageCompareInput[];
   initialMode: ImageCompareMode;
   exporting?: boolean;
-  onExportStitched?: (direction: StitchDirection) => void;
+  onExportStitched?: (direction: StitchExportDirection) => void;
   onClose: () => void;
 }
 
@@ -64,6 +67,7 @@ function clampScale(value: number) {
 export function ImageCompareViewerModal({
   inputA,
   inputB,
+  inputs = [],
   initialMode,
   exporting = false,
   onExportStitched,
@@ -226,11 +230,15 @@ export function ImageCompareViewerModal({
   const stacked = !isImageCompareSplitMode(mode);
   const splitVertical = mode === "top-bottom";
   // 导出方向不再让人选：直接跟着当前摆放（含 A/B 是否交换过）
-  const exportDirection = stitchDirectionFromView({
-    mode,
-    swapped,
-    wipeVertical,
-  });
+  const exportDirection: StitchExportDirection = mode === "grid"
+    ? "quad"
+    : stitchDirectionFromView({
+      mode,
+      swapped,
+      wipeVertical,
+    });
+  // 宫格模式，或三张以上时的左右 / 上下模式，都按宫格排
+  const showQuad = mode === "grid" || (inputs.length > 2 && (mode === "side-by-side" || mode === "top-bottom"));
   const wipeClip = wipeVertical
     ? `inset(${wipe}% 0 0 0)`
     : `inset(0 0 0 ${wipe}%)`;
@@ -466,7 +474,16 @@ export function ImageCompareViewerModal({
           onPointerUp={handlePanEnd}
           onPointerCancel={handlePanEnd}
         >
-          {stacked ? (
+          {showQuad ? (
+            <div className="image-compare-viewer-quad" style={{ transform: imageTransform }}>
+              {(inputs.length ? inputs : [inputA, inputB]).filter(Boolean).map((input, index) => (
+                <figure key={input.nodeId + "-" + index}>
+                  <img src={input.fullUrl} alt={input.title} draggable={false} />
+                  <figcaption>{input.title}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : stacked ? (
             <div className="image-compare-viewer-stack" style={stackFilter}>
               {renderImage(first, {
                 className: "image-compare-viewer-image-base",

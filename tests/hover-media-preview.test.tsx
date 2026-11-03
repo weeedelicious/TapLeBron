@@ -87,7 +87,7 @@ describe('视频节点参考条真的会唤起视频预览', () => {
     expect(source).toContain('function ReferenceVideoCover')
     expect(source).toContain('preload="metadata"')
     expect(source).toContain('<NodeTypeIcon type="video" size={iconSize} />')
-    expect(source).toContain('<ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={13} />')
+    expect(source).toContain('<ReferenceVideoCover src={ref.coverSrc || videoPreviewSrc(ref.url)} poster={ref.poster} iconSize={20} />')
     expect(source).not.toMatch(/connectedVideos\.map[\s\S]{0,1200}preload="none"/)
   })
 })

@@ -828,3 +828,16 @@
     padding-left: 46px;
   }
 }
+.director-stage-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+.director-stage-footer-actions .director-stage-primary {
+  width: auto;
+  flex: 1;
+}
+.director-stage-primary.is-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3eefe;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}

@@ -134,6 +134,33 @@ function frameInterpolationSettings(nodeData?: CanvasNodeData): Record<string, u
   return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
 }
 
+
+function videoDepthSettings(nodeData?: CanvasNodeData): Record<string, unknown> | null {
+  const params = (nodeData?.params ?? {}) as Record<string, unknown>
+  const raw = params.videoDepth
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
+}
+
+function videoDepthAssetFields(
+  settings: Record<string, unknown> | null,
+  outputMetadata: Record<string, unknown>,
+  providerStatus: Record<string, unknown>,
+) {
+  const enabled = Boolean(settings) || outputMetadata.videoDepth === true || providerStatus.videoDepth === true
+  if (!enabled) return null
+  const provider = String(outputMetadata.depthProvider || providerStatus.provider || settings?.provider || '')
+  const model = String(outputMetadata.depthModel || providerStatus.model || settings?.model || '')
+  const near = String(outputMetadata.depthNear || providerStatus.near || settings?.near || 'bright')
+  return {
+    videoDepth: true as const,
+    depthProvider: provider || undefined,
+    depthModel: model || undefined,
+    depthEncoder: String(outputMetadata.depthEncoder || providerStatus.encoder || settings?.encoder || '') || undefined,
+    depthNear: near === 'dark' ? 'dark' as const : 'bright' as const,
+    maxRes: positiveNumberOrUndefined(outputMetadata.maxRes ?? providerStatus.maxRes ?? settings?.maxRes),
+  }
+}
+
 function mediaEnhanceSettings(nodeData?: CanvasNodeData): Record<string, unknown> | null {
   const params = (nodeData?.params ?? {}) as Record<string, unknown>
   const raw = params.mediaEnhance
@@ -175,6 +202,8 @@ function phaseLabelFromTask(nodeData?: CanvasNodeData, serverTask?: ActiveGenera
   if (nodeLabel) return nodeLabel
   const enhancement = mediaEnhanceSettings(nodeData)
   if (enhancement) return mediaEnhanceDefaultLabel(enhancement)
+  const depth = videoDepthSettings(nodeData)
+  if (depth) return String(depth.provider || '') === 'depthcrafter' ? 'DepthCrafter' : 'Video Depth Anything'
   return frameInterpolationSettings(nodeData) ? '视频补帧' : undefined
 }
 
@@ -489,7 +518,7 @@ export const useTasksStore = create<TasksState>((set, get) => ({
                 persistedOutput?.durationSec ?? outputMetadata.durationSec ?? interpolation?.durationSec ?? p.settings?.duration,
               )
               videoAssetMeta[url] = {
-                model: res.meta?.model || (isFrameInterpolation ? 'ffmpeg-minterpolate' : p.model || infoEntry.model),
+                model: res.meta?.model || videoDepthAssetFields(videoDepthSettings(nodeData), outputMetadata, providerStatus)?.depthModel || (isFrameInterpolation ? 'ffmpeg-minterpolate' : p.model || infoEntry.model),
                 resolution: persistedOutput?.resolution || res.meta?.resolution || p.settings?.resolution,
                 ratio: p.settings?.ratio,
                 durationSec: outputDurationSec,
@@ -504,6 +533,7 @@ export const useTasksStore = create<TasksState>((set, get) => ({
                 // the node's frame-step control uses this instead of assuming
                 // every source is 30fps.
                 fps: outputFps,
+                ...(videoDepthAssetFields(videoDepthSettings(nodeData), outputMetadata, providerStatus) ?? {}),
                 ...(isFrameInterpolation ? {
                   frameInterpolation: true,
                   interpolationProvider: String(outputMetadata.interpolationProvider || providerStatus.interpolationProvider || 'ffmpeg-minterpolate'),
@@ -755,7 +785,7 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           outputMetadata.targetFps ?? providerStatus.targetFps ?? interpolation?.targetFps,
         )
         generatedAssetMeta[url] = {
-          model: String(task.meta?.model || (isMediaEnhance ? mediaEnhanceDefaultModel(enhancement) : isFrameInterpolation ? 'ffmpeg-minterpolate' : '')),
+          model: String(task.meta?.model || videoDepthAssetFields(videoDepthSettings(nodeData), outputMetadata, providerStatus)?.depthModel || (isMediaEnhance ? mediaEnhanceDefaultModel(enhancement) : isFrameInterpolation ? 'ffmpeg-minterpolate' : '')),
           resolution: String(persistedOutput?.resolution || task.meta?.resolution || ''),
           durationSec: positiveNumberOrUndefined(persistedOutput?.durationSec ?? outputMetadata.durationSec ?? interpolation?.durationSec),
           createdAtMs: completedAtMs,
@@ -763,7 +793,8 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           generationVersion: serverVersion,
           outputIndex,
           fps: outputFps,
-          ...(isFrameInterpolation ? {
+          ...(videoDepthAssetFields(videoDepthSettings(nodeData), outputMetadata, providerStatus) ?? {}),
+                ...(isFrameInterpolation ? {
             frameInterpolation: true,
             interpolationProvider: String(outputMetadata.interpolationProvider || providerStatus.interpolationProvider || 'ffmpeg-minterpolate'),
             sourceFps,

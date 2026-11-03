@@ -163,7 +163,7 @@ describe('文字节点洗提示词', () => {
 
     const videoSource = fs.readFileSync(path.join(root, 'src/canvas/components/nodes/VideoNode.tsx'), 'utf8')
     expect(videoSource).toContain('aria-label="Seedance Skill 库"')
-    expect(videoSource).toContain("washVideoPrompt('conservative', choice.value, skill.id)")
+    expect(videoSource).toContain("washVideoPrompt('conservative', choice.value, skillId)")
     expect(videoSource).toContain('_promptWashSkillId')
     expect(videoSource).toContain('_promptWashSourceName')
     expect(videoSource).toContain('SEEDANCE_PROMPT_SKILLS')

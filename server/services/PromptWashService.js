@@ -188,6 +188,9 @@ function normalizeResult(raw, fallbackTarget) {
   if (!parsed || typeof parsed !== 'object') throw new Error('洗词结果不是有效对象');
   const rawPrompt = String(parsed.prompt || '').trim();
   if (!rawPrompt) throw new Error('洗词结果缺少可用提示词');
+  if (/^please provide (?:the )?(?:content|text|prompt) to repair\.?$/i.test(rawPrompt)) {
+    throw new Error('洗词结果没有生成提示词正文');
+  }
   const suggested = parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {};
   const lockedTarget = normalizeTarget(fallbackTarget);
   const settings = normalizeTarget({ ...lockedTarget, ...suggested, duration: lockedTarget.duration });
@@ -219,10 +222,66 @@ function normalizeResult(raw, fallbackTarget) {
   };
 }
 
-function buildMessages({ sourceText, mode, skillId, target, references, nodeName }) {
+function buildOpusFirstPassMessages({ sourceText, target, references, nodeName }) {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是资深视频导演和提示词编辑。先凭自己的理解整理、优化用户的视频创意，产出一份完整、可直接使用的中文视频提示词。',
+        '这一轮不要套用任何片种 Skill 或固定 JSON 模板；下一轮才会按用户选择的 Skill 洗词。',
+        '保留原文中所有关键人物身份、剧情因果、动作顺序、场景连续性、时长和明确约束。',
+        '保留每个 @图片N、@视频N、@音频N 引用及其用途，不得杜撰新的引用。',
+        '消除矛盾和含糊之处，补足可拍的镜头与动作细节，不要为了简短而删掉关键内容。',
+        '仅输出优化后的提示词正文，不要解释、提问、代码围栏或 JSON。',
+      ].join(String.fromCharCode(10)),
+    },
+    {
+      role: 'user',
+      content: [
+        '节点名称：' + (String(nodeName || '').trim() || '（空）'),
+        '目标视频设置：' + JSON.stringify(normalizeTarget(target)),
+        '可用参考素材：' + JSON.stringify(references || {}),
+        '',
+        '原始提示词：',
+        String(sourceText || '').trim() || '（空，请按节点名称和参考素材扩写完整提示词）',
+      ].join(String.fromCharCode(10)),
+    },
+  ];
+}
+
+function buildOpusDetailPassMessages({ firstPass, originalSourceText, target, references, nodeName }) {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是视频镜头与动作细节编辑。把上一轮 Opus 整理稿提升到可直接执行的细节程度；这一轮仍不套用片种 Skill 或 JSON 模板。',
+        '具体补清主体外观和相互位置、动作的起因与连续过程、接触与反应、镜头景别和运动、场景材质与光线、声音和节奏；只补对画面有用且能拍出的细节。',
+        '不要把原文已有细节压缩成概括句；不要增加与原文冲突的人物、道具、剧情或参考素材。',
+        '严格保持原始总时长、人物身份、空间方向、结局及每个 @图片N、@视频N、@音频N 的编号和用途。',
+        '仅输出细节增强后的完整中文提示词正文，不要解释、提问、代码围栏或 JSON。',
+      ].join(String.fromCharCode(10)),
+    },
+    {
+      role: 'user',
+      content: [
+        '节点名称：' + (String(nodeName || '').trim() || '（空）'),
+        '目标视频设置：' + JSON.stringify(normalizeTarget(target)),
+        '可用参考素材：' + JSON.stringify(references || {}),
+        '',
+        '上一轮 Opus 整理稿：',
+        String(firstPass || '').trim(),
+        '',
+        '原始提示词（用于核对并保留细节与约束）：',
+        String(originalSourceText || '').trim() || '（空）',
+      ].join(String.fromCharCode(10)),
+    },
+  ];
+}
+
+function buildMessages({ sourceText, originalSourceText, mode, skillId, target, references, nodeName, lockedTarget = false }) {
   const normalizedMode = normalizeMode(mode);
   const normalizedSkillId = normalizeSkillId(skillId);
-  const normalizedTarget = resolveTarget(sourceText, target);
+  const normalizedTarget = lockedTarget ? normalizeTarget(target) : resolveTarget(sourceText, target);
   const promptText = String(sourceText || '').trim();
   const skillMeta = normalizedSkillId ? loadSeedanceLibrary().byId.get(normalizedSkillId) : null;
   const systemContent = skillMeta
@@ -238,8 +297,10 @@ function buildMessages({ sourceText, mode, skillId, target, references, nodeName
         `目标视频设置：${JSON.stringify(normalizedTarget)}`,
         `可用参考素材：${JSON.stringify(references || {})}`,
         '',
-        promptText ? '原始提示词：' : '原始提示词为空。请按片种 Skill 和节点名称、参考素材直接扩写完整可生成提示词，不要返回空 prompt。',
+        promptText ? (originalSourceText ? 'Opus 细节增强稿：' : '原始提示词：') : '原始提示词为空。请按片种 Skill 和节点名称、参考素材直接扩写完整可生成提示词，不要返回空 prompt。',
         promptText || '（空）',
+        originalSourceText ? '原始提示词（用于核对并保留关键约束）：' : '',
+        originalSourceText ? String(originalSourceText).trim() : '',
         '',
         '只返回技能规定的严格 JSON，不要 Markdown。',
       ].join('\n'),
@@ -251,6 +312,8 @@ module.exports = {
   SKILL_PATH,
   SEEDANCE_LIBRARY_PATH,
   alignPromptDuration,
+  buildOpusFirstPassMessages,
+  buildOpusDetailPassMessages,
   buildMessages,
   cleanJsonText,
   extractSourceDuration,

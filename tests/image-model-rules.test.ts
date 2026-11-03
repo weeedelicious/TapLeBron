@@ -1,8 +1,8 @@
 /**
- * 图片节点模型：Seedream 5 Pro + Nano-banana Flash（2026-08-28）。
+ * 图片节点模型：Nano-banana Pro / 2.1、GPT image、Seedream 5 Pro / Lite。
  *
- * Lite 已从下拉拿掉；存量节点上的 seedream-5-lite 读的时候改写成 Pro。
- * Flash 跟 Pro 走同一套 Gemini 出图参数（gemini-params / gemini-interactions）。
+ * 2026-08-28 曾把 Lite 下线，线上后来又放开（RETIRED_IMAGE_MODELS 清空），这里按线上现状。
+ * Flash 已从新建菜单移除，旧别名仍归一到 gemini-3.1-flash-image。
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -21,32 +21,34 @@ import {
 const openAIImageProvider = require('../server/providers/OpenAIImageProvider')
 
 describe('图片节点可选模型', () => {
-  it('下拉包含 Nano、GPT、Image 2.5 和 Seedream Pro，没有 Lite', () => {
+  it('下拉包含 Nano Pro / 2.1、GPT、Image 2.5 和 Seedream Pro / Lite', () => {
     const models = listSelectableImageModels()
     expect(models.map((item) => item.value)).toEqual([
       'gemini-3-pro-image',
-      'gemini-3.1-flash-image',
+      'gemini-nano-banana-2.1',
       'gpt-image-2',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'seedream-5-pro',
+      'seedream-5-lite',
     ])
     expect(models.map((item) => item.label)).toEqual([
       'Nano-banana Pro',
-      'Nano-banana Flash',
+      'Nano-banana 2.1',
       'GPT image 2.0',
       'GPT image 2.5 Flare',
       'GPT image 2.5 Sunburst',
       'Seedream 5 Pro',
+      'Seedream 5 Lite',
     ])
   })
 
-  it('已下线的 Lite 读成 Pro，网关 id 也归一', () => {
-    expect(normalizeImageModelValue('seedream-5-lite')).toBe('seedream-5-pro')
-    expect(normalizeImageModelValue('seedream5lite')).toBe('seedream-5-pro')
-    expect(normalizeImageModelValue('bytedance-seed/seedream-5-lite')).toBe('seedream-5-pro')
+  it('Lite 保持自己的模型，网关 id 也归一', () => {
+    expect(normalizeImageModelValue('seedream-5-lite')).toBe('seedream-5-lite')
+    expect(normalizeImageModelValue('seedream5lite')).toBe('seedream-5-lite')
+    expect(normalizeImageModelValue('bytedance-seed/seedream-5-lite')).toBe('seedream-5-lite')
     expect(normalizeImageModelValue('bytedance-seed/seedream-5-pro')).toBe('seedream-5-pro')
-    expect(openAIImageProvider.normalizeImageModel('seedream-5-lite')).toBe('seedream-5-pro')
+    expect(openAIImageProvider.normalizeImageModel('seedream-5-lite')).toBe('seedream-5-lite')
   })
 
   it('Flash 别名归一到 gemini-3.1-flash-image', () => {

@@ -43,6 +43,7 @@ interface VideoModelRule {
   modeInputs?: Partial<Record<VideoModeKey, VideoModeRule['inputs']>>
   audio?: Array<'on' | 'off'>
   generationCounts?: number[]
+  generationCountsByResolution?: Record<string, number[]>
   referenceVideo?: {
     maxCount: number
     minDurationSec: number
@@ -258,14 +259,22 @@ export function normalizeVideoDurationValue(model: string | undefined, duration?
   return Math.min(durationRule.max, Math.max(durationRule.min, Math.round(value)))
 }
 
-export function getVideoGenerationCounts(model: string | undefined, _hasImageReference?: boolean) {
-  return getVideoModelRule(model).generationCounts ?? [1]
+export function getVideoGenerationCounts(model: string | undefined, _hasImageReference?: boolean, resolution?: string) {
+  const modelRule = getVideoModelRule(model)
+  const resolutionCounts = resolution ? modelRule.generationCountsByResolution?.[resolution] : undefined
+  return resolutionCounts ?? modelRule.generationCounts ?? [1]
 }
 
-export function normalizeVideoGenerationCount(model: string | undefined, count: number | undefined, hasImageReference: boolean) {
-  const options = getVideoGenerationCounts(model, hasImageReference)
+export function normalizeVideoGenerationCount(
+  model: string | undefined,
+  count: number | undefined,
+  hasImageReference: boolean,
+  resolution?: string,
+) {
+  const options = getVideoGenerationCounts(model, hasImageReference, resolution)
   const value = Number(count || 1)
-  return options.includes(value) ? value : options[0] || 1
+  if (options.includes(value)) return value
+  return [...options].filter(option => option <= value).sort((a, b) => b - a)[0] ?? options[0] ?? 1
 }
 
 export function validateVideoCapability(input: {
@@ -323,7 +332,7 @@ export function validateVideoCapability(input: {
     if (message) return message
   }
 
-  const countOptions = getVideoGenerationCounts(input.model, input.imageCount > 0)
+  const countOptions = getVideoGenerationCounts(input.model, input.imageCount > 0, input.resolution)
   const requestCount = Number(input.count || 1)
   if (!countOptions.includes(requestCount)) return `${modeRule.label}当前只支持生成 ${countOptions.join('/')} 个视频`
   return ''

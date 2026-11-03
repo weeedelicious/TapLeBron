@@ -657,8 +657,17 @@ function enqueuePersistNodes(save: PendingNodeSave) {
     save.resolve?.(false);
     return;
   }
-  pendingNodeSave?.resolve?.(false);
-  pendingNodeSave = save;
+  // 排队中的保存被更新快照顶替时，不能把 persistNodesAndWait 直接打成 false。
+  // 补帧 / 校色会先 addNodeAt 再 wait；节点量尺寸一变又会 debounce 一次保存，
+  // 旧逻辑会把这次 wait 判失败，补帧任务根本发不出去。
+  const previousResolve = pendingNodeSave?.resolve;
+  pendingNodeSave = {
+    ...save,
+    resolve: (ok: boolean) => {
+      previousResolve?.(ok);
+      save.resolve?.(ok);
+    },
+  };
   nodeSaveSetState = save.setState;
   void drainNodeSaveQueue();
 }
@@ -1172,12 +1181,8 @@ export function edgesFromNodeReferences(
     const slots: Array<[string, unknown]> = [
       ["compare-a", params.compareRefA],
       ["compare-b", params.compareRefB],
-      ...(nodeType === "video_compare"
-        ? [
-            ["compare-c", params.compareRefC],
-            ["compare-d", params.compareRefD],
-          ] as Array<[string, unknown]>
-        : []),
+      ["compare-c", params.compareRefC],
+      ["compare-d", params.compareRefD],
     ];
     for (const [handle, refValue] of slots) {
       const sourceAlias = String(

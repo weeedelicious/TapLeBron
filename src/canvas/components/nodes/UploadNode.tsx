@@ -885,7 +885,7 @@ export function UploadNode({ id, data, selected }: Props) {
           ref={inputRef}
           type="file"
           multiple
-          accept="image/*,video/*,audio/*"
+          accept="image/*,video/*,audio/*,.docx,.doc"
           className="hidden"
           onChange={e => handleFiles(e.target.files)}
         />

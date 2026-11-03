@@ -10,24 +10,27 @@
  * （8-25 补收路由那句 `nodeData.url = urls` 冲掉过 44 条视频）。
  */
 import { useCallback, useMemo, useState } from 'react'
-import { Download, Image as ImageIcon, Loader2, Maximize2, PersonStanding } from 'lucide-react'
+import { Download, Image as ImageIcon, Loader2, Maximize2, PersonStanding, Video } from 'lucide-react'
 import { NodeShell } from './NodeShell'
 import { MediaNodeToolbar, type MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { ImagePreview } from '@/components/ImagePreview'
 import { useCanvasStore } from '@/store/canvasStore'
 import { assetsApi } from '@/lib/api'
+import { REHEARSAL_UPLOAD_OPTIONS } from '@/features/director-stage/rehearsalEncode'
 import { errorToText } from '@/lib/display'
 import { primaryOutputUrl } from '@/lib/primaryOutput'
 import { mediaPreviewUrl } from '@/lib/mediaPreview'
-import { defaultImageParams } from '@/lib/nodeData'
+import { defaultImageParams, defaultVideoParams } from '@/lib/nodeData'
 import { resourceMetaFromUploadPayload } from '@/lib/whiteboard'
 import type { CanvasNodeData } from '@/lib/types'
 import {
   DirectorStageModal,
+  type DirectorStageRehearsalPayload,
   type DirectorStageRenderPayload,
 } from '@/features/director-stage/DirectorStageModal'
 import {
   appendStageRender,
+  stageRehearsalVideoNodeData,
   stageRenderNodeData,
   stageRenderNodePosition,
   stageRenderSourceWidth,
@@ -130,6 +133,72 @@ export function DirectorStageNode({ id, data, selected }: Props) {
     }
   }, [addNodeAt, data, edges, id, nodes, pushHistory, updateNodeData])
 
+  const handleRenderVideo = useCallback(async ({ file, width, height, durationSec, fps, state }: DirectorStageRehearsalPayload) => {
+    setBusy(true)
+    setError('')
+    try {
+      const createdAtMs = Date.now()
+      const uploaded = await assetsApi.upload(data.projectUuid, file, undefined, REHEARSAL_UPLOAD_OPTIONS)
+      const uploadedMimeType = String(uploaded.meta?.mimeType || '').toLowerCase()
+      if (!/\.mp4(?:$|[?#])/i.test(uploaded.url) || uploadedMimeType !== 'video/mp4') {
+        throw new Error('服务端没有返回有效的 MP4 视频，请重试')
+      }
+      const resourceMeta = resourceMetaFromUploadPayload(
+        uploaded.meta as Record<string, unknown> | undefined,
+        'video',
+      )
+      const stageNode = nodes.find((node) => node.id === id || node.data.nodeKey === id)
+      const outgoingCount = edges.filter((edge) => edge.source === id).length
+      const position = stageRenderNodePosition({
+        stageX: stageNode?.position.x ?? 0,
+        stageY: stageNode?.position.y ?? 0,
+        stageWidth: stageRenderSourceWidth(stageNode),
+        outgoingCount,
+      })
+      pushHistory()
+      addNodeAt(
+        'video',
+        position.x,
+        position.y,
+        stageRehearsalVideoNodeData({
+          stageNodeId: id,
+          stageName: data.name,
+          url: uploaded.url,
+          width: resourceMeta?.width || width,
+          height: resourceMeta?.height || height,
+          durationSec: resourceMeta?.durationSec || durationSec,
+          fps,
+          createdAtMs,
+          resourceMeta,
+          state,
+          baseVideoParams: defaultVideoParams() as unknown as Record<string, unknown>,
+        }) as never,
+      )
+      updateNodeData(id, {
+        params: writeDirectorStageState(data.params, state) as unknown as Record<string, unknown>,
+      })
+      setOpen(false)
+    } catch (err) {
+      setError(errorToText((err as { response?: { data?: { error?: unknown } } })?.response?.data?.error ?? err, '出参考视频失败'))
+    } finally {
+      setBusy(false)
+    }
+  }, [addNodeAt, data, edges, id, nodes, pushHistory, updateNodeData])
+
+
+  const handleStageClose = useCallback((nextState: ReturnType<typeof readDirectorStageState>) => {
+    // The editor owns a local undo stack while it is open, but closing it must
+    // commit the final snapshot to the node. In particular, imported FBX URLs
+    // must survive unmounting the Three.js preview and reopening the modal.
+    if (JSON.stringify(stageState) !== JSON.stringify(nextState)) {
+      pushHistory()
+      updateNodeData(id, {
+        params: writeDirectorStageState(data.params, nextState) as unknown as Record<string, unknown>,
+      })
+    }
+    setOpen(false)
+  }, [data.params, id, pushHistory, stageState, updateNodeData])
+
   const download = useCallback(() => {
     if (!mainUrl) return
     const link = document.createElement('a')
@@ -194,7 +263,7 @@ export function DirectorStageNode({ id, data, selected }: Props) {
             <PersonStanding size={22} />
             <div>还没出图</div>
             <div style={{ fontSize: 11, color: '#7d7397', lineHeight: 1.5 }}>
-              双击这里打开三维空间，摆好机位和白模姿势再出图
+              双击打开三维空间，摆好机位后可以出图或出白模参考视频
             </div>
           </div>
         )}
@@ -245,8 +314,9 @@ export function DirectorStageNode({ id, data, selected }: Props) {
           nodeName={data.name}
           reference={reference}
           busy={busy}
-          onCancel={() => setOpen(false)}
+          onClose={handleStageClose}
           onRender={handleRender}
+          onRenderVideo={handleRenderVideo}
         />
       )}
 

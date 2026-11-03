@@ -38,6 +38,27 @@ function refCount(params: { imageList?: unknown[]; videoList?: unknown[]; mixedL
   )
 }
 
+function videoDepthEstimate(params: Partial<VideoParams>): GenerationEstimate | null {
+  const raw = (params as Record<string, unknown>).videoDepth
+  if (!raw || typeof raw !== 'object') return null
+  const settings = raw as Record<string, unknown>
+  const provider = String(settings.provider || '')
+  const duration = clamp(Number(settings.durationSec ?? 5) || 5, 0.2, 180)
+  const preset = Number(settings.maxRes || 720)
+  const sizeFactor = preset >= 1080 ? 1.8 : preset <= 480 ? 0.72 : 1
+  const encoder = String(settings.encoder || 'vitl')
+  const encoderFactor = encoder === 'vits' ? 0.7 : encoder === 'vitb' ? 1 : 1.6
+  const estimatedMs = provider === 'depthcrafter'
+    ? (45 + duration * 28 * sizeFactor) * SECOND
+    : (12 + duration * 3.2 * sizeFactor * encoderFactor) * SECOND
+  return {
+    taskKind: 'video',
+    model: String(settings.model || (provider === 'depthcrafter' ? 'DepthCrafter' : 'Video Depth Anything')),
+    quantity: 1,
+    estimatedMs: clamp(Math.round(estimatedMs), 20 * SECOND, 6 * 60 * 60 * 1000),
+  }
+}
+
 function frameInterpolationEstimate(params: Partial<VideoParams>): GenerationEstimate | null {
   const raw = (params as Record<string, unknown>).frameInterpolation
   if (!raw || typeof raw !== 'object') return null
@@ -104,6 +125,8 @@ function estimateImageTask(data: CanvasNodeData): GenerationEstimate {
 
 function estimateVideoTask(data: CanvasNodeData): GenerationEstimate {
   const params = (data.params ?? {}) as unknown as Partial<VideoParams>
+  const depthEstimate = videoDepthEstimate(params)
+  if (depthEstimate) return depthEstimate
   const interpolationEstimate = frameInterpolationEstimate(params)
   if (interpolationEstimate) return interpolationEstimate
   const model = String(params.model || data.generatorType || 'Seedance 2.0')

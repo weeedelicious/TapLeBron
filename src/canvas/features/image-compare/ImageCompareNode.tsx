@@ -7,11 +7,10 @@ import { defaultImageParams } from "@/lib/nodeData";
 import { resourceMetaFromUploadPayload } from "@/lib/whiteboard";
 import type { CanvasNodeData } from "@/lib/types";
 import {
-  IMAGE_COMPARE_HANDLE_A,
-  IMAGE_COMPARE_HANDLE_B,
   IMAGE_COMPARE_MODE_LABELS,
+  IMAGE_COMPARE_SLOTS,
+  imageCompareInputsSizeMismatch,
   imageCompareResolutionLabel,
-  imageCompareSizeMismatch,
   normalizeImageCompareMode,
   resolveImageCompareInputs,
   type ImageCompareInput,
@@ -19,7 +18,7 @@ import {
 import {
   STITCH_DIRECTION_LABELS,
   renderStitchedFile,
-  type StitchDirection,
+  type StitchExportDirection,
 } from "./image-compare-stitch";
 import { ImageCompareViewerModal } from "./ImageCompareViewerModal";
 import "./image-compare.css";
@@ -38,7 +37,7 @@ function CompareSlot({
   label,
   input,
 }: {
-  label: "A" | "B";
+  label: "A" | "B" | "C" | "D";
   input: ImageCompareInput | null;
 }) {
   return (
@@ -69,7 +68,7 @@ export function ImageCompareNode({ id, data, selected }: Props) {
 
   const params = (data.params ?? {}) as Record<string, unknown>;
   const mode = normalizeImageCompareMode(params.compareMode);
-  const { inputA, inputB, connectedCount, ready } = useMemo(
+  const { inputA, inputB, inputs, slots, connectedCount, ready } = useMemo(
     () => resolveImageCompareInputs(data, nodes),
     [data, nodes],
   );
@@ -82,17 +81,22 @@ export function ImageCompareNode({ id, data, selected }: Props) {
    * 导出左右拼接图：渲染 canvas → 上传成资产 → 新建一个图片节点 → 连一条 capture 边。
    * 完全照 PanoramaViewerNode.captureViewpoint 的形状来，那条路在生产上跑了很久。
    */
-  const exportStitched = useCallback(async (direction: StitchDirection) => {
+  const exportStitched = useCallback(async (direction: StitchExportDirection) => {
     if (!inputA || !inputB || exporting) return;
     setExporting(true);
     setExportError("");
     try {
+      // 四宫格用全部已连的输入；左右 / 上下拼接仍然只拼前两张。
+      const quadInputs = (inputs.length ? inputs : [inputA, inputB]).filter(Boolean);
       const stitched = await renderStitchedFile({
         urlA: inputA.fullUrl,
         urlB: inputB.fullUrl,
         titleA: inputA.title,
         titleB: inputB.title,
         direction,
+        urls: direction === "quad"
+          ? quadInputs.map((input) => ({ url: input.fullUrl, title: input.title }))
+          : undefined,
       });
       const directionLabel = STITCH_DIRECTION_LABELS[stitched.direction];
       const uploaded = await assetsApi.upload(data.projectUuid, stitched.file);
@@ -116,10 +120,9 @@ export function ImageCompareNode({ id, data, selected }: Props) {
         (selfNode?.position.x ?? 0) + OUTPUT_OFFSET_X,
         (selfNode?.position.y ?? 0) + outgoingCount * 44,
         {
-          name: `对比拼接${directionLabel}｜${inputA.title} + ${inputB.title}`.slice(
-            0,
-            60,
-          ),
+          name: `对比拼接${directionLabel}｜${direction === "quad"
+            ? quadInputs.map((input) => input.title).join(" + ")
+            : inputA.title + " + " + inputB.title}`.slice(0, 60),
           url: [uploaded.url],
           action: "image_resource",
           sourceKind: "derived",
@@ -195,6 +198,7 @@ export function ImageCompareNode({ id, data, selected }: Props) {
     id,
     inputA,
     inputB,
+    inputs,
     nodes,
     setEdges,
     updateNodeData,
@@ -209,18 +213,15 @@ export function ImageCompareNode({ id, data, selected }: Props) {
         openViewer();
       }}
     >
-      <Handle
-        id={IMAGE_COMPARE_HANDLE_A}
-        type="target"
-        position={Position.Left}
-        className="image-compare-node-handle image-compare-node-handle-a"
-      />
-      <Handle
-        id={IMAGE_COMPARE_HANDLE_B}
-        type="target"
-        position={Position.Left}
-        className="image-compare-node-handle image-compare-node-handle-b"
-      />
+      {IMAGE_COMPARE_SLOTS.map((slot) => (
+        <Handle
+          key={slot.handle}
+          id={slot.handle}
+          type="target"
+          position={Position.Left}
+          className={"image-compare-node-handle image-compare-node-handle-" + slot.letter.toLowerCase()}
+        />
+      ))}
       <Handle
         id="capture"
         type="source"
@@ -232,13 +233,13 @@ export function ImageCompareNode({ id, data, selected }: Props) {
         <div>
           <Columns2 size={15} strokeWidth={1.9} />
           <strong>图片对比</strong>
-          <span>{ready ? "就绪" : `${connectedCount}/2`}</span>
+          <span>{`${connectedCount}/4`}</span>
         </div>
         <div className="image-compare-node-actions nodrag">
           <button
             type="button"
             disabled={!ready}
-            title={ready ? "打开对比" : "请先连接两张图片"}
+            title={ready ? "打开对比" : "请先至少连接两张图片"}
             aria-label="打开对比"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -252,8 +253,9 @@ export function ImageCompareNode({ id, data, selected }: Props) {
       </header>
 
       <div className="image-compare-node-slots">
-        <CompareSlot label="A" input={inputA} />
-        <CompareSlot label="B" input={inputB} />
+        {IMAGE_COMPARE_SLOTS.map((slot, index) => (
+          <CompareSlot key={slot.handle} label={slot.letter} input={slots[index]} />
+        ))}
       </div>
 
       <footer className="image-compare-node-footer">
@@ -263,12 +265,12 @@ export function ImageCompareNode({ id, data, selected }: Props) {
             : exporting
               ? "正在拼接并上传…"
               : ready
-                ? "双击打开对比 · 在弹窗里导出拼接图"
+                ? "双击打开对比 · 按 6 看宫格"
                 : connectedCount === 1
                   ? "还差一张图片"
-                  : "连接两个图片节点的输出"}
+                  : "最多连接四个图片节点"}
         </span>
-        {ready && imageCompareSizeMismatch(inputA, inputB) ? (
+        {ready && imageCompareInputsSizeMismatch(slots) ? (
           <i title="两张图尺寸不同，叠加/差异对比会有偏差；拼接时会按同一高度缩放">
             尺寸不同
           </i>
@@ -280,7 +282,8 @@ export function ImageCompareNode({ id, data, selected }: Props) {
         <ImageCompareViewerModal
           inputA={inputA}
           inputB={inputB}
-          initialMode={mode}
+          inputs={inputs}
+          initialMode={connectedCount > 2 ? "grid" : mode}
           exporting={exporting}
           onExportStitched={(direction) => void exportStitched(direction)}
           onClose={() => setViewerOpen(false)}

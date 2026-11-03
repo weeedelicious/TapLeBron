@@ -871,6 +871,25 @@ async function migrateContentSchema() {
       INDEX idx_canvas_history_hidden_user (user_id, hidden_at)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS previs_documents (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      document_key CHAR(36) NOT NULL,
+      canvas_id BIGINT UNSIGNED NOT NULL,
+      node_key VARCHAR(80) NOT NULL,
+      owner_id BIGINT UNSIGNED NOT NULL,
+      revision INT UNSIGNED NOT NULL DEFAULT 1,
+      active_shot_id VARCHAR(64) NULL,
+      payload LONGTEXT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_previs_document_key (document_key),
+      UNIQUE KEY uk_previs_canvas_node (canvas_id, node_key),
+      INDEX idx_previs_owner (owner_id)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
 }
 
 async function migrateUsageSchema() {

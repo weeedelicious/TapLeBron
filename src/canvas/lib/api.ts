@@ -24,6 +24,29 @@ import { errorToText } from "./display";
 import { prepareAssetForUpload } from "./uploadPrep";
 
 const http = axios.create({ baseURL: "/api" });
+
+/** 白模预演 / M-studio 的独立工程。工程数据不写进画布 JSON，按节点 nodeKey 一对一存。 */
+export interface PrevisDocument {
+  documentId: string;
+  revision: number;
+  activeShotId: string;
+  project: unknown;
+}
+
+export const previsApi = {
+  ensure: (projectUuid: string, nodeKey: string) =>
+    http
+      .post<PrevisDocument>(`/projects/${projectUuid}/previs-documents`, { nodeKey }, { headers: canvasSessionHeaders(projectUuid), timeout: 20_000 })
+      .then((r) => r.data),
+  read: (projectUuid: string, documentId: string) =>
+    http
+      .get<PrevisDocument>(`/projects/${projectUuid}/previs-documents/${documentId}`, { headers: canvasSessionHeaders(projectUuid), timeout: 20_000 })
+      .then((r) => r.data),
+  save: (projectUuid: string, documentId: string, body: { project: unknown; baseRevision: number; activeShotId: string }) =>
+    http
+      .put<PrevisDocument>(`/projects/${projectUuid}/previs-documents/${documentId}`, body, { headers: canvasSessionHeaders(projectUuid), timeout: 20_000 })
+      .then((r) => r.data),
+};
 const pendingGenerationErrorKey = "shotflow.pending-generation-errors.v1";
 
 /** Add the exclusive canvas-session token to upload calls as a fallback for Cindy preview pages. */
@@ -590,6 +613,7 @@ export const generateApi = {
     nodeName?: string;
     textModel: string;
     thinkingMode?: "fast" | "deep";
+    workflow?: "opus-optimize";
     target: {
       model: string;
       modeType: string;
@@ -904,6 +928,25 @@ export const toolboxApi = {
         },
       )
       .then((r) => r.data),
+  /** 把白板标注（透明 PNG）叠到整段视频上，服务端合成一条新视频。 */
+  videoAnnotate: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    annotationUrl: string,
+  ) =>
+    http
+      .post<{ url: string; sha1: string; meta: Record<string, unknown> }>(
+        "/toolbox/video-annotate",
+        {
+          projectUuid,
+          nodeKey,
+          sourceUrl,
+          annotationUrl,
+        },
+        { timeout: 600_000 },
+      )
+      .then((r) => r.data),
   videoCrop: (
     projectUuid: string,
     nodeKey: string,
@@ -926,7 +969,7 @@ export const toolboxApi = {
     nodeKey: string,
     sourceUrl: string,
     targetFps: number,
-    method: 'quality' | 'openflowframes' | 'video2x',
+    method: 'quality' | 'openflowframes' | 'video2x' | 'gmfss' | 'gimmvfi' | 'rife46',
     sourceNodeKey?: string,
   ) =>
     http
@@ -945,6 +988,37 @@ export const toolboxApi = {
         sourceUrl,
         targetFps,
         method,
+        sourceNodeKey,
+      })
+      .then((r) => r.data),
+  videoDepth: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    provider: 'video-depth-anything' | 'depthcrafter',
+    encoder: 'vits' | 'vitb' | 'vitl' | 'svd',
+    maxRes: 480 | 720 | 1080,
+    near: 'bright' | 'dark',
+    sourceNodeKey?: string,
+  ) =>
+    http
+      .post<{
+        jobId: string;
+        generationVersion?: number;
+        provider?: string;
+        encoder?: string;
+        model?: string;
+        maxRes?: number;
+        near?: string;
+        phaseLabel?: string;
+      }>('/toolbox/video-depth', {
+        projectUuid,
+        nodeKey,
+        sourceUrl,
+        provider,
+        encoder,
+        maxRes,
+        near,
         sourceNodeKey,
       })
       .then((r) => r.data),
@@ -984,6 +1058,38 @@ export const toolboxApi = {
       provider?: string;
       model?: string;
     }>('/toolbox/video-ui-removal', { projectUuid, nodeKey, sourceUrl, method, sourceNodeKey }).then((response) => response.data),
+  videoColorGrade: (
+    projectUuid: string,
+    nodeKey: string,
+    sourceUrl: string,
+    params: {
+      inputProfile: string;
+      look: string;
+      exposure: number;
+      temperature: number;
+      tint: number;
+      contrast: number;
+      saturation: number;
+      lift: number;
+      gamma: number;
+      gain: number;
+      grain: number;
+    },
+    sourceNodeKey?: string,
+  ) =>
+    http.post<{
+      jobId: string;
+      generationVersion?: number;
+      provider?: string;
+      model?: string;
+      workerJobId?: string;
+    }>('/toolbox/video-color-grade', {
+      projectUuid,
+      nodeKey,
+      sourceUrl,
+      sourceNodeKey,
+      params,
+    }).then((response) => response.data),
   mediaEnhance: (
     projectUuid: string,
     nodeKey: string,
@@ -1014,6 +1120,47 @@ export const toolboxApi = {
         sourceNodeKey,
       })
       .then((r) => r.data),
+};
+
+export type ProjectAssetLibraryProject = {
+  id: number;
+  name: string;
+  projectPath: string;
+  available: boolean;
+};
+
+export type ProjectAssetLibraryItem = {
+  name: string;
+  fileName?: string;
+  relativePath: string;
+  mediaType?: "image" | "video";
+  /** 2d / 3d / atmosphere */
+  stage?: string;
+  /** character / scene */
+  assetType?: string;
+  hero?: boolean;
+};
+
+/** 从项目资产库拖进 / 双击插入画布时的载荷；有 projectId + relativePath 时由服务端导入原文件。 */
+export type ProjectAssetInsertPayload = {
+  url: string;
+  name: string;
+  projectId?: number;
+  relativePath?: string;
+  mediaType?: "image" | "video";
+};
+
+export const projectAssetLibraryApi = {
+  listProjects: () =>
+    http.get<{ projects: ProjectAssetLibraryProject[] }>("/project-asset-library/projects").then((r) => r.data.projects ?? []),
+  listModules: (projectId: number) =>
+    http.get<{ project: { id: number; name: string }; assets: ProjectAssetLibraryItem[] }>(`/project-asset-library/projects/${projectId}/modules`).then((r) => r.data),
+  fileUrl: (projectId: number, relativePath: string) =>
+    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&original=1`,
+  thumbUrl: (projectId: number, relativePath: string, width = 360) =>
+    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&w=${encodeURIComponent(String(width))}`,
+  importToCanvas: (canvasUuid: string, projectId: number, relativePath: string, name?: string) =>
+    http.post("/project-asset-library/import", { projectUuid: canvasUuid, projectId, path: relativePath, name }).then((r) => r.data),
 };
 
 export const historyAssetsApi = {

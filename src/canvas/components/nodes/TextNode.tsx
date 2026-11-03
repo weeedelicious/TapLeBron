@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, useUpdateNodeInternals, useViewport } from '@xyflow/react'
-import { Check, Copy, Maximize2, X } from 'lucide-react'
+import { Check, Copy, Maximize2, WandSparkles, X } from 'lucide-react'
 import { NodeShell } from './NodeShell'
 import { NodeTypeIcon } from './nodeTypeIcon'
+import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
 import { ResizablePanelHandle, useResizablePanel, type PanelSize } from './ResizablePanelHandle'
 import { useCanvasStore } from '@/store/canvasStore'
 import { generateApi } from '@/lib/api'
-import { TEXT_MODELS, TEXT_THINKING_MODES, defaultTextParams, normalizeTextModel } from '@/lib/nodeData'
+import { TEXT_MODELS, TEXT_THINKING_MODES, defaultTextParams, defaultVideoParams, normalizeTextModel } from '@/lib/nodeData'
 import { liveRefUrl } from '@/lib/primaryOutput'
-import type { CanvasNodeData, NodeRef, TextParams } from '@/lib/types'
+import type { CanvasNodeData, NodeRef, TextParams, VideoParams } from '@/lib/types'
 
 interface Props {
   id: string
@@ -28,6 +29,15 @@ type EdgeLike = {
 }
 
 type TextNodeRef = NodeRef & { content?: unknown }
+type PromptWashMode = 'conservative' | 'cinematic' | 'references' | 'timeline'
+type PromptWashResult = Awaited<ReturnType<typeof generateApi.promptWash>>
+
+const PROMPT_WASH_MODES: Array<{ value: PromptWashMode; label: string; description: string; project: string }> = [
+  { value: 'conservative', label: '保守优化', description: '保留原创意，只补齐歧义与必要细节', project: 'dexhunter/seedance2-skill' },
+  { value: 'cinematic', label: '电影化', description: '强化镜头、光影、节奏与声音设计', project: 'jnMetaCode/ai-shortfilm-prompts' },
+  { value: 'references', label: '参考素材强化', description: '明确每个 @素材继承与不继承的内容', project: 'OSideMedia/higgsfield-ai-prompt-skill' },
+  { value: 'timeline', label: '时间轴分镜', description: '按总时长拆分连续镜头和主要动作', project: 'LearnPrompt/awesome-seedance' },
+]
 
 type NormalizedTextDisplayStyle = {
   fontSize: number
@@ -171,11 +181,22 @@ export function TextNode({ id, data, selected }: Props) {
   const [copied, setCopied] = useState(false)
   const [isTextSelectionArmed, setIsTextSelectionArmed] = useState(false)
   const [contentExpanded, setContentExpanded] = useState(false)
+  const [promptWashOpen, setPromptWashOpen] = useState(false)
+  const [promptWashMode, setPromptWashMode] = useState<PromptWashMode>('conservative')
+  const [promptWashHoverMode, setPromptWashHoverMode] = useState<PromptWashMode | null>(null)
+  const [promptWashSource, setPromptWashSource] = useState('')
+  const [promptWashResult, setPromptWashResult] = useState<PromptWashResult | null>(null)
+  const [promptWashLoading, setPromptWashLoading] = useState(false)
+  const [promptWashProgress, setPromptWashProgress] = useState(0)
+  const [promptWashError, setPromptWashError] = useState<string | null>(null)
+  const [promptWashMenuRect, setPromptWashMenuRect] = useState<DOMRect | null>(null)
+  const [promptWashProgressRect, setPromptWashProgressRect] = useState<DOMRect | null>(null)
   const [outputAreaHeightRatio, setOutputAreaHeightRatio] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const generationRunRef = useRef(0)
   const activeTaskRef = useRef<{ taskId: string; generationVersion: number } | null>(null)
   const dividerRef = useRef<HTMLDivElement>(null)
+  const promptWashButtonRef = useRef<HTMLButtonElement>(null)
   const panelPortalRef = useRef<HTMLDivElement>(null)
   const outputRef = useRef<HTMLDivElement>(null)
   const inlineEditorRef = useRef<HTMLTextAreaElement>(null)
@@ -198,6 +219,7 @@ export function TextNode({ id, data, selected }: Props) {
   } | null>(null)
   const promptDraftRef = useRef(promptDraft)
   const contentDraftRef = useRef(contentDraft)
+  const promptWashActionRef = useRef<{ mode: PromptWashMode; at: number } | null>(null)
   const lastSyncedPromptRef = useRef(getParams(data).prompt)
   const lastSyncedContentRef = useRef(getParams(data).content)
   const isComposingRef = useRef(false)
@@ -277,6 +299,54 @@ export function TextNode({ id, data, selected }: Props) {
     }
     setPortalRect(dividerRef.current?.getBoundingClientRect() ?? null)
   }, [isPanelOpen, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
+
+  useLayoutEffect(() => {
+    if (!promptWashOpen) {
+      setPromptWashMenuRect(null)
+      return
+    }
+
+    const updateMenuRect = () => {
+      const toolbarButton = document.querySelector('[data-media-node-toolbar="true"] [aria-label="洗提示词"]') as HTMLButtonElement | null
+      setPromptWashMenuRect((toolbarButton ?? promptWashButtonRef.current)?.getBoundingClientRect() ?? null)
+    }
+
+    updateMenuRect()
+    window.addEventListener('resize', updateMenuRect)
+    window.addEventListener('scroll', updateMenuRect, true)
+    return () => {
+      window.removeEventListener('resize', updateMenuRect)
+      window.removeEventListener('scroll', updateMenuRect, true)
+    }
+  }, [promptWashOpen, zoom, vpX, vpY, nodeAbsPos?.x, nodeAbsPos?.y])
+
+  useLayoutEffect(() => {
+    const isProgressVisible = promptWashLoading || promptWashProgress > 0 || Boolean(promptWashError)
+    if (!isProgressVisible) return
+
+    let frame = 0
+    const syncProgressPosition = () => {
+      const nextRect = dividerRef.current?.getBoundingClientRect()
+      if (nextRect) {
+        setPromptWashProgressRect((previous) => {
+          if (
+            previous &&
+            previous.left === nextRect.left &&
+            previous.top === nextRect.top &&
+            previous.right === nextRect.right &&
+            previous.bottom === nextRect.bottom
+          ) {
+            return previous
+          }
+          return nextRect
+        })
+      }
+      frame = window.requestAnimationFrame(syncProgressPosition)
+    }
+
+    syncProgressPosition()
+    return () => window.cancelAnimationFrame(frame)
+  }, [promptWashError, promptWashLoading, promptWashProgress])
 
   useEffect(() => {
     updateNodeInternals(id)
@@ -611,6 +681,197 @@ export function TextNode({ id, data, selected }: Props) {
     setParam('content', '')
     setGenError(null)
   }, [setParam])
+
+  const findDownstreamVideo = useCallback(() => {
+    const state = useCanvasStore.getState()
+    const sourceNode = findNodeByKey(state.nodes, id)
+    const sourceKeys = new Set([id, sourceNode?.id, sourceNode?.data.nodeKey].filter(Boolean) as string[])
+    const edge = state.edges.find((item) => sourceKeys.has(item.source))
+    if (!edge) return undefined
+    const target = findNodeByKey(state.nodes, edge.target)
+    return target?.data.type === 'video' ? target : undefined
+  }, [id])
+
+  const getCurrentTextNodeContent = useCallback(() => {
+    const state = useCanvasStore.getState()
+    const freshNode = findNodeByKey(state.nodes, id)
+    const freshParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    if (Boolean(freshParams.manualMode)) {
+      return (contentDraftRef.current || freshParams.content || '').trim()
+    }
+    return (freshParams.content || freshParams.prompt || promptDraftRef.current || '').trim()
+  }, [id, params])
+
+  const openPromptWash = useCallback(() => {
+    const source = getCurrentTextNodeContent()
+    setPromptWashSource(source)
+    setPromptWashResult(null)
+    setPromptWashError(source ? null : '请先在文字节点中填写内容')
+    const toolbarButton = document.querySelector('[data-media-node-toolbar="true"] [aria-label="洗提示词"]') as HTMLButtonElement | null
+    setPromptWashMenuRect((toolbarButton ?? promptWashButtonRef.current)?.getBoundingClientRect() ?? null)
+    setActivePanelNode(id)
+    setPromptWashOpen(true)
+  }, [getCurrentTextNodeContent, id, setActivePanelNode])
+
+  const handlePromptWash = useCallback(async (requestedMode: PromptWashMode = promptWashMode, requestedSource = promptWashSource) => {
+    const sourceText = requestedSource.trim()
+    if (!sourceText) {
+      setPromptWashError('请先填写要优化的文字')
+      return
+    }
+    const videoNode = findDownstreamVideo()
+    const videoParams = videoNode?.data.params as unknown as VideoParams | undefined
+    const defaults = defaultVideoParams()
+    const targetSettings = videoParams?.settings ?? defaults.settings
+    const state = useCanvasStore.getState()
+    const referenceLists = [
+      ...(videoParams?.imageList ?? []),
+      ...(videoParams?.videoList ?? []),
+      ...(videoParams?.audioList ?? []),
+    ]
+    const names = referenceLists.map((ref) => {
+      const refNode = findNodeByKey(state.nodes, ref.nodeId)
+      return String(refNode?.data.name || ref.nodeId || '').trim()
+    }).filter(Boolean)
+
+    setPromptWashLoading(true)
+    setPromptWashProgress(8)
+    setPromptWashError(null)
+    const progressTimer = window.setInterval(() => {
+      setPromptWashProgress((value) => Math.min(92, value + Math.max(1, Math.round((92 - value) / 7))))
+    }, 420)
+    try {
+      const result = await generateApi.promptWash({
+        projectUuid: data.projectUuid,
+        nodeKey: id,
+        sourceText,
+        mode: requestedMode,
+        textModel: normalizeTextModel(params.model),
+        thinkingMode: params.thinkingMode ?? 'fast',
+        target: {
+          model: videoParams?.model ?? defaults.model,
+          modeType: videoParams?.modeType ?? defaults.modeType,
+          duration: targetSettings.duration,
+          ratio: targetSettings.ratio,
+          resolution: targetSettings.resolution,
+          enableSound: targetSettings.enableSound,
+        },
+        references: {
+          imageCount: videoParams?.imageList?.length ?? connectedImages.length,
+          videoCount: videoParams?.videoList?.length ?? connectedVideos.length,
+          audioCount: videoParams?.audioList?.length ?? 0,
+          names,
+        },
+      })
+      setPromptWashResult(result)
+      setPromptWashProgress(100)
+      window.setTimeout(() => {
+        const current = useCanvasStore.getState().nodes.find((node) => node.id === id || node.data.nodeKey === id)
+        const x = Number(current?.position?.x || 0) + nodeWidth + 80
+        const y = Number(current?.position?.y || 0) + nodeHeight + 70
+        useCanvasStore.getState().addNodeAt('text', x, y, {
+          params: { ...defaultTextParams(), content: result.prompt, hasGenerated: true, manualMode: false, textList: [{ nodeId: id, url: '', content: sourceText }] } as unknown as Record<string, unknown>,
+        })
+        setPromptWashProgress(0)
+        setPromptWashProgressRect(null)
+      }, 360)
+    } catch (error) {
+      const message = (error as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+        || (error instanceof Error ? error.message : String(error))
+      setPromptWashError(message)
+      setPromptWashProgress(0)
+    } finally {
+      window.clearInterval(progressTimer)
+      setPromptWashLoading(false)
+    }
+  }, [connectedImages.length, connectedVideos.length, data.projectUuid, findDownstreamVideo, id, nodeHeight, nodeWidth, params.model, params.thinkingMode, promptWashMode, promptWashSource])
+
+  const startPromptWashMode = useCallback((mode: PromptWashMode) => {
+    const source = getCurrentTextNodeContent()
+    setPromptWashProgressRect(dividerRef.current?.getBoundingClientRect() ?? null)
+    setPromptWashMode(mode)
+    setPromptWashOpen(false)
+    setPromptWashMenuRect(null)
+    setPromptWashSource(source)
+    setPromptWashResult(null)
+    setPromptWashHoverMode(null)
+    setPromptWashProgress(source ? 4 : 0)
+    setPromptWashError(null)
+    if (!source) {
+      setPromptWashError('请先在文字节点中填写内容')
+      return
+    }
+    void handlePromptWash(mode, source)
+  }, [getCurrentTextNodeContent, handlePromptWash])
+
+  const selectPromptWashMode = useCallback((event: MouseEvent<HTMLButtonElement> | PointerEvent<HTMLButtonElement>, mode: PromptWashMode) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const now = Date.now()
+    const previous = promptWashActionRef.current
+    if (previous?.mode === mode && now - previous.at < 500) return
+    promptWashActionRef.current = { mode, at: now }
+    startPromptWashMode(mode)
+  }, [startPromptWashMode])
+
+  const applyPromptWashToCurrent = useCallback(() => {
+    if (!promptWashResult?.prompt) return
+    const state = useCanvasStore.getState()
+    const freshNode = findNodeByKey(state.nodes, id)
+    const current = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
+    state.pushHistory()
+    state.updateNodeData(id, {
+      params: { ...current, content: promptWashResult.prompt, hasGenerated: true, manualMode: false } as unknown as Record<string, unknown>,
+    })
+    setContentDraft(promptWashResult.prompt)
+    contentDraftRef.current = promptWashResult.prompt
+    setPromptWashOpen(false)
+  }, [id, params, promptWashResult])
+
+  const createPromptWashTextNode = useCallback(() => {
+    if (!promptWashResult?.prompt) return
+    const state = useCanvasStore.getState()
+    const sourceNode = findNodeByKey(state.nodes, id) as (NodeLike & { position?: { x: number; y: number } }) | undefined
+    const x = Number(sourceNode?.position?.x || 0) + nodeWidth + 80
+    const y = Number(sourceNode?.position?.y || 0)
+    state.addNodeAt('text', x, y, {
+      params: {
+        ...defaultTextParams(),
+        content: promptWashResult.prompt,
+        hasGenerated: true,
+        manualMode: false,
+      } as unknown as Record<string, unknown>,
+    })
+    setPromptWashOpen(false)
+  }, [id, nodeWidth, promptWashResult])
+
+  const applyPromptWashToVideo = useCallback(() => {
+    if (!promptWashResult?.prompt) return
+    const videoNode = findDownstreamVideo()
+    if (!videoNode) {
+      setPromptWashError('当前文字节点没有连接下游视频节点')
+      return
+    }
+    const state = useCanvasStore.getState()
+    const current = (videoNode.data.params || defaultVideoParams()) as unknown as VideoParams
+    state.pushHistory()
+    state.updateNodeData(videoNode.id, {
+      params: {
+        ...current,
+        prompt: promptWashResult.prompt,
+        model: promptWashResult.settings.model,
+        modeType: promptWashResult.settings.modeType as VideoParams['modeType'],
+        settings: {
+          ...current.settings,
+          duration: promptWashResult.settings.duration,
+          ratio: promptWashResult.settings.ratio,
+          resolution: promptWashResult.settings.resolution,
+          enableSound: promptWashResult.settings.enableSound,
+        },
+      } as unknown as Record<string, unknown>,
+    })
+    setPromptWashOpen(false)
+  }, [findDownstreamVideo, promptWashResult])
 
   const handleEnableManualWriting = useCallback(() => {
     setActivePanelNode(null)
@@ -989,12 +1250,25 @@ export function TextNode({ id, data, selected }: Props) {
       )
     : 16
 
+  const promptWashToolbar = selected ? (
+    <MediaNodeToolbar
+      actions={[{
+        key: 'prompt-wash',
+        label: '洗提示词',
+        icon: <WandSparkles size={14} strokeWidth={1.9} />,
+        active: promptWashOpen,
+        onClick: openPromptWash,
+      }]}
+    />
+  ) : undefined
+
   return (
     <>
       <NodeShell
         nodeKey={id}
         data={data}
         selected={selected}
+        toolbar={promptWashToolbar}
         minWidth={nodeWidth}
         minHeight={nodeHeight}
         resizeHandle="none"
@@ -1086,6 +1360,7 @@ export function TextNode({ id, data, selected }: Props) {
                 onChange={(event) => {
                   const nextContent = event.target.value
                   setContentDraft(nextContent)
+                  contentDraftRef.current = nextContent
                   if (!isComposingRef.current) {
                     scheduleContentFlush(nextContent)
                   }
@@ -1212,9 +1487,44 @@ export function TextNode({ id, data, selected }: Props) {
             </button>
           )}
             </div>
+            {false && (promptWashLoading || promptWashProgress > 0 || promptWashError) && (
+              <div className="nodrag nopan" style={{ position: 'absolute', left: 8, right: 8, top: nodeHeight + 8, zIndex: 150, padding: '7px 10px', borderRadius: 9, border: '1px solid rgba(196,181,253,0.18)', background: 'rgba(24,19,37,0.96)', boxShadow: '0 10px 24px rgba(0,0,0,0.32)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: promptWashError ? '#fca5a5' : '#cfc3ff', fontSize: 11 }}>
+                  <span>{promptWashError || (promptWashProgress >= 100 ? '洗词完成，正在创建新的文字节点…' : `正在洗提示词… ${promptWashProgress}%`)}</span>
+                  {promptWashLoading && <span style={{ color: '#8f7ee3' }}>Seedance Skill</span>}
+                </div>
+                {!promptWashError && <div style={{ height: 4, marginTop: 6, overflow: 'hidden', borderRadius: 99, background: 'rgba(196,181,253,0.14)' }}><div style={{ width: `${Math.max(3, promptWashProgress)}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #7c5cfc, #c4b5fd)', transition: 'width 0.3s ease' }} /></div>}
+              </div>
+            )}
 
         <div ref={dividerRef} style={{ height: 0 }} />
       </NodeShell>
+
+      {promptWashProgressRect && (promptWashLoading || promptWashProgress > 0 || promptWashError) && createPortal(
+        <div
+          className="nodrag nopan"
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: 'fixed',
+            left: Math.max(12, Math.min(promptWashProgressRect.left, window.innerWidth - 432)),
+            top: Math.min(window.innerHeight - 58, promptWashProgressRect.bottom + 8),
+            width: 'min(420px, calc(100vw - 24px))',
+            zIndex: 21000,
+            padding: '9px 12px',
+            borderRadius: 10,
+            border: '1px solid rgba(196,181,253,0.32)',
+            background: 'rgba(24,19,37,0.98)',
+            boxShadow: '0 12px 30px rgba(0,0,0,0.44)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: promptWashError ? '#fca5a5' : '#cfc3ff', fontSize: 11 }}>
+            <span>{promptWashError || (promptWashProgress >= 100 ? '洗提示词完成，正在创建新的文字节点…' : '正在洗提示词… ' + promptWashProgress + '%')}</span>
+            {promptWashLoading && <span style={{ color: '#a996ee' }}>Seedance Skill</span>}
+          </div>
+          {!promptWashError && <div style={{ height: 5, marginTop: 7, overflow: 'hidden', borderRadius: 99, background: 'rgba(196,181,253,0.14)' }}><div style={{ width: Math.max(4, promptWashProgress) + '%', height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #7c5cfc, #c4b5fd)', transition: 'width 0.3s ease' }} /></div>}
+        </div>,
+        document.body
+      )}
 
       {isPanelOpen &&
         portalRect &&
@@ -1643,6 +1953,55 @@ export function TextNode({ id, data, selected }: Props) {
                     </button>
                   )}
 
+                  <div className="nodrag nopan" style={{ position: 'relative', flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="nodrag nopan"
+                      ref={promptWashButtonRef}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        openPromptWash()
+                      }}
+                      title="洗提示词"
+                      aria-label="洗提示词"
+                      style={{ display: 'none' }}
+                    >
+                      <WandSparkles size={15} strokeWidth={1.8} />
+                    </button>
+                    {false && promptWashOpen && promptWashMenuRect && createPortal(
+                      <div
+                        className="nodrag nopan"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                          position: 'fixed',
+                          right: Math.max(12, window.innerWidth - promptWashMenuRect.right),
+                          top: promptWashMenuRect.top <= 240 ? promptWashMenuRect.bottom + 8 : undefined,
+                          bottom: promptWashMenuRect.top > 240 ? Math.max(12, window.innerHeight - promptWashMenuRect.top + 8) : undefined,
+                          width: 260,
+                          maxHeight: 'min(300px, calc(100vh - 24px))',
+                          overflowY: 'auto',
+                          padding: 6,
+                          zIndex: 20000,
+                          borderRadius: 11,
+                          border: '1px solid rgba(196,181,253,0.22)',
+                          background: 'rgba(25,20,39,0.99)',
+                          boxShadow: '0 16px 36px rgba(0,0,0,0.46)',
+                        }}
+                      >
+                        <div style={{ padding: '5px 8px 7px', color: '#9488ad', fontSize: 10 }}>选择洗提示词模式，选中后立即执行</div>
+                        {PROMPT_WASH_MODES.map((mode) => (
+                          <button key={mode.value} type="button" className="nodrag nopan" onPointerDown={(event) => selectPromptWashMode(event, mode.value)} onClick={(event) => selectPromptWashMode(event, mode.value)} onMouseEnter={() => setPromptWashHoverMode(mode.value)} onMouseLeave={() => setPromptWashHoverMode(null)} style={{ width: '100%', display: 'block', padding: '8px 9px', textAlign: 'left', border: '1px solid transparent', borderRadius: 8, background: promptWashHoverMode === mode.value || promptWashMode === mode.value ? 'rgba(124,92,252,0.28)' : 'transparent', borderColor: promptWashHoverMode === mode.value ? 'rgba(196,181,253,0.42)' : 'transparent', color: '#e8e1f7', cursor: 'pointer', pointerEvents: 'auto', boxShadow: promptWashHoverMode === mode.value ? '0 0 0 1px rgba(124,92,252,0.18), inset 0 0 18px rgba(124,92,252,0.12)' : 'none', transition: 'background 120ms ease, border-color 120ms ease, box-shadow 120ms ease' }}>
+                            <div style={{ fontSize: 12, fontWeight: 700 }}>{mode.label}</div>
+                            <div style={{ marginTop: 3, color: '#8d829e', fontSize: 10, lineHeight: 1.35 }}>{mode.description}</div>
+                          </button>
+                        ))}
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+
                   <button
                     className="nodrag flex items-center justify-center shotflow-node-primary-action"
                     style={{
@@ -1681,6 +2040,181 @@ export function TextNode({ id, data, selected }: Props) {
               </div>
             </div>
             <ResizablePanelHandle onPointerDown={handlePanelResizeStart} />
+          </div>,
+          document.body
+        )}
+      {promptWashOpen && promptWashMenuRect && createPortal(
+        <div
+          className="nodrag nopan"
+          onMouseDown={(event) => event.stopPropagation()}
+          style={{
+            position: 'fixed',
+            right: Math.max(12, window.innerWidth - promptWashMenuRect.right),
+            top: promptWashMenuRect.top <= 240 ? promptWashMenuRect.bottom + 8 : undefined,
+            bottom: promptWashMenuRect.top > 240 ? Math.max(12, window.innerHeight - promptWashMenuRect.top + 8) : undefined,
+            width: 260,
+            maxHeight: 'min(300px, calc(100vh - 24px))',
+            overflowY: 'auto',
+            padding: 6,
+            zIndex: 20000,
+            borderRadius: 11,
+            border: '1px solid rgba(196,181,253,0.22)',
+            background: 'rgba(25,20,39,0.99)',
+            boxShadow: '0 16px 36px rgba(0,0,0,0.46)',
+          }}
+        >
+          <div style={{ padding: '5px 8px 7px', color: '#9488ad', fontSize: 10 }}>选择洗提示词模式，选中后立即执行</div>
+          {PROMPT_WASH_MODES.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              className="nodrag nopan"
+              onPointerDown={(event) => selectPromptWashMode(event, mode.value)}
+              onClick={(event) => selectPromptWashMode(event, mode.value)}
+              onMouseEnter={() => setPromptWashHoverMode(mode.value)}
+              onMouseLeave={() => setPromptWashHoverMode(null)}
+              style={{
+                width: '100%',
+                display: 'block',
+                padding: '8px 9px',
+                textAlign: 'left',
+                border: '1px solid transparent',
+                borderRadius: 8,
+                background: promptWashHoverMode === mode.value || promptWashMode === mode.value ? 'rgba(124,92,252,0.28)' : 'transparent',
+                borderColor: promptWashHoverMode === mode.value ? 'rgba(196,181,253,0.42)' : 'transparent',
+                color: '#e8e1f7',
+                cursor: 'pointer',
+                pointerEvents: 'auto',
+                boxShadow: promptWashHoverMode === mode.value ? '0 0 0 1px rgba(124,92,252,0.18), inset 0 0 18px rgba(124,92,252,0.12)' : 'none',
+                transition: 'background 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700 }}>{mode.label}</div>
+              <div style={{ marginTop: 3, color: '#8d829e', fontSize: 10, lineHeight: 1.35 }}>{mode.description}</div>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+      {false && promptWashOpen &&
+        createPortal(
+          <div
+            className="nodrag nopan"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !promptWashLoading) setPromptWashOpen(false)
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 12500,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24,
+              background: 'rgba(5,4,9,0.72)',
+              backdropFilter: 'blur(10px)',
+            }}
+          >
+            <div
+              className="nodrag nopan"
+              style={{
+                width: 'min(980px, 94vw)',
+                height: 'min(760px, 90vh)',
+                display: 'flex',
+                flexDirection: 'column',
+                borderRadius: 18,
+                border: '1px solid rgba(196,181,253,0.24)',
+                background: 'linear-gradient(180deg, rgba(26,21,38,0.99), rgba(13,11,20,0.99))',
+                boxShadow: '0 32px 90px rgba(0,0,0,0.64)',
+                overflow: 'hidden',
+                color: '#f4f0ff',
+              }}
+            >
+              <div style={{ height: 58, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px 0 22px', borderBottom: '1px solid rgba(124,92,252,0.16)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, background: 'rgba(124,92,252,0.18)', color: '#c4b5fd' }}>
+                    <WandSparkles size={16} />
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 750 }}>洗提示词</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: '#9185ac' }}>面向 Seedance 的可执行视频提示词</div>
+                  </div>
+                </div>
+                <button type="button" disabled={promptWashLoading} onClick={() => setPromptWashOpen(false)} aria-label="关闭" style={{ width: 32, height: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid rgba(196,181,253,0.18)', background: 'rgba(255,255,255,0.05)', color: '#d8cffd', cursor: promptWashLoading ? 'default' : 'pointer' }}>
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 20, scrollbarWidth: 'thin', scrollbarColor: '#4a3a78 transparent' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10, marginBottom: 16 }}>
+                  {PROMPT_WASH_MODES.map((mode) => {
+                    const active = promptWashMode === mode.value
+                    return (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        onClick={() => { setPromptWashMode(mode.value); setPromptWashResult(null) }}
+                        style={{ minHeight: 96, padding: '12px 13px', textAlign: 'left', borderRadius: 11, border: active ? '1px solid #8b6cff' : '1px solid rgba(196,181,253,0.16)', background: active ? 'rgba(124,92,252,0.18)' : 'rgba(255,255,255,0.035)', color: active ? '#fff' : '#d8cff0', cursor: 'pointer' }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{mode.label}</div>
+                        <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.45, color: active ? '#cfc3ff' : '#83799a' }}>{mode.description}</div>
+                        <div title={mode.project} style={{ marginTop: 7, fontSize: 10, lineHeight: 1.3, color: active ? '#a996ee' : '#6e6384', overflowWrap: 'anywhere' }}>参考项目：{mode.project}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div style={{ padding: '9px 12px', marginBottom: 12, borderRadius: 9, border: '1px solid rgba(196,181,253,0.12)', background: 'rgba(255,255,255,0.025)', color: '#968bac', fontSize: 11 }}>
+                  {findDownstreamVideo() ? '已读取下游视频节点的模型、模式、时长和参考素材；写入时不会自动生成。' : '未连接下游视频节点，先按 Seedance 2.5 多模态默认设置优化。'}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14 }}>
+                  <div>
+                    <div style={{ marginBottom: 7, fontSize: 12, color: '#b5a8cf', fontWeight: 650 }}>原始提示词</div>
+                    <textarea
+                      value={promptWashSource}
+                      onChange={(event) => { setPromptWashSource(event.target.value); setPromptWashResult(null) }}
+                      placeholder="输入需要优化的视频提示词"
+                      style={{ boxSizing: 'border-box', width: '100%', height: 300, resize: 'none', padding: 14, borderRadius: 11, border: '1px solid rgba(196,181,253,0.16)', outline: 'none', background: 'rgba(4,3,8,0.52)', color: '#eee9fa', fontSize: 13, lineHeight: 1.65 }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ marginBottom: 7, fontSize: 12, color: '#b5a8cf', fontWeight: 650 }}>优化结果</div>
+                    <div style={{ boxSizing: 'border-box', width: '100%', height: 300, overflowY: 'auto', padding: 14, borderRadius: 11, border: '1px solid rgba(196,181,253,0.16)', background: 'rgba(4,3,8,0.52)', color: '#eee9fa', fontSize: 13, lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {promptWashLoading ? (
+                        <span style={{ color: '#b9a9ef' }}>正在按“{PROMPT_WASH_MODES.find((item) => item.value === promptWashMode)?.label}”优化…</span>
+                      ) : promptWashResult?.prompt ? promptWashResult.prompt : (
+                        <span style={{ color: '#665d77' }}>点击下方“开始优化”后在这里预览，不会直接覆盖原文。</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {promptWashResult && (promptWashResult.changeSummary.length > 0 || promptWashResult.warnings.length > 0) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+                    <div style={{ padding: '10px 12px', borderRadius: 9, background: 'rgba(124,92,252,0.08)', color: '#bfb4d6', fontSize: 11, lineHeight: 1.55 }}>
+                      <strong style={{ color: '#d9ceef' }}>优化内容：</strong>{promptWashResult.changeSummary.join('；') || '已整理结构'}
+                    </div>
+                    <div style={{ padding: '10px 12px', borderRadius: 9, background: promptWashResult.warnings.length ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.025)', color: promptWashResult.warnings.length ? '#e8c88a' : '#8b829b', fontSize: 11, lineHeight: 1.55 }}>
+                      <strong>提示：</strong>{promptWashResult.warnings.join('；') || '未发现设置冲突'}
+                    </div>
+                  </div>
+                )}
+                {promptWashError && <div style={{ marginTop: 12, padding: '9px 12px', borderRadius: 9, background: 'rgba(127,29,29,0.3)', color: '#fca5a5', fontSize: 12 }}>{promptWashError}</div>}
+              </div>
+
+              <div style={{ minHeight: 62, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 18px', borderTop: '1px solid rgba(124,92,252,0.16)', background: 'rgba(8,6,13,0.48)' }}>
+                <button type="button" disabled={promptWashLoading || !promptWashSource.trim()} onClick={() => void handlePromptWash()} style={{ height: 36, padding: '0 18px', border: 'none', borderRadius: 10, background: promptWashLoading ? '#31284a' : '#7c5cfc', color: '#fff', fontSize: 12, fontWeight: 700, cursor: promptWashLoading ? 'default' : 'pointer' }}>
+                  {promptWashLoading ? '优化中…' : promptWashResult ? '重新优化' : '开始优化'}
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                  <button type="button" disabled={!promptWashResult} onClick={() => promptWashResult && void copyTextToClipboard(promptWashResult.prompt)} style={{ height: 34, padding: '0 12px', borderRadius: 9, border: '1px solid rgba(196,181,253,0.18)', background: 'rgba(255,255,255,0.05)', color: '#cfc5df', cursor: promptWashResult ? 'pointer' : 'default', opacity: promptWashResult ? 1 : 0.42 }}>复制</button>
+                  <button type="button" disabled={!promptWashResult} onClick={createPromptWashTextNode} style={{ height: 34, padding: '0 12px', borderRadius: 9, border: '1px solid rgba(196,181,253,0.18)', background: 'rgba(255,255,255,0.05)', color: '#cfc5df', cursor: promptWashResult ? 'pointer' : 'default', opacity: promptWashResult ? 1 : 0.42 }}>新建文字节点</button>
+                  <button type="button" disabled={!promptWashResult || !findDownstreamVideo()} onClick={applyPromptWashToVideo} style={{ height: 34, padding: '0 12px', borderRadius: 9, border: '1px solid rgba(196,181,253,0.18)', background: 'rgba(255,255,255,0.05)', color: '#cfc5df', cursor: promptWashResult && findDownstreamVideo() ? 'pointer' : 'default', opacity: promptWashResult && findDownstreamVideo() ? 1 : 0.42 }}>写入视频节点</button>
+                  <button type="button" disabled={!promptWashResult} onClick={applyPromptWashToCurrent} style={{ height: 34, padding: '0 14px', borderRadius: 9, border: 'none', background: '#fff', color: '#17121f', fontSize: 12, fontWeight: 700, cursor: promptWashResult ? 'pointer' : 'default', opacity: promptWashResult ? 1 : 0.42 }}>替换当前文字</button>
+                </div>
+              </div>
+            </div>
           </div>,
           document.body
         )}

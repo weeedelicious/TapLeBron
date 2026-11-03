@@ -175,12 +175,20 @@ function workerDetail(error) {
   return String(data?.error || error?.message || error || '').trim();
 }
 
+function sanitizeEnhanceError(detail) {
+  const text = String(detail || '').replace(/\s+/g, ' ').trim();
+  if (/cuda out of memory|out of memory|outofmemoryerror/i.test(text)) {
+    return '显存不足，当前增强倍数太大。请改用 2 倍，或改用 NVIDIA VSR。';
+  }
+  return text.length > 280 ? `${text.slice(0, 277)}…` : text;
+}
+
 function normalizeWorkerError(error) {
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || error?.code === 'ERR_CANCELED') {
     return abortError();
   }
   const status = Number(error?.response?.status || 0);
-  const detail = workerDetail(error);
+  const detail = sanitizeEnhanceError(workerDetail(error));
   if (status === 401 || status === 403) {
     return mediaEnhanceError('AI 高清增强服务鉴权失败，请联系管理员检查令牌', 'MEDIA_ENHANCE_AUTH_FAILED', 502);
   }
@@ -354,7 +362,7 @@ async function enhanceMedia(options = {}) {
         break;
       }
       if (status.status === 'failed') {
-        throw mediaEnhanceError(String(status.error || 'AI 高清增强失败'), 'MEDIA_ENHANCE_PROCESSING_FAILED', 502);
+        throw mediaEnhanceError(sanitizeEnhanceError(status.error || 'AI 高清增强失败'), 'MEDIA_ENHANCE_PROCESSING_FAILED', 502);
       }
       if (status.status === 'cancelled') throw abortError();
       await sleepWithSignal(pollIntervalMs, options.signal);
