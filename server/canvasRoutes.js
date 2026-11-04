@@ -39,6 +39,7 @@ const { mergeImageVariantsFromOutputs, imageVariantsFromOutput } = require('./se
 const { createGenerationTaskApiKeyRunner } = require('./services/GenerationTaskApiKeyContext');
 const {
   canvasSessionByToken,
+  canvasSessionState,
   enterCanvasSession,
   leaveCanvasSession,
   requireCanvasSession,
@@ -13200,7 +13201,79 @@ apiRouter.post('/toolbox/previs-playblast', previsPlayblastUpload.array('frames'
   }
 });
 
+// ── 存量图片派生图回填（第二步）────────────────────────────────────────────────
+// 第一步由 tools/image-variant-backfill.js 离线生成 _360 / _1080 文件，结果写在
+// tmp/image-variant-backfill/done.jsonl。这一步把结果写进节点的 _assetImageVariants。
+// 必须在服务进程里做：要和用户的保存 / 删除排进同一个 queueCanvasMutation，外部脚本做不到。
+// 只给节点加这一个字段，节点版本（_collabVersion）不动；当前有人打开着的画布默认跳过。
+const IMAGE_VARIANT_BACKFILL_DIR = path.join(__dirname, '..', 'tmp', 'image-variant-backfill');
+const ACTIVE_CANVAS_SESSION_WINDOW_MS = 90_000;
+let imageVariantBackfillCache = null;
+
+function loadImageVariantBackfill() {
+  const file = path.join(IMAGE_VARIANT_BACKFILL_DIR, 'done.jsonl');
+  const stat = fs.statSync(file);
+  if (imageVariantBackfillCache?.mtimeMs === stat.mtimeMs) return imageVariantBackfillCache.map;
+  const map = new Map();
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      const variants = imageVariantsFromOutput(record.variants);
+      if (record.url && variants) map.set(record.url, variants);
+    } catch { /* 半行，跳过 */ }
+  }
+  imageVariantBackfillCache = { mtimeMs: stat.mtimeMs, map };
+  return map;
+}
+
+async function applyImageVariantBackfill(canvasId, { force = false, dryRun = false } = {}) {
+  const id = String(canvasId || '').trim();
+  if (!/^\d+$/.test(id)) throw Object.assign(new Error('invalid canvasId'), { statusCode: 400 });
+  const variantsByUrl = loadImageVariantBackfill();
+  return queueCanvasMutation(id, async () => {
+    const session = await canvasSessionState(id);
+    const lastSeenMs = session?.last_seen_at ? new Date(session.last_seen_at).getTime() : 0;
+    if (!force && lastSeenMs && Date.now() - lastSeenMs < ACTIVE_CANVAS_SESSION_WINDOW_MS) {
+      return { canvasId: id, skipped: 'active-session' };
+    }
+    const [rows] = await getPool().query(
+      'SELECT id, owner_id, title, data, created_at, updated_at FROM canvases WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const row = await hydrateCanvasRow(rows[0] || null);
+    if (!row) return { canvasId: id, skipped: 'missing' };
+    const data = readCanvasData(row);
+    const nodes = nodeListFromData(data, id);
+    let changedNodes = 0;
+    let addedUrls = 0;
+    for (const node of nodes) {
+      const nodeData = parseCanvasNodeData(node);
+      if (nodeData.type !== 'image' && nodeData.type !== 'upload') continue;
+      let next = null;
+      for (const url of Array.isArray(nodeData.url) ? nodeData.url : []) {
+        if (nodeData._assetImageVariants?.[url]) continue;
+        const variants = variantsByUrl.get(url);
+        if (!variants) continue;
+        next = next || { ...(nodeData._assetImageVariants || {}) };
+        next[url] = variants;
+        addedUrls += 1;
+      }
+      if (!next) continue;
+      nodeData._assetImageVariants = next;
+      node.data = typeof node.data === 'string' ? JSON.stringify(nodeData) : nodeData;
+      changedNodes += 1;
+    }
+    if (changedNodes && !dryRun) {
+      data.nodeList = nodes;
+      await saveCanvasData(id, data, { reason: 'image_variants', ownerId: row.owner_id, cooldownMs: 0 });
+    }
+    return { canvasId: id, title: row.title, nodes: nodes.length, changedNodes, addedUrls, dryRun };
+  });
+}
+
 module.exports = {
+  applyImageVariantBackfill,
   apiRouter,
   assetRouter,
   // AI 出片的概念图要在服务端无人值守地生图，走的就是这条同步链路（跟细化纹理同一个函数）。

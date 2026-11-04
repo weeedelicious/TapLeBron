@@ -1020,6 +1020,32 @@ app.put(
 
 const distPath = path.join(__dirname, '..', 'dist');
 const shotflowIndexPath = path.join(__dirname, '..', 'public', 'releases', 'matting-rectangle-live-preview-20260811', 'index.html');
+// 服务器本机维护接口：只接受本机直连（不经 nginx，没有转发头）且带一次性口令的请求。
+// 口令文件由 root 在服务器上生成，用完删掉；文件不存在时接口等同于不存在。
+const MAINTENANCE_TOKEN_FILE = path.join(__dirname, '..', 'tmp', 'image-variant-backfill', 'maintenance.token');
+function requireLocalMaintenance(req, res, next) {
+  const remote = String(req.socket?.remoteAddress || '');
+  const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  const forwarded = req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
+  let expected = '';
+  try { expected = fs.readFileSync(MAINTENANCE_TOKEN_FILE, 'utf8').trim(); } catch { /* 没有口令文件 */ }
+  const provided = String(req.headers['x-maintenance-token'] || '');
+  const ok = local && !forwarded && expected.length >= 32 && provided.length === expected.length
+    && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!ok) return res.status(404).end();
+  return next();
+}
+app.post('/internal/maintenance/image-variants', requireLocalMaintenance, async (req, res) => {
+  try {
+    const { applyImageVariantBackfill } = require('./canvasRoutes');
+    res.json(await applyImageVariantBackfill(req.body?.canvasId, {
+      force: req.body?.force === true,
+      dryRun: req.body?.dryRun === true,
+    }));
+  } catch (error) {
+    res.status(error?.statusCode || 500).json({ error: String(error?.message || error) });
+  }
+});
 app.use('/api/plugin-tokens', requireAuth, pluginTokenRouter);
 app.use('/api/plugin/v1', requirePluginAuth, shotflowPluginRouter);
 app.use('/api/error-library', requireAuth, errorLibraryRouter);
