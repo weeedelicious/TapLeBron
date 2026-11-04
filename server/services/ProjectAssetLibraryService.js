@@ -337,13 +337,23 @@ function normalizeThumbWidth(value) {
   return THUMB_WIDTHS.has(width) ? width : 0;
 }
 
+// 按短边缩（360P / 1080P）：列表小图和悬停预览用 360，「浏览大图」用 1080。
+// 原图短边不超过目标时：360 档照样出一张 WebP（不放大），1080 档直接给原图。
+const SHORT_EDGES = new Set([360, 1080]);
+
+function normalizeShortEdge(value) {
+  const edge = Number(value);
+  return SHORT_EDGES.has(edge) ? edge : 0;
+}
+
 function projectAssetThumbsDir() {
   return path.join(path.dirname(config.projectsDir), 'project-asset-thumbs');
 }
 
-function thumbFilePath(projectId, relativePath, width) {
+function thumbFilePath(projectId, relativePath, width, shortEdge = 0) {
   const hash = crypto.createHash('sha1').update(String(projectId) + '\0' + relativePath).digest('hex');
-  return path.join(projectAssetThumbsDir(), String(projectId), hash + '-w' + width + '.webp');
+  const suffix = shortEdge ? '-s' + shortEdge : '-w' + width;
+  return path.join(projectAssetThumbsDir(), String(projectId), hash + suffix + '.webp');
 }
 
 function freshThumb(outPath, sourceFile) {
@@ -358,20 +368,28 @@ function freshThumb(outPath, sourceFile) {
   return null;
 }
 
-async function ensureProjectAssetThumb(sourceFile, projectId, relativePath, width) {
-  const outPath = thumbFilePath(projectId, relativePath, width);
+async function ensureProjectAssetThumb(sourceFile, projectId, relativePath, width, shortEdge = 0) {
+  const outPath = thumbFilePath(projectId, relativePath, width, shortEdge);
   const cached = freshThumb(outPath, sourceFile);
   if (cached) return cached;
   const sharp = getSharp();
   if (!sharp) return null;
-  const key = String(projectId) + ':' + relativePath + ':' + width;
+  const key = String(projectId) + ':' + relativePath + ':' + (shortEdge ? 's' + shortEdge : width);
   const pending = thumbInFlight.get(key);
   if (pending) return pending;
   const work = (async () => {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     const tmpPath = outPath + '.tmp-' + process.pid + '-' + Date.now();
     try {
-      await sharp(sourceFile.filePath, { failOn: 'none' }).rotate().resize({ width, withoutEnlargement: true }).webp({ quality: 72 }).toFile(tmpPath);
+      let resize = { width, withoutEnlargement: true };
+      if (shortEdge) {
+        const metadata = await sharp(sourceFile.filePath, { failOn: 'none' }).metadata();
+        const rotated = Number(metadata.orientation) >= 5;
+        const w = Number(rotated ? metadata.height : metadata.width) || 0;
+        const h = Number(rotated ? metadata.width : metadata.height) || 0;
+        resize = w >= h ? { height: shortEdge, withoutEnlargement: true } : { width: shortEdge, withoutEnlargement: true };
+      }
+      await sharp(sourceFile.filePath, { failOn: 'none' }).rotate().resize(resize).webp({ quality: shortEdge >= 1080 ? 86 : 72 }).toFile(tmpPath);
       fs.renameSync(tmpPath, outPath);
       return { filePath: outPath, fileName: path.basename(outPath), mimeType: 'image/webp', cacheControl: 'private, max-age=86400' };
     } catch (error) {
@@ -383,13 +401,13 @@ async function ensureProjectAssetThumb(sourceFile, projectId, relativePath, widt
   try { return await work; } finally { thumbInFlight.delete(key); }
 }
 
-async function ensureVideoPoster(sourceFile, projectId, relativePath, width) {
-  const outPath = thumbFilePath(projectId, relativePath, width);
+async function ensureVideoPoster(sourceFile, projectId, relativePath, width, shortEdge = 0) {
+  const outPath = thumbFilePath(projectId, relativePath, width, shortEdge);
   const cached = freshThumb(outPath, sourceFile);
   if (cached) return cached;
   const sharp = getSharp();
   if (!sharp) return null;
-  const key = 'video:' + String(projectId) + ':' + relativePath + ':' + width;
+  const key = 'video:' + String(projectId) + ':' + relativePath + ':' + (shortEdge ? 's' + shortEdge : width);
   const pending = thumbInFlight.get(key);
   if (pending) return pending;
   const work = (async () => {
@@ -397,7 +415,9 @@ async function ensureVideoPoster(sourceFile, projectId, relativePath, width) {
     const framePath = outPath + '.frame-' + process.pid + '-' + Date.now() + '.jpg';
     const tmpPath = outPath + '.tmp-' + process.pid + '-' + Date.now();
     try {
-      await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-ss', '0', '-i', sourceFile.filePath, '-frames:v', '1', '-vf', 'scale=' + width + ':-2', framePath], { timeout: 60000 });
+      await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-ss', '0', '-i', sourceFile.filePath, '-frames:v', '1', '-vf', shortEdge
+        ? `scale='if(gte(iw,ih),-2,min(iw,${shortEdge}))':'if(gte(iw,ih),min(ih,${shortEdge}),-2)'`
+        : 'scale=' + width + ':-2', framePath], { timeout: 60000 });
       await sharp(framePath, { failOn: 'none' }).webp({ quality: 72 }).toFile(tmpPath);
       fs.renameSync(tmpPath, outPath);
       return { filePath: outPath, fileName: path.basename(outPath), mimeType: 'image/webp', cacheControl: 'private, max-age=86400' };
@@ -426,7 +446,7 @@ function mimeFromName(filePath) {
   return 'application/octet-stream';
 }
 
-async function readProjectAssetFile(projectId, relativePath, width) {
+async function readProjectAssetFile(projectId, relativePath, width, shortEdgeValue) {
   const id = Number(projectId);
   const token = String(relativePath || '').trim();
   if (!/^a[a-f0-9]{20}$/.test(token)) throw httpError(400, '\u65e0\u6548\u8d44\u6e90\u8def\u5f84');
@@ -438,12 +458,19 @@ async function readProjectAssetFile(projectId, relativePath, width) {
     mimeType: mimeFromName(asset.filePath),
     cacheControl: 'private, max-age=60',
   };
-  const thumbWidth = normalizeThumbWidth(width);
-  if (!thumbWidth) return original;
+  const shortEdge = normalizeShortEdge(shortEdgeValue);
+  const thumbWidth = shortEdge ? 0 : normalizeThumbWidth(width);
+  if (!thumbWidth && !shortEdge) return original;
   try {
+    if (shortEdge >= 1080 && asset.mediaType !== 'video') {
+      const sharp = getSharp();
+      const metadata = sharp ? await sharp(asset.filePath, { failOn: 'none' }).metadata() : null;
+      // 原图短边不超过 1080：浏览大图直接看原图
+      if (!metadata || Math.min(Number(metadata.width) || 0, Number(metadata.height) || 0) <= shortEdge) return original;
+    }
     const thumb = asset.mediaType === 'video'
-      ? await ensureVideoPoster(original, id, token, thumbWidth)
-      : await ensureProjectAssetThumb(original, id, token, thumbWidth);
+      ? await ensureVideoPoster(original, id, token, thumbWidth, shortEdge)
+      : await ensureProjectAssetThumb(original, id, token, thumbWidth, shortEdge);
     if (thumb) return thumb;
   } catch (error) {
     console.warn('project asset thumb failed:', error && error.message ? error.message : error);

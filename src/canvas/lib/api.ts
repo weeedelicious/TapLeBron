@@ -1160,6 +1160,9 @@ export const projectAssetLibraryApi = {
     http.get<{ project: { id: number; name: string }; assets: ProjectAssetLibraryItem[] }>(`/project-asset-library/projects/${projectId}/modules`).then((r) => r.data),
   fileUrl: (projectId: number, relativePath: string) =>
     `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&original=1`,
+  /** 按短边缩：360 = 列表小图和悬停预览（360P），1080 = 浏览大图（1080P，原图更小时服务端直接给原图）。 */
+  shortEdgeUrl: (projectId: number, relativePath: string, shortEdge: 360 | 1080) =>
+    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&s=${shortEdge}`,
   thumbUrl: (projectId: number, relativePath: string, width = 360) =>
     `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&w=${encodeURIComponent(String(width))}`,
   importToCanvas: (canvasUuid: string, projectId: number, relativePath: string, name?: string) =>

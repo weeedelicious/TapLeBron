@@ -10486,6 +10486,7 @@ apiRouter.get('/project-asset-library/file', async (req, res, next) => {
       req.query.projectId,
       req.query.path,
       forceOriginal ? undefined : req.query.w,
+      forceOriginal ? undefined : req.query.s,
     );
     res.setHeader('Cache-Control', file.cacheControl || 'private, max-age=60');
     res.type(file.mimeType);

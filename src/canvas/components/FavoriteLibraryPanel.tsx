@@ -855,8 +855,9 @@ function ProjectAssetLibraryPane({
           ) : filtered.map((item) => {
             const projectNumber = Number(gameId)
             const originalUrl = projectAssetLibraryApi.fileUrl(projectNumber, item.relativePath)
-            const thumbUrl = projectAssetLibraryApi.thumbUrl(projectNumber, item.relativePath)
-            const previewUrl = projectAssetLibraryApi.thumbUrl(projectNumber, item.relativePath, 960)
+            // 列表小图和悬停预览都用 360P（短边 360），浏览大图用 1080P；插入画布 / 下载仍是原图
+            const thumbUrl = projectAssetLibraryApi.shortEdgeUrl(projectNumber, item.relativePath, 360)
+            const previewUrl = thumbUrl
             const payload: ProjectAssetInsertPayload = {
               projectId: projectNumber,
               relativePath: item.relativePath,
@@ -908,7 +909,8 @@ function ProjectAssetLibraryPane({
                         kind: item.mediaType === 'video' ? 'video' : 'image',
                         items: filtered.map((entry) => ({
                           url: projectAssetLibraryApi.fileUrl(projectNumber, entry.relativePath),
-                          thumbUrl: projectAssetLibraryApi.thumbUrl(projectNumber, entry.relativePath),
+                          viewerUrl: entry.mediaType === 'video' ? undefined : projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 1080),
+                          thumbUrl: projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 360),
                           name: entry.name,
                         })),
                       })
@@ -946,7 +948,14 @@ function ProjectAssetLibraryPane({
         document.body,
       ) : null}
       {viewer ? (
-        <ImagePreview url={viewer.url} name={viewer.name} items={viewer.items} kind={viewer.kind} onClose={() => setViewer(null)} />
+        <ImagePreview
+          url={viewer.url}
+          viewerUrl={viewer.items.find((entry) => entry.url === viewer.url)?.viewerUrl}
+          name={viewer.name}
+          items={viewer.items}
+          kind={viewer.kind}
+          onClose={() => setViewer(null)}
+        />
       ) : null}
     </>
   )
