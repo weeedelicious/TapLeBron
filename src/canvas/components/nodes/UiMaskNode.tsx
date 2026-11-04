@@ -41,6 +41,11 @@ function placeOutput(nodeId: string, output: UiMaskOutput) {
     url: [url],
     action: 'image_resource',
   })
+  // 连线从不单独存库，刷新时按节点数据重算（canvasStore edgesFromNodeReferences）。
+  // 在新视频节点上记下来源遮罩节点，刷新后这根线才画得回来；不进 videoList，免得被当成生成参考。
+  state.updateNodeData(created.id, {
+    params: { ...((created.data.params ?? {}) as Record<string, unknown>), uiMaskSourceRef: { nodeId } },
+  })
   const latest = useCanvasStore.getState()
   const edgeId = `e-${nodeId}-${created.id}`
   if (!latest.edges.some((edge) => edge.id === edgeId)) {

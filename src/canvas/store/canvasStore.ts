@@ -1190,6 +1190,28 @@ export function edgesFromNodeReferences(
     });
   }
 
+  // UI 遮罩生成的盖黑视频：新视频节点在 params.uiMaskSourceRef 记着来源遮罩节点。
+  for (const targetNode of nodes) {
+    const params = (targetNode.data.params ?? {}) as Record<string, unknown>;
+    const sourceAlias = String(
+      (params.uiMaskSourceRef as { nodeId?: unknown } | null | undefined)?.nodeId ?? "",
+    );
+    const sourceId = idByAlias.get(sourceAlias);
+    if (!sourceId || sourceId === targetNode.id) continue;
+    const pairKey = `${sourceId}->${targetNode.id}`;
+    if (pairSet.has(pairKey)) continue;
+    pairSet.add(pairKey);
+    nextEdges.push({
+      id: `e-${sourceId}-${targetNode.id}`,
+      source: sourceId,
+      target: targetNode.id,
+      type: "glow",
+      selectable: true,
+      selected: false,
+      interactionWidth: EDGE_INTERACTION_WIDTH,
+    });
+  }
+
   // 三维空间节点的参考图存在 params.stageRef（只收一张，用来分析出人物姿势）。
   // 不在这里重建的话，刷新之后那根线就没了 —— 引用还在、分析照样能用，
   // 但画布上看不出这个节点连着谁（2026-08-26 用户反馈「刷新就断掉」）。

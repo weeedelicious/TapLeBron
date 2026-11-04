@@ -156,6 +156,12 @@ function removeEdgeReferencesFromNodes(nodes: FlowNode[], removedEdges: Edge[]) 
       ensureNextParams().panoramaRef = null
     }
 
+    // UI 遮罩 → 盖黑视频那根线：删线就清掉来源记录，否则刷新又长回来
+    const uiMaskSourceRef = params.uiMaskSourceRef as { nodeId?: unknown } | null | undefined
+    if (uiMaskSourceRef?.nodeId && removeSourceIds.has(String(uiMaskSourceRef.nodeId))) {
+      ensureNextParams().uiMaskSourceRef = null
+    }
+
     // 三维空间节点的参考图同理：上游图片被删掉就把引用清空，否则节点会一直显示
     // 「参考图已连」而实际上分析时取不到图。
     const clearedStage = clearedStageRef(params, removeSourceIds)
