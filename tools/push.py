@@ -34,6 +34,7 @@ import io
 import json
 import re
 import shutil
+import tempfile
 import subprocess
 import sys
 import tarfile
@@ -126,7 +127,19 @@ def local_precheck(targets: list[str]) -> None:
         if posix.startswith("dist/"):
             continue  # 打包产物用服务器上的 esbuild 校验
         path = LOCAL_ROOT / posix
-        result = subprocess.run([NODE, "--check", str(path)], capture_output=True)
+        check_path = path
+        temp_dir = None
+        # 浏览器端的 ES 模块（如 public/ui-mask-bridge.js）按 CommonJS 检查会误报，复制成 .mjs 再查
+        source = path.read_text(encoding="utf-8", errors="replace")
+        if posix.endswith(".js") and re.search(r"^\s*(import|export)\s", source, re.M):
+            temp_dir = tempfile.mkdtemp(prefix="push-check-")
+            check_path = Path(temp_dir) / (path.stem + ".mjs")
+            check_path.write_text(source, encoding="utf-8")
+        try:
+            result = subprocess.run([NODE, "--check", str(check_path)], capture_output=True)
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
         if result.returncode != 0:
             raise Fail(
                 f"本地语法检查失败 {posix}:\n"
