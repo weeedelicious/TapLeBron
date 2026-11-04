@@ -19,7 +19,33 @@ const HERO_ASSETS = [
   { code: 'c071_YuenvB', name: "月女3" },
   { code: 'c077_NanCiKe', name: "男刺客" },
 ];
-const HERO_CODES = new Set(HERO_ASSETS.map((item) => item.code));
+// 英雄名字以 CGTeamWork「火炬之光_Film / 电影部_资产」的「局内代号」为准（m_asset.gamename），
+// 由 tools/sync-cgtw-hero-names.py 同步成这个名单文件。文件改了不用重启：每次重建目录都会重新读。
+// 名单读不到时退回上面这份写死的旧名字。
+const HERO_NAMES_FILE = path.join(__dirname, '..', 'data', 'project-asset-heroes.json');
+let heroNamesCache = null;
+
+function heroDisplayName(gameName) {
+  // 「英雄_时空见证者·尤加 Youga01」→「时空见证者·尤加 Youga01」；表里偶尔会把前缀填两遍
+  return String(gameName || '').trim().replace(/^(?:英雄[_\s]*)+/, '').trim();
+}
+
+function currentHeroAssets() {
+  try {
+    const stat = fs.statSync(HERO_NAMES_FILE);
+    if (heroNamesCache && heroNamesCache.mtimeMs === stat.mtimeMs) return heroNamesCache.heroes;
+    const parsed = JSON.parse(fs.readFileSync(HERO_NAMES_FILE, 'utf8'));
+    const heroes = (Array.isArray(parsed?.heroes) ? parsed.heroes : [])
+      .map((item) => ({ code: String(item?.code || '').trim(), name: heroDisplayName(item?.gameName) }))
+      .filter((item) => /^[A-Za-z0-9_]+$/.test(item.code) && item.name);
+    if (!heroes.length) throw new Error('empty hero list');
+    heroNamesCache = { mtimeMs: stat.mtimeMs, heroes };
+    return heroes;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn('project asset hero names unavailable, using built-in list:', error.message);
+    return HERO_ASSETS;
+  }
+}
 const SHEET_ROWS = [
   { label: 'ss15\u8d5b\u5b63', projectCode: 'ss15_1', kind: 'Cha', name: '\u739b\u8482\u5c14\u8fbe', code: 'c073_Matilda', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c073_Matilda\\Prodesign\\approved\\c073_Matilda.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c073_Matilda\\LookDev\\work\\c073_Matilda_LookDev_003.png', atmosphere: 'X:\\projects2024\\TLI\\SS15_1\\00_Production_Guide\\04\u5f71\u521b\u7f8e\u672f\\\u6c1b\u56f4\u56fe' },
   { label: '', projectCode: '', kind: 'Cha', name: '\u827e\u5409\u5965', code: 'c074_Ezio', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c074_Ezio\\Prodesign\\approved\\c074_Ezio.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c074_Ezio\\LookDev\\work\\c074_Ezio_LookDev_006.png', atmosphere: '' },
@@ -138,6 +164,8 @@ function disambiguate(items) {
   });
 }
 function buildCatalog() {
+  const heroes = currentHeroAssets();
+  const heroByCode = new Map(heroes.map((item) => [item.code, item.name]));
   let game = DEFAULT_GAME;
   let projectLabel = '';
   const pending = [];
@@ -158,8 +186,8 @@ function buildCatalog() {
           game,
           projectLabel,
           code: String(row.code || ''),
-          hero: HERO_CODES.has(String(row.code || '')),
-          name: ((HERO_CODES.has(String(row.code || '')) ? HERO_ASSETS.find((item) => item.code === row.code).name : baseName) + '_' + suffix),
+          hero: heroByCode.has(String(row.code || '')),
+          name: ((heroByCode.get(String(row.code || '')) || baseName) + '_' + suffix),
           stage,
           assetType,
           mediaType: mediaTypeOf(file.filePath),
@@ -196,9 +224,10 @@ function listHeroMedia(dirPath) {
     .sort((a, b) => a.version - b.version || a.name.localeCompare(b.name, 'en'));
 }
 
-function addMissingHeroAssets(pending) {
-  const present = new Set(pending.filter((item) => item.code && HERO_CODES.has(item.code)).map((item) => item.code));
-  for (const hero of HERO_ASSETS) {
+function addMissingHeroAssets(pending, heroes = currentHeroAssets()) {
+  const heroCodes = new Set(heroes.map((item) => item.code));
+  const present = new Set(pending.filter((item) => item.code && heroCodes.has(item.code)).map((item) => item.code));
+  for (const hero of heroes) {
     if (present.has(hero.code)) continue;
     const base = heroAssetDir(hero.code);
     const approved = listHeroMedia(base + '\\Prodesign\\approved').filter((item) => mediaTypeOf(item.name) === 'image');
@@ -221,7 +250,7 @@ function addMissingHeroAssets(pending) {
     }
   }
 }
-addMissingHeroAssets(pending);
+addMissingHeroAssets(pending, heroes);
   const byGame = new Map();
   for (const item of pending.concat(atmospheres)) {
     if (!byGame.has(item.game)) byGame.set(item.game, []);
@@ -424,6 +453,8 @@ async function readProjectAssetFile(projectId, relativePath, width) {
 }
 
 module.exports = {
+  currentHeroAssets,
+  heroDisplayName,
   listProjectsWithPaths,
   listProjectModules,
   readProjectAssetFile,
