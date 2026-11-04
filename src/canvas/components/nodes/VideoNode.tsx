@@ -1,7 +1,7 @@
 ﻿import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, useUpdateNodeInternals, useViewport, useStore } from '@xyflow/react'
-import { Camera, Copy, Crop, Download, Eraser, Expand, Gauge, ScanLine, Library, Loader2, Lock, Palette, Scissors, Sparkles, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
+import { Camera, Copy, Crop, Download, Eraser, Expand, Gauge, ScanLine, Library, Loader2, Lock, Palette, Scissors, Sparkles, SquareDashed, SquarePen, Trash2, Unlock, Wand2 } from 'lucide-react'
 import { MediaNodeToolbar } from '@/components/MediaNodeToolbar'
 import type { MediaNodeToolbarAction } from '@/components/MediaNodeToolbar'
 import { GenerationProgress } from '@/components/GenerationProgress'
@@ -2473,7 +2473,7 @@ export function VideoNode({ id, data, selected }: Props) {
         {
           key: 'ui-mask',
           label: 'UI遮罩',
-          icon: <Eraser size={14} strokeWidth={1.9} />,
+          icon: <SquareDashed size={14} strokeWidth={1.9} />,
           onClick: () => {
             if (!videoUrl) return
             const state = useCanvasStore.getState()
