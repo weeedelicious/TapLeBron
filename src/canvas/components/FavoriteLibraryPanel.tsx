@@ -553,9 +553,10 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onIns
 
       {error && <div className="favorite-library-error">{error}</div>}
 
+      {/* 和项目资产库同一套方块网格：一排三个，拖进画布或双击插入副本 */}
       <div
         ref={listRef}
-        className="favorite-library-list"
+        className="favorite-library-list favorite-library-tile-grid"
         onScroll={(event) => updateMemory({ scrollTop: event.currentTarget.scrollTop })}
       >
         {loading && items.length === 0 ? (
@@ -568,74 +569,84 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onIns
           </div>
         ) : sortedItems.map(item => {
           const category = favoriteItemCategory(item)
+          const busy = busyId === item.id
+          const detail = [
+            `${item.nodeCount} 个节点`,
+            item.ownerName || '',
+            item.updatedAtMs ? formatTime(item.updatedAtMs) : '',
+          ].filter(Boolean).join(' · ')
           return (
             <article
               key={item.id}
-              className={`favorite-library-card is-${category}`}
+              className={`favorite-library-tile is-${category}${busy ? ' is-busy' : ''}`}
+              title={`${item.title}\n${detail}${item.tags.length ? `\n${item.tags.join(' / ')}` : ''}`}
               draggable
               onDragStart={(event) => onDragStart?.(item, event)}
+              onDoubleClick={() => { if (!busy) void insertItem(item) }}
             >
-            <div className="favorite-library-card-preview">
-              {item.itemType === 'group' ? (
-                <GroupLibraryPreview item={item} />
-              ) : item.previewUrl ? (
-                previewLooksVideo(item.previewUrl) ? (
-                  <video src={item.previewUrl} muted playsInline preload="metadata" draggable={false} />
+              <div className="favorite-library-tile-thumb">
+                {item.itemType === 'group' ? (
+                  <GroupLibraryPreview item={item} />
+                ) : item.previewUrl ? (
+                  previewLooksVideo(item.previewUrl) ? (
+                    <video src={item.previewUrl} muted playsInline preload="metadata" draggable={false} />
+                  ) : (
+                    <img src={item.previewUrl} alt="" loading="lazy" draggable={false} />
+                  )
                 ) : (
-                  <img src={item.previewUrl} alt="" loading="lazy" draggable={false} />
-                )
-              ) : (
-                <div className="favorite-library-preview-placeholder">
-                  {itemTypeIcon(item.itemType)}
-                </div>
-              )}
-              <span className={`favorite-library-type-badge is-${category}`}>
-                {categoryIcon(category)}
-                {categoryLabel(category)}
-              </span>
-            </div>
-            <div className="favorite-library-card-body">
-              <div className="favorite-library-card-title-row">
-                <h3 title={item.title}>{item.title}</h3>
-                {isSharedMode && <span className="favorite-library-shared-pill">共享</span>}
-              </div>
-              <p>
-                {item.nodeCount} 个节点
-                {item.ownerName ? ` · ${item.ownerName}` : ''}
-                {item.updatedAtMs ? ` · ${formatTime(item.updatedAtMs)}` : ''}
-              </p>
-              {item.tags.length > 0 && (
-                <div className="favorite-library-tags">
-                  {item.tags.slice(0, 4).map(tag => <span key={tag}>{tag}</span>)}
-                </div>
-              )}
-              <div className="favorite-library-card-actions">
-                <button type="button" className="is-primary" disabled={busyId === item.id} onClick={() => void insertItem(item)}>
-                  <CopyPlus size={14} />
-                  插入副本
-                </button>
-                {!isSharedMode && (
+                  <div className="favorite-library-preview-placeholder">
+                    {itemTypeIcon(item.itemType)}
+                  </div>
+                )}
+                <span className="favorite-library-tile-kind" title={categoryLabel(category)}>
+                  {categoryIcon(category)}
+                </span>
+                <div className="favorite-library-tile-buttons">
                   <button
                     type="button"
-                    onClick={() => void shareItem(item)}
-                    disabled={busyId === item.id}
+                    title="插入副本"
+                    draggable={false}
+                    disabled={busy}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    onClick={(event) => { event.stopPropagation(); void insertItem(item) }}
                   >
-                    <Share2 size={14} />
-                    共享
+                    <CopyPlus size={12} />
                   </button>
-                )}
-                {item.canManage && (
-                  <button
-                    type="button"
-                    className="is-danger"
-                    onClick={() => void deleteItem(item)}
-                    disabled={busyId === item.id}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {!isSharedMode && (
+                    <button
+                      type="button"
+                      title="共享"
+                      draggable={false}
+                      disabled={busy}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
+                      onClick={(event) => { event.stopPropagation(); void shareItem(item) }}
+                    >
+                      <Share2 size={12} />
+                    </button>
+                  )}
+                  {item.canManage && (
+                    <button
+                      type="button"
+                      title="删除"
+                      draggable={false}
+                      disabled={busy}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
+                      onClick={(event) => { event.stopPropagation(); void deleteItem(item) }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+                {isSharedMode && (
+                  <div className="favorite-library-tile-chips"><span>共享</span></div>
                 )}
               </div>
-            </div>
+              <div className="project-asset-caption">
+                <strong>{item.title}</strong>
+              </div>
             </article>
           )
         })}
