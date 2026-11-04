@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { addEdge } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import type { CanvasNodeData } from '@/lib/types'
 import { NodeShell } from '@/components/nodes/NodeShell'
@@ -12,6 +13,44 @@ declare global {
   }
 }
 
+type UiMaskOutput = { sourceUrl?: string; url?: string; category?: string; mode?: string }
+type UiMaskParams = { videoList?: Array<{ url?: string; nodeId?: string }>; openOnCreate?: boolean; placedOutputs?: string[] }
+
+const OUTPUT_LABELS: Record<string, string> = { static: '静态遮罩', dynamic: '动态遮罩', model: '模型遮罩' }
+
+/** 这个结果（工作台里的任务地址）是否已经放到画布过 */
+function outputPlaced(nodeId: string, sourceUrl: string) {
+  const node = useCanvasStore.getState().nodes.find((item) => item.id === nodeId)
+  const placed = ((node?.data.params ?? {}) as UiMaskParams).placedOutputs || []
+  return placed.includes(sourceUrl)
+}
+
+/** 盖黑视频生成好后：在遮罩节点右边新建一个视频节点，并从遮罩节点连线过去 */
+function placeOutput(nodeId: string, output: UiMaskOutput) {
+  const url = output.url || ''
+  const key = output.sourceUrl || url
+  if (!url || !key || outputPlaced(nodeId, key)) return
+  const state = useCanvasStore.getState()
+  const self = state.nodes.find((item) => item.id === nodeId)
+  if (!self) return
+  const params = (self.data.params ?? {}) as UiMaskParams
+  const outgoing = state.edges.filter((edge) => edge.source === nodeId).length
+  const width = Number(self.measured?.width ?? self.width ?? UI_MASK_NODE_WIDTH) || UI_MASK_NODE_WIDTH
+  const created = state.addNodeAt('video', self.position.x + width + 140, self.position.y + outgoing * 420, {
+    name: `${self.data.name || 'UI遮罩'} ${OUTPUT_LABELS[output.category || ''] || '盖黑视频'}`,
+    url: [url],
+    action: 'image_resource',
+  })
+  const latest = useCanvasStore.getState()
+  const edgeId = `e-${nodeId}-${created.id}`
+  if (!latest.edges.some((edge) => edge.id === edgeId)) {
+    latest.setEdges(addEdge({ id: edgeId, source: nodeId, target: created.id, type: 'glow', selectable: true, interactionWidth: 34 }, latest.edges))
+  }
+  latest.updateNodeData(nodeId, {
+    params: { ...params, placedOutputs: [...(params.placedOutputs || []), key].slice(-50) } as Record<string, unknown>,
+  })
+}
+
 /** 节点尺寸跟图片 / 视频节点一致：520 宽，预览按 16:9 */
 export const UI_MASK_NODE_WIDTH = 520
 export const UI_MASK_NODE_HEIGHT = 380
@@ -23,7 +62,7 @@ export const UI_MASK_NODE_HEIGHT = 380
  */
 export function UiMaskNode({ id, data, selected }: NodeProps) {
   const nodeData = data as CanvasNodeData
-  const params = (nodeData.params ?? {}) as { videoList?: Array<{ url?: string; nodeId?: string }>; openOnCreate?: boolean }
+  const params = (nodeData.params ?? {}) as UiMaskParams
   const source = (params.videoList || [])[0] || null
   const sourceUrl = source?.url || ''
   const openedOnCreate = useRef(false)
@@ -41,6 +80,8 @@ export function UiMaskNode({ id, data, selected }: NodeProps) {
       projectUuid: nodeData.projectUuid,
       name: nodeData.name,
       sourceNodeId: source?.nodeId,
+      isPlaced: (sourceUrl: string) => outputPlaced(id, sourceUrl),
+      onOutput: (output: UiMaskOutput) => placeOutput(id, output),
     })
   }
 

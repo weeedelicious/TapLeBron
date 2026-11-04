@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+ultralytics==8.4.182
+opencv-python
+numpy
+imageio-ffmpeg==0.7.0
+lap
+scipy
+pillow
+# torch 2.7.1+cu128 / torchvision 0.22.1+cu128（从 moge-worker 的 .venv 拷贝，或 --index-url https://download.pytorch.org/whl/cu128）
