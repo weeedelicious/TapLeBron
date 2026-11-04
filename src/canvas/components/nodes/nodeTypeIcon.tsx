@@ -7,6 +7,7 @@ import {
   GitMerge,
   Image as ImageIcon,
   MonitorPlay,
+  ScanLine,
   ScrollText,
   SquareStack,
   Upload,
@@ -41,6 +42,8 @@ export function NodeTypeIcon({ type, ...props }: NodeTypeIconProps) {
     case 'previs':
     case 'mstudio':
       return <Box {...props} />
+    case 'ui_mask':
+      return <ScanLine {...props} />
     case 'group':
       return <SquareStack {...props} />
     default:
