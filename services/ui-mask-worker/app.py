@@ -1,4 +1,4 @@
-"""Shotflow UI 遮罩 GPU Worker（4090）。
+"""Shotflow UI 遮罩 / 视频转码 GPU Worker（4090）。
 
 线上 Shotflow 把遮罩任务（识别 / 导出）的输入文件传过来，这里用同一份 ui_mask_worker.py
 在显卡上跑，线上轮询 status.json 同步进度，结束后整包取回任务目录。
@@ -179,9 +179,128 @@ class _Pipe(io.RawIOBase):
         return self.buffer.write(data)
 
 
+# ---------------------------------------------------------------------------
+# 视频预览 / 查看版转码（360P 节点预览、1080P 展开播放），NVENC 编码。
+# 线上 Shotflow 决定参数（短边、帧率上限、码率），这里只负责按参数转码：
+#   PUT  /video-variants/<id>/source        原视频
+#   POST /video-variants/<id>/run           {outputs:[{name,shortEdge,fps,cq,maxrateKbps,audioKbps}], hasAudio}
+#   GET  /video-variants/<id>/files/<name>  取结果
+#   DELETE /video-variants/<id>
+# ---------------------------------------------------------------------------
+VARIANTS = ROOT / 'video-variants'
+VARIANTS.mkdir(parents=True, exist_ok=True)
+VARIANT_NAME_RE = re.compile(r'^[a-z0-9_-]{1,40}\.mp4$')
+VARIANT_KEEP_SECONDS = 3600
+nvenc_slots = threading.Semaphore(3)
+
+
+def ffmpeg_exe():
+    import imageio_ffmpeg
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def variant_dir(job_id: str) -> Path:
+    if not ID_RE.match(job_id):
+        raise HTTPException(400, '任务编号无效')
+    return VARIANTS / job_id
+
+
+def short_edge_scale(edge: int) -> str:
+    return f"scale='if(gte(iw,ih),-2,min(iw,{edge}))':'if(gte(iw,ih),min(ih,{edge}),-2)'"
+
+
+@app.put('/video-variants/{job_id}/source')
+async def variant_source(job_id: str, request: Request):
+    folder = variant_dir(job_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    temporary = folder / 'source.uploading'
+    size = 0
+    with temporary.open('wb') as handle:
+        async for chunk in request.stream():
+            size += len(chunk)
+            handle.write(chunk)
+    os.replace(temporary, folder / 'source.bin')
+    return {'ok': True, 'size': size}
+
+
+@app.post('/video-variants/{job_id}/run')
+def variant_run(job_id: str, spec: dict):
+    folder = variant_dir(job_id)
+    source = folder / 'source.bin'
+    if not source.is_file():
+        raise HTTPException(400, '缺少原视频')
+    outputs = spec.get('outputs') or []
+    if not outputs or len(outputs) > 4:
+        raise HTTPException(400, '输出参数无效')
+    results = {}
+    with nvenc_slots:
+        for output in outputs:
+            name = str(output.get('name') or '')
+            if not VARIANT_NAME_RE.match(name):
+                raise HTTPException(400, '输出文件名无效')
+            edge = int(output.get('shortEdge') or 0)
+            if edge < 64 or edge > 4320:
+                raise HTTPException(400, '短边无效')
+            filters = [short_edge_scale(edge)]
+            fps = output.get('fps')
+            if fps:
+                filters.append(f'fps={float(fps):g}')
+            filters.append('format=yuv420p')
+            maxrate = int(output.get('maxrateKbps') or 2000)
+            command = [ffmpeg_exe(), '-hide_banner', '-nostdin', '-y', '-i', str(source),
+                       '-map', '0:v:0', '-vf', ','.join(filters),
+                       '-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr',
+                       '-cq', str(int(output.get('cq') or 28)), '-b:v', '0',
+                       '-maxrate', f'{maxrate}k', '-bufsize', f'{maxrate * 2}k', '-profile:v', 'high']
+            if spec.get('hasAudio'):
+                command += ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', f"{int(output.get('audioKbps') or 64)}k", '-ac', '2']
+            else:
+                command += ['-an']
+            target = folder / name
+            temporary = folder / (name + '.part.mp4')
+            command += ['-movflags', '+faststart', str(temporary)]
+            started = time.time()
+            done = subprocess.run(command, capture_output=True, timeout=600,
+                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if done.returncode or not temporary.is_file():
+                tail = done.stderr.decode('utf-8', 'replace')[-1200:]
+                raise HTTPException(500, f'转码失败：{tail}')
+            os.replace(temporary, target)
+            results[name] = {'size': target.stat().st_size, 'seconds': round(time.time() - started, 2)}
+    return {'ok': True, 'files': results}
+
+
+@app.get('/video-variants/{job_id}/files/{name}')
+def variant_file(job_id: str, name: str):
+    if not VARIANT_NAME_RE.match(name):
+        raise HTTPException(400, '文件名无效')
+    target = variant_dir(job_id) / name
+    if not target.is_file():
+        raise HTTPException(404, '文件不存在')
+
+    def stream():
+        with target.open('rb') as handle:
+            while chunk := handle.read(1024 * 1024):
+                yield chunk
+
+    return StreamingResponse(stream(), media_type='video/mp4', headers={'Content-Length': str(target.stat().st_size)})
+
+
+@app.delete('/video-variants/{job_id}')
+def variant_delete(job_id: str):
+    shutil.rmtree(variant_dir(job_id), ignore_errors=True)
+    return {'ok': True}
+
+
 def cleanup_loop():
     while True:
         time.sleep(3600)
+        for folder in VARIANTS.iterdir():
+            try:
+                if folder.is_dir() and folder.stat().st_mtime < time.time() - VARIANT_KEEP_SECONDS:
+                    shutil.rmtree(folder, ignore_errors=True)
+            except OSError:
+                pass
         cutoff = time.time() - KEEP_SECONDS
         for folder in JOBS.iterdir():
             child = children.get(folder.name)

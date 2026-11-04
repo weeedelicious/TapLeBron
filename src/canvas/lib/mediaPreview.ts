@@ -1,4 +1,4 @@
-import type { CanvasNodeData, ImageVariants, ResourceMeta } from './types'
+import type { CanvasNodeData, ImageVariants, ResourceMeta, VideoVariants } from './types'
 
 function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim() ? value : ''
@@ -40,10 +40,26 @@ export function imageVariantsForUrl(data: CanvasNodeData, url: string | undefine
   }
 }
 
+/** 新视频的派生记录（360P 预览版 / 1080P 查看版 / 封面图），没有时返回 null。 */
+export function videoVariantsForUrl(data: CanvasNodeData, url: string | undefined): VideoVariants | null {
+  const originalUrl = stringValue(url)
+  if (!originalUrl) return null
+  const mapped = data._assetVideoVariants?.[originalUrl]
+  return mapped && stringValue(mapped.previewUrl) ? mapped : null
+}
+
+/** 视频封面图（第一帧，短边 360）。没有派生记录时返回空串，调用方自己用 <video> 取首帧。 */
+export function mediaPosterUrl(data: CanvasNodeData, url: string | undefined) {
+  return stringValue(videoVariantsForUrl(data, url)?.posterUrl)
+}
+
 /** Returns a lightweight canvas preview while keeping the passed URL as the operation source. */
 export function mediaPreviewUrl(data: CanvasNodeData, url: string | undefined, index?: number) {
   const originalUrl = stringValue(url)
   if (!originalUrl) return ''
+
+  const video = videoVariantsForUrl(data, originalUrl)
+  if (video) return video.previewUrl
 
   const variants = imageVariantsForUrl(data, originalUrl)
   if (variants) return variants.previewUrl
@@ -71,7 +87,9 @@ export function mediaPreviewUrl(data: CanvasNodeData, url: string | undefined, i
 export function mediaViewerUrl(data: CanvasNodeData, url: string | undefined) {
   const originalUrl = stringValue(url)
   if (!originalUrl) return ''
-  return imageVariantsForUrl(data, originalUrl)?.viewerUrl || originalUrl
+  return videoVariantsForUrl(data, originalUrl)?.viewerUrl
+    || imageVariantsForUrl(data, originalUrl)?.viewerUrl
+    || originalUrl
 }
 
 /**

@@ -57,6 +57,21 @@ export interface ImageVariants {
   height?: number;
 }
 
+/**
+ * 服务端给新视频生成的预览版 / 查看版 / 封面图，按原视频地址存在节点的 `_assetVideoVariants` 里。
+ * previewUrl 是短边 360、最高 30 帧的预览版（原片本来就很小时就是原片地址）；
+ * viewerUrl 只有原片短边大于 1080 或码率很高时才有；width / height / fps 是原片的。
+ */
+export interface VideoVariants {
+  previewUrl: string;
+  viewerUrl?: string;
+  posterUrl?: string;
+  width?: number;
+  height?: number;
+  fps?: number;
+  durationSec?: number;
+}
+
 export interface NodeRef {
   nodeId: string;
   url: string;
@@ -350,6 +365,7 @@ export interface CanvasNodeData extends Record<string, unknown> {
   _assetGenerationMeta?: Record<string, AssetGenerationMeta>;
   _assetPreviewUrls?: Record<string, string>;
   _assetImageVariants?: Record<string, ImageVariants>;
+  _assetVideoVariants?: Record<string, VideoVariants>;
   _generationVersion?: number;
   // Provenance markers stamped when a node is created by applying a Cindy
   // assistant proposal (see Canvas.tsx applyCindyProposal). Used both for

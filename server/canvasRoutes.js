@@ -114,6 +114,7 @@ const appearanceDescriptorService = require('./services/appearanceDescriptorServ
 const appearanceHistoryService = require('./services/appearanceHistoryService');
 const panoramaGenerationParams = require('./services/PanoramaGenerationParams');
 const panoramaErpTemplateService = require('./services/PanoramaErpTemplateService');
+const { createVideoVariantService } = require('./services/VideoVariantService');
 
 const execFileAsync = promisify(execFile);
 
@@ -1247,7 +1248,9 @@ async function createDisplayImageAsset(projectUuid, storedName, sourcePath) {
 const IMAGE_PREVIEW_SHORT_EDGE = 360;
 const IMAGE_VIEWER_SHORT_EDGE = 1080;
 const IMAGE_VARIANT_SOURCE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.avif']);
-const IMAGE_VARIANT_SUFFIX_RE = /_(?:360|1080)\.webp$/i;
+// 图片 360/1080 派生图，以及视频的 360/1080 预览版、封面图、派生记录（services/VideoVariantService.js）。
+// 都是派生物：不单独登记成素材、不单独复制。
+const IMAGE_VARIANT_SUFFIX_RE = /_(?:360|1080)\.(?:webp|mp4)$|_poster\.webp$|_variants\.json$/i;
 
 function isImageVariantName(storedName) {
   return IMAGE_VARIANT_SUFFIX_RE.test(String(storedName || ''));
@@ -1319,6 +1322,14 @@ async function createImageVariants(projectUuid, storedName, sourcePath, mimeType
     console.warn(`image variants failed for ${projectUuid}/${storedName}:`, error.message);
     return null;
   }
+}
+
+const videoVariants = createVideoVariantService({ assetsDir, assetUrl, mirrorStoredAsset, getSharp });
+
+/** 本画布视频地址：排队生成 360P 预览版 / 1080P 查看版 / 封面图（不等结果）。 */
+function kickVideoVariantsForUrl(projectUuid, url) {
+  const local = localAssetForUrl(projectUuid, url);
+  if (local) videoVariants.kick(projectUuid, local.storedName);
 }
 
 /** 本画布 /assets/<画布>/<文件> 地址对应的本地文件；不是本画布资产时返回 null。 */
@@ -4547,14 +4558,9 @@ async function persistUploadedAsset(canvasRow, file, options = {}) {
     }
 
     if (isVideoUpload) {
-      const display = await createDisplayVideoAsset(projectUuid, sha1, dest, uploadMimeType);
-      if (display?.url) {
-        meta.displayUrl = display.url;
-        meta.displayByteSize = display.byteSize;
-        if (display.meta?.width) meta.displayWidth = display.meta.width;
-        if (display.meta?.height) meta.displayHeight = display.meta.height;
-        if (display.meta?.durationSec) meta.displayDurationSec = display.meta.durationSec;
-      }
+      // 以前在这里同步压一份 960 的 _display.mp4，上传要等它压完。现在改成后台排队做
+      // 360P 预览版 / 1080P 查看版（4090 GPU），前端拿到后自动换上；旧视频的 _display 照旧可用。
+      videoVariants.kick(projectUuid, storedName);
     }
 
     return { url, thumbUrl, displayUrl: meta.displayUrl, previewUrl: meta.previewUrl, viewerUrl: meta.viewerUrl, sha1, meta, originalName };
@@ -4596,6 +4602,35 @@ async function sharedAssetGrantsAssetCopy(sourceUrl) {
   );
   return rows.some((row) => sharedRecordReferencesAsset(row.payload, row.preview_url, bare));
 }
+// 视频的 360P 预览版 / 1080P 查看版 / 封面图。前端发现节点里的视频还没有派生记录时调用：
+// 已经做好直接返回；正在做或刚排上队就最多等 90 秒；旧视频（上线前的）返回 skipped。
+apiRouter.post('/assets/video-variants', async (req, res, next) => {
+  try {
+    const projectUuid = String(req.body.projectUuid || '');
+    const url = String(req.body.url || '');
+    const canvas = await getReadableCanvasForUser(req, projectUuid);
+    if (!canvas) {
+      res.status(403).json({ error: '没有这个画布的读取权限' });
+      return;
+    }
+    const local = localAssetForUrl(projectUuid, url.split(/[?#]/)[0]);
+    if (!local) {
+      res.status(400).json({ error: '只支持本画布的视频素材' });
+      return;
+    }
+    const job = videoVariants.ensure(projectUuid, local.storedName);
+    const timeout = new Promise((resolve) => setTimeout(() => resolve('pending'), 90_000));
+    const result = await Promise.race([job, timeout]);
+    if (result === 'pending') {
+      res.json({ url, pending: true });
+      return;
+    }
+    res.json(result ? { url, ...result } : { url, skipped: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 apiRouter.post('/assets/copy', async (req, res, next) => {
   try {
     const projectUuid = String(req.body.projectUuid || '');
@@ -4648,6 +4683,7 @@ apiRouter.post('/assets/copy', async (req, res, next) => {
       sourceType: 'copy',
     });
     const copiedVariants = await createImageVariants(projectUuid, parsed.storedName, destPath, mimeType);
+    videoVariants.kick(projectUuid, parsed.storedName);
     res.json({ url: `/assets/${projectUuid}/${parsed.storedName}`, copied: true, ...(copiedVariants || {}) });
   } catch (error) {
     next(error);
@@ -7115,6 +7151,7 @@ async function downloadToAssets(urls, projectUuid, options = {}) {
       }
 
       localUrls.push(finalUrl);
+      kickVideoVariantsForUrl(projectUuid, finalUrl);
       const output = taskOutputForStoredAsset(
         finalUrl,
         finalMeta,

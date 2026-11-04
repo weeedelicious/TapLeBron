@@ -119,8 +119,8 @@ export function ImagePreview({ url, viewerUrl, onClose, name, naturalWidth, natu
   const [index, setIndex] = useState(initialIndex)
   const active = list[Math.min(index, list.length - 1)] ?? list[0]
   const activeUrl = active.url
-  // 大图显示的是查看图（1080）还是原图；下载 / 复制 / 放大镜一律用 activeUrl（原图）
-  const activeDisplayUrl = !isVideo && active.viewerUrl ? active.viewerUrl : activeUrl
+  // 大图显示的是查看图 / 查看版视频（1080）还是原片；下载 / 复制 / 放大镜一律用 activeUrl（原片）
+  const activeDisplayUrl = active.viewerUrl ? active.viewerUrl : activeUrl
   const showingViewerCopy = activeDisplayUrl !== activeUrl
   const multiple = list.length > 1
   const [loadedVideoMeta, setLoadedVideoMeta] = useState<Record<string, ResourceMeta>>({})
@@ -489,7 +489,7 @@ export function ImagePreview({ url, viewerUrl, onClose, name, naturalWidth, natu
           <video
             key={activeUrl}
             ref={imageRef as React.RefObject<HTMLVideoElement>}
-            src={activeUrl}
+            src={activeDisplayUrl}
             controls
             controlsList="nofullscreen"
             playsInline
@@ -499,7 +499,14 @@ export function ImagePreview({ url, viewerUrl, onClose, name, naturalWidth, natu
               event.stopPropagation()
               event.nativeEvent.stopImmediatePropagation()
             }}
-            onLoadedMetadata={event => setImageSize({ w: event.currentTarget.videoWidth, h: event.currentTarget.videoHeight })}
+            // 播的是 1080 查看版时，尺寸显示原片的
+            onLoadedMetadata={event => {
+              const originalWidth = active.originalWidth || activeResourceMeta?.width
+              const originalHeight = active.originalHeight || activeResourceMeta?.height
+              setImageSize(showingViewerCopy && originalWidth && originalHeight
+                ? { w: originalWidth, h: originalHeight }
+                : { w: event.currentTarget.videoWidth, h: event.currentTarget.videoHeight })
+            }}
             // 原生控件必须能点。外层 backdrop 的 mousedown 会 preventDefault 来做拖动平移，
             // 不在这里挡住的话进度条、音量、播放键全都点不动。
             // 放大之后（>1.05）才放行给拖动 —— 那时用户是在看细节，不是在操作播放器。

@@ -145,14 +145,19 @@ export async function captureVideoFrameFile(video: HTMLVideoElement, fallbackNam
 }
 
 /** 和视频同尺寸的透明底图：「画在视频上层」时白板只画笔迹，底下垫的是视频本身。 */
-export async function createVideoOverlayBoardFile(video: HTMLVideoElement, fallbackName: string) {
+export async function createVideoOverlayBoardFile(
+  video: HTMLVideoElement,
+  fallbackName: string,
+  // 节点里播的是 360P 预览版时传原片尺寸，画板按原片大小建
+  originalSize?: { width?: number; height?: number },
+) {
   if (!video.videoWidth || !video.videoHeight) {
     throw new Error('视频还没准备好，请稍后再试')
   }
 
   const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
+  canvas.width = originalSize?.width || video.videoWidth
+  canvas.height = originalSize?.height || video.videoHeight
   const blob = await canvasToBlob(canvas, 'image/png')
 
   return new File([blob], normalizeImageFileName(fallbackName), {

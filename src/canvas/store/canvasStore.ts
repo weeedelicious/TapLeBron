@@ -2366,7 +2366,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // 别的画布的素材复制过来；本画布的素材也过一遍，服务端会补 360 / 1080 派生图。
       // 旧的派生图地址不复制，插入后按新地址重新登记。
       const assetUrls = collectLocalAssetUrls(sourceNodes)
-        .filter((url) => !/_(360|1080)\.webp$/i.test(url));
+        .filter((url) => !/_(?:360|1080)\.(?:webp|mp4)$|_poster\.webp$/i.test(url));
       for (const sourceUrl of assetUrls) {
         try {
           const copied = await assetsApi.copyToProject(nextProjectUuid, sourceUrl);

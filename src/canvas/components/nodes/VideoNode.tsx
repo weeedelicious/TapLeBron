@@ -38,7 +38,8 @@ import {
   type PromptChipLiveUrls,
 } from '@/lib/promptChips'
 import { liveRefUrl, primaryOutputUrl } from '@/lib/primaryOutput'
-import { mediaPreviewUrl } from '@/lib/mediaPreview'
+import { mediaPosterUrl, mediaPreviewUrl, videoVariantsForUrl } from '@/lib/mediaPreview'
+import { useVideoVariants } from '@/lib/useVideoVariants'
 import { videoDownloadFileName } from '@/lib/videoFileName'
 import { writeTextToClipboard } from '@/lib/clipboard'
 import {
@@ -380,7 +381,10 @@ export function VideoNode({ id, data, selected }: Props) {
   const liveTasks = useTasksStore(state => state.tasks)
   const initialPanelSize = readPanelSize((getParams(data).advancedSettings as Record<string, unknown> | undefined)?.bottomPanelSize)
   const videoRef = useRef<HTMLVideoElement>(null)
+  // 节点里的播放器在预览版和原片之间换地址时（进 / 出逐帧模式），换完回到原来的时间点
+  const restoreVideoTimeRef = useRef<number | null>(null)
   const hoverPreviewMutedRef = useRef(false)
+  useVideoVariants(id, data)
   const editorRef = useRef<PromptEditorHandle>(null)
   const promptPanelRef = useRef<HTMLDivElement>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -645,7 +649,10 @@ export function VideoNode({ id, data, selected }: Props) {
   const videoUrl = mainVideoItem?.url
   const expandedVideoItems = galleryItems.filter((item) => item.url !== videoUrl)
   const currentVideoMeta = primaryVideoMeta(data, videoUrl)
-  const displayVideoUrl = mediaPreviewUrl(data, videoUrl)
+  const currentVideoVariants = videoVariantsForUrl(data, videoUrl)
+  // 节点里播 360P 预览版（最高 30 帧）；逐帧模式要逐帧对得上原片，换回原片
+  const displayVideoUrl = frameMode && videoUrl ? videoUrl : mediaPreviewUrl(data, videoUrl)
+  const displayPosterUrl = mediaPosterUrl(data, videoUrl) || undefined
   const currentVideoGenerationMeta = videoUrl
     ? data._assetGenerationMeta?.[videoUrl] as AssetGenerationMeta | undefined
     : undefined
@@ -653,11 +660,11 @@ export function VideoNode({ id, data, selected }: Props) {
   // and then the generation metadata. The modal still lets the server re-probe
   // the real source before starting a task.
   const sourceFpsHint = Number(
-    currentVideoMeta?.fps || currentVideoGenerationMeta?.fps || currentVideoGenerationMeta?.targetFps || 0,
+    currentVideoMeta?.fps || currentVideoVariants?.fps || currentVideoGenerationMeta?.fps || currentVideoGenerationMeta?.targetFps || 0,
   ) || undefined
   const frameFps = resolveVideoFps(sourceFpsHint)
-  const sourceWidthHint = Number(currentVideoMeta?.width || currentVideoMeta?.displayWidth || 0) || undefined
-  const sourceHeightHint = Number(currentVideoMeta?.height || currentVideoMeta?.displayHeight || 0) || undefined
+  const sourceWidthHint = Number(currentVideoMeta?.width || currentVideoVariants?.width || currentVideoMeta?.displayWidth || 0) || undefined
+  const sourceHeightHint = Number(currentVideoMeta?.height || currentVideoVariants?.height || currentVideoMeta?.displayHeight || 0) || undefined
   const sourceDurationHint = Number(currentVideoMeta?.durationSec || currentVideoMeta?.displayDurationSec || currentVideoGenerationMeta?.durationSec || 0) || undefined
   const frameInterpolationParams = (params as unknown as Record<string, unknown>).frameInterpolation
   const isFrameInterpolationNode = Boolean(frameInterpolationParams && typeof frameInterpolationParams === 'object')
@@ -1528,10 +1535,17 @@ export function VideoNode({ id, data, selected }: Props) {
     try {
       const sec = Number(videoBoardSec)
       const file = kind === 'overlay'
-        ? await createVideoOverlayBoardFile(videoRef.current, data.name || 'video')
+        ? await createVideoOverlayBoardFile(
+          videoRef.current,
+          data.name || 'video',
+          displayVideoUrl !== videoUrl ? { width: currentVideoVariants?.width, height: currentVideoVariants?.height } : undefined,
+        )
         : kind === 'time'
           ? await captureVideoFrameFileFromUrl(videoUrl, Number.isFinite(sec) ? sec : 0, data.name || 'video')
-          : await captureVideoFrameFile(videoRef.current, data.name || 'video')
+          : displayVideoUrl !== videoUrl
+            // 节点里播的是预览版：按当前时间从原片取这一帧，白板拿到的是原片清晰度
+            ? await captureVideoFrameFileFromUrl(videoUrl, videoRef.current.currentTime || 0, data.name || 'video')
+            : await captureVideoFrameFile(videoRef.current, data.name || 'video')
       setWhiteboardSourceFile(file)
     } catch (error) {
       const message = error instanceof Error ? error.message : '白板资源加载失败'
@@ -1541,7 +1555,7 @@ export function VideoNode({ id, data, selected }: Props) {
     } finally {
       setWhiteboardPreparing(false)
     }
-  }, [data.name, videoBoardSec, videoUrl, whiteboardPreparing])
+  }, [currentVideoVariants?.height, currentVideoVariants?.width, data.name, displayVideoUrl, videoBoardSec, videoUrl, whiteboardPreparing])
 
   const openTrimModal = useCallback(() => {
     if (!videoUrl || trimSubmitting) return
@@ -1579,6 +1593,8 @@ export function VideoNode({ id, data, selected }: Props) {
     if (video) {
       video.pause()
       updateFrameNumberFromVideo(video)
+      // 进出逐帧模式会在预览版 / 原片之间换地址，换完回到这一帧
+      if (Number.isFinite(video.currentTime)) restoreVideoTimeRef.current = video.currentTime
     }
     useCanvasStore.getState().setSelected([id])
     setFrameMode(value => !value)
@@ -2368,8 +2384,15 @@ export function VideoNode({ id, data, selected }: Props) {
   const videoPreviewItems = useMemo<ImagePreviewItem[]>(() => {
     const resourceItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
     const videoResourceItems = resourceItems.filter((meta) => meta?.kind === 'video')
-    return galleryItems.map((item) => ({
+    return galleryItems.map((item) => {
+      const variants = videoVariantsForUrl(data, item.url)
+      return {
       url: item.url,
+      // 展开播放用 1080 查看版（原片不大时就是原片），缩略图轨道用封面图
+      viewerUrl: variants?.viewerUrl,
+      thumbUrl: variants?.posterUrl,
+      originalWidth: variants?.width,
+      originalHeight: variants?.height,
       name: data.name,
       resourceMeta: videoResourceItems.find(
         (meta) => meta.originalUrl === item.url || meta.displayUrl === item.url,
@@ -2377,7 +2400,8 @@ export function VideoNode({ id, data, selected }: Props) {
       generationMeta: data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined,
       createdAtMs: data._assetCreatedAtMs?.[item.url],
       badge: (data._assetGenerationMeta?.[item.url] as AssetGenerationMeta | undefined)?.resolution,
-    }))
+    }
+    })
   }, [galleryItems, data])
 
   const loadVideoResourceMeta = useCallback((url: string) => {
@@ -2700,13 +2724,22 @@ export function VideoNode({ id, data, selected }: Props) {
                   pointerEvents: 'none',
                 }}
               >
-                <video
-                  src={videoPreviewSrc(mediaPreviewUrl(data, url))}
-                  muted
-                  playsInline
-                  preload="none"
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />
+                {mediaPosterUrl(data, url) ? (
+                  <img
+                    src={mediaPosterUrl(data, url)}
+                    alt=""
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                ) : (
+                  <video
+                    src={videoPreviewSrc(mediaPreviewUrl(data, url))}
+                    muted
+                    playsInline
+                    preload="none"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                )}
               </div>
             )
           })}
@@ -2714,6 +2747,7 @@ export function VideoNode({ id, data, selected }: Props) {
           <video
             ref={videoRef}
             src={displayVideoUrl}
+            poster={displayPosterUrl}
             className="w-full shotflow-media-lod-content"
             style={{
               position: 'relative',
@@ -2743,8 +2777,15 @@ export function VideoNode({ id, data, selected }: Props) {
             }}
             onLoadedMetadata={e => {
               const video = e.currentTarget
+              if (restoreVideoTimeRef.current != null) {
+                try { video.currentTime = restoreVideoTimeRef.current } catch { /* 元数据还没稳 */ }
+                restoreVideoTimeRef.current = null
+              }
               updateFrameNumberFromVideo(video)
-              setVideoSize({ w: video.videoWidth, h: video.videoHeight })
+              // 播的是预览版时，节点上的尺寸仍按原片
+              setVideoSize(currentVideoVariants?.width && currentVideoVariants?.height && displayVideoUrl !== videoUrl
+                ? { w: currentVideoVariants.width, h: currentVideoVariants.height }
+                : { w: video.videoWidth, h: video.videoHeight })
               const durationSec = Number.isFinite(video.duration) && video.duration > 0
                 ? Number(video.duration.toFixed(3))
                 : undefined

@@ -1264,6 +1264,15 @@ export const assetsApi = {
         }[]
       >("/assets")
       .then((r) => r.data),
+  /** 视频的 360P 预览版 / 1080P 查看版 / 封面图；服务端最多等 90 秒，没做完返回 pending。 */
+  videoVariants: (projectUuid: string, url: string) =>
+    http
+      .post<{ url: string; pending?: boolean; skipped?: boolean; previewUrl?: string; viewerUrl?: string; posterUrl?: string; width?: number; height?: number; fps?: number; durationSec?: number }>(
+        "/assets/video-variants",
+        { projectUuid, url },
+        { timeout: 120_000 },
+      )
+      .then((r) => r.data),
   copyToProject: (projectUuid: string, sourceUrl: string) =>
     http
       .post<{ url: string; copied: boolean; previewUrl?: string; viewerUrl?: string; width?: number; height?: number }>("/assets/copy", {
