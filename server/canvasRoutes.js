@@ -4608,7 +4608,17 @@ apiRouter.post('/assets/copy', async (req, res, next) => {
       return;
     }
     if (String(parsed.projectUuid) === String(projectUuid)) {
-      res.json({ url: `/assets/${projectUuid}/${parsed.storedName}`, copied: false });
+      // 同画布不用复制，但旧收藏可能还没有 360 / 1080 派生图，顺手补上
+      const samePath = path.join(assetsDir(projectUuid), parsed.storedName);
+      const sameVariants = fs.existsSync(samePath)
+        ? await createImageVariants(projectUuid, parsed.storedName, samePath, mimeTypeFromName(parsed.storedName))
+        : null;
+      res.json({ url: `/assets/${projectUuid}/${parsed.storedName}`, copied: false, ...(sameVariants || {}) });
+      return;
+    }
+    if (isImageVariantName(parsed.storedName)) {
+      // 派生图跟着原图在目标画布重新生成，不单独复制
+      res.json({ url: sourceUrl, copied: false, skipped: 'variant' });
       return;
     }
     const readable = await getReadableCanvasForUser(req, parsed.projectUuid);
@@ -4637,7 +4647,8 @@ apiRouter.post('/assets/copy', async (req, res, next) => {
       sha1,
       sourceType: 'copy',
     });
-    res.json({ url: `/assets/${projectUuid}/${parsed.storedName}`, copied: true });
+    const copiedVariants = await createImageVariants(projectUuid, parsed.storedName, destPath, mimeType);
+    res.json({ url: `/assets/${projectUuid}/${parsed.storedName}`, copied: true, ...(copiedVariants || {}) });
   } catch (error) {
     next(error);
   }

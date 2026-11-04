@@ -1266,9 +1266,13 @@ export const assetsApi = {
       .then((r) => r.data),
   copyToProject: (projectUuid: string, sourceUrl: string) =>
     http
-      .post<{ url: string; copied: boolean }>("/assets/copy", {
+      .post<{ url: string; copied: boolean; previewUrl?: string; viewerUrl?: string; width?: number; height?: number }>("/assets/copy", {
         projectUuid,
         sourceUrl,
+      })
+      .then((r) => {
+        registerImageVariants(r.data?.url, r.data);
+        return r;
       })
       .then((r) => r.data),
   metadata: (projectUuid: string, sourceUrl: string) =>

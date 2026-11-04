@@ -27,6 +27,23 @@ import {
 import { emptyVideoCopyData } from "@/lib/emptyVideoCopy";
 import { withRegisteredImageVariants } from "@/lib/imageVariants";
 
+/** 收藏 / 共享插入的节点：丢掉旧画布的派生图记录，按当前画布登记的派生图重建。 */
+function withFreshImageVariants<T extends CanvasNodeData>(data: T): T {
+  if (!Array.isArray(data.url) || !data.url.length) return data;
+  const urls = new Set(data.url.map(String));
+  const kept = Object.fromEntries(
+    Object.entries(data._assetImageVariants ?? {}).filter(([url, variants]) =>
+      urls.has(url) &&
+      parseLocalAssetUrl(variants?.previewUrl)?.projectUuid === parseLocalAssetUrl(url)?.projectUuid,
+    ),
+  );
+  const { _assetImageVariants: _stale, ...rest } = data;
+  return withRegisteredImageVariants(undefined, {
+    ...rest,
+    ...(Object.keys(kept).length ? { _assetImageVariants: kept } : {}),
+  } as T);
+}
+
 const EDGE_INTERACTION_WIDTH = 34;
 /** 这些节点的产出走右侧名为 capture 的输出 handle，而不是节点默认输出点 */
 const CAPTURE_OUTPUT_NODE_TYPES = new Set(["panorama_viewer", "image_compare", "video_compare"]);
@@ -2324,12 +2341,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (sourceNodes.length === 0) return;
     const urlMap: Record<string, string> = {};
     if (nextProjectUuid) {
-      const foreignUrls = collectLocalAssetUrls(sourceNodes)
-        .filter((url) => parseLocalAssetUrl(url)?.projectUuid !== nextProjectUuid);
-      for (const sourceUrl of foreignUrls) {
+      // 别的画布的素材复制过来；本画布的素材也过一遍，服务端会补 360 / 1080 派生图。
+      // 旧的派生图地址不复制，插入后按新地址重新登记。
+      const assetUrls = collectLocalAssetUrls(sourceNodes)
+        .filter((url) => !/_(360|1080)\.webp$/i.test(url));
+      for (const sourceUrl of assetUrls) {
         try {
           const copied = await assetsApi.copyToProject(nextProjectUuid, sourceUrl);
-          if (copied?.url) urlMap[sourceUrl] = copied.url;
+          if (copied?.url && copied.url !== sourceUrl) urlMap[sourceUrl] = copied.url;
         } catch (error) {
           console.warn("copy shared asset into current canvas failed:", sourceUrl, error);
         }
@@ -2370,7 +2389,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           x: Number(node.position?.x ?? 0) + dx,
           y: Number(node.position?.y ?? 0) + dy,
         },
-        data: rewriteLocalAssetUrls(
+        data: withFreshImageVariants(rewriteLocalAssetUrls(
           favoriteNodeData(
             node.data,
             newId,
@@ -2379,7 +2398,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             timestamp,
           ),
           urlMap,
-        ),
+        )),
         draggable: true,
         selectable: nextType === "group" ? false : true,
         selected: false,

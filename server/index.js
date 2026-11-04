@@ -1119,6 +1119,16 @@ function closeHttpServer() {
     if (typeof httpServer.closeIdleConnections === 'function') {
       httpServer.closeIdleConnections();
     }
+    // 画布实时同步是 SSE 长连接，不会自己结束；不掐掉的话 close 永远等不到回调，
+    // 2026-11-04 一次重启因此卡在 deactivating 7 分钟（网站 502）。普通请求给 15 秒收尾，
+    // 之后剩下的连接全部断开，网页会自动重连。生成任务另有 drain，不靠这里。
+    const forceTimer = setTimeout(() => {
+      if (typeof httpServer.closeAllConnections === 'function') {
+        console.warn('[shutdown] closing remaining HTTP connections (SSE / long requests)');
+        httpServer.closeAllConnections();
+      }
+    }, 15_000);
+    forceTimer.unref();
   });
 }
 
