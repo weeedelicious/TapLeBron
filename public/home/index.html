@@ -283,10 +283,38 @@ html,body{overflow-x:hidden}
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}.thumb,.screen-window,.video-lightbox{transition:none}
 }
+
+/* ── 主要节点介绍（2026-11-05）：和「影视级专业工具插件」同一套浅紫底、标题样式 ── */
+.node-intro-section{position:relative;isolation:isolate;padding:clamp(92px,8vw,128px) clamp(20px,5vw,80px) clamp(70px,6vw,104px);background:linear-gradient(180deg,#f5f0f8 0%,#f7f4f9 30%,#f1edf5 100%);color:#281e32;overflow:hidden}
+.node-intro-section .demo-section-heading{margin-bottom:clamp(20px,3vh,32px)}
+.node-intro-section .demo-heading-left{left:0}
+.node-intro-tabs{position:relative;z-index:2;width:min(1050px,100%);margin:0 auto 22px;display:flex;flex-wrap:wrap;gap:10px}
+.node-intro-tabs input{position:absolute;opacity:0;pointer-events:none}
+.node-intro-tabs label{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border:1px solid rgba(121,91,146,.22);border-radius:999px;background:rgba(255,255,255,.62);color:#665875;font-size:14px;font-weight:600;letter-spacing:.04em;cursor:pointer;transition:background .2s ease,color .2s ease,border-color .2s ease,box-shadow .2s ease}
+.node-intro-tabs label:hover{border-color:rgba(121,91,146,.45);color:#4f3d63}
+.node-intro-tabs label i{width:7px;height:7px;border-radius:50%;background:#c8b4ef}
+#node-tab-video:checked~label[for="node-tab-video"],#node-tab-image:checked~label[for="node-tab-image"]{background:#795b92;border-color:#795b92;color:#fff;box-shadow:0 10px 26px rgba(121,91,146,.28)}
+#node-tab-video:checked~label[for="node-tab-video"] i,#node-tab-image:checked~label[for="node-tab-image"] i{background:#fff}
+.node-intro-panels{position:relative;z-index:2;width:min(1050px,100%);margin:0 auto}
+.node-intro-panel{display:none}
+.node-intro-section:has(#node-tab-video:checked) .node-intro-panel[data-node="video"],.node-intro-section:has(#node-tab-image:checked) .node-intro-panel[data-node="image"]{display:block}
+.node-intro-window{border:1px solid rgba(105,76,123,.2);border-radius:20px;background:#fff;box-shadow:0 34px 90px rgba(91,56,119,.16),0 10px 28px rgba(91,56,119,.1);overflow:hidden}
+.node-intro-window .window-bar{height:44px;background:linear-gradient(180deg,#f3eef7,#ece5f2);border-bottom:1px solid rgba(121,91,146,.14)}
+.node-intro-window .window-bar .window-dots i{background:rgba(121,91,146,.32)}
+.node-intro-window .window-address{color:#8a7b99}
+.node-intro-window a{display:block;cursor:zoom-in}
+.node-intro-window img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:contain;background:#ecebe8}
+.node-intro-desc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:clamp(18px,3vw,44px);align-items:start;margin-top:26px}
+.node-intro-desc h3{margin:0;color:#795b92;font-size:clamp(22px,2.2vw,30px);font-weight:500;letter-spacing:-.02em}
+.node-intro-desc p{margin:10px 0 0;color:#95899d;font-size:14px;line-height:1.8}
+.node-intro-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.node-intro-chips li{padding:7px 13px;border:1px solid rgba(121,91,146,.18);border-radius:999px;background:rgba(255,255,255,.7);color:#665875;font-size:13px;line-height:1.2}
+@media(max-width:850px){.node-intro-desc{grid-template-columns:1fr}}
+@media(max-width:560px){.node-intro-section{padding:84px 18px 60px}.node-intro-tabs label{padding:9px 16px;font-size:13px}.node-intro-window{border-radius:14px}.node-intro-window .window-bar{height:36px}}
 </style>
 </head>
 <body>
-<header class="site-header"><a class="brand" href="#top"><img class="brand-logo" src="/shotflow-logo.svg" alt="Shotflow"></a><nav class="header-nav"><a href="#screen-section">作品展映</a><a href="#features">创作工具</a><a href="#demos">功能演示</a><a href="#advantages">产品优势</a><a href="#contact">联系我们</a></nav><div class="header-actions"><a class="header-button" href="#contact">免费咨询</a><a class="header-button primary" href="/Shotflow">开始创作</a></div></header>
+<header class="site-header"><a class="brand" href="#top"><img class="brand-logo" src="/shotflow-logo.svg" alt="Shotflow"></a><nav class="header-nav"><a href="#screen-section">作品展映</a><a href="#features">创作工具</a><a href="#nodes">主要节点</a><a href="#demos">功能演示</a><a href="#advantages">产品优势</a><a href="#contact">联系我们</a></nav><div class="header-actions"><a class="header-button" href="#contact">免费咨询</a><a class="header-button primary" href="/Shotflow">开始创作</a></div></header>
 <main>
 <section class="hero" id="top">
 <div class="hero-copy"><span class="eyebrow">SHOTFLOW AI SHOWCASE</span><h1>让每一个灵感，<em>立即成片</em></h1><p>从一个想法，到一条成片</p></div>
@@ -296,6 +324,7 @@ html,body{overflow-x:hidden}
 <div class="status"><i></i><span>7 个作品正在展映</span></div>
 </section>
 <section class="creative-board" id="features" aria-label="创作流程展示"><div class="creative-copy"><h2>一张 <em>无限画布</em>，承载完整创作流程</h2><p>将文字灵感、脚本创作、视觉参考、分镜设计、素材生成、音视频制作与团队协作汇聚在同一空间。不切换工具，不打断思路。让每一个灵感，都能沿着画布自然生长为作品。</p></div><div class="screen-window" id="screen-window"><div class="window-bar"><span class="window-dots"><i></i><i></i><i></i></span><span class="window-address">shotflow / infinite-canvas</span></div><span class="screen-time">00:01:24 / 00:03:18</span><video class="screen-video" id="screen-video" controls preload="metadata" playsinline src="assets/shotflow-process.mp4"></video><div class="screen-placeholder">SHOTFLOW CANVAS<small>将录屏文件放入 assets/shotflow-process.mp4</small></div></div></section>
+<section class="node-intro-section" id="nodes" aria-label="主要节点介绍"><div class="demo-section-heading"><div class="demo-heading-left"><span>Core Nodes</span><strong>主要节点介绍</strong><p>视频节点与图片节点，从生成、编辑到输出，一个节点里完成。</p></div></div><div class="node-intro-tabs" role="tablist" aria-label="选择节点"><input type="radio" name="node-intro-tab" id="node-tab-video" checked><input type="radio" name="node-intro-tab" id="node-tab-image"><label for="node-tab-video" role="tab"><i></i>视频节点</label><label for="node-tab-image" role="tab"><i></i>图片节点</label></div><div class="node-intro-panels"><article class="node-intro-panel" data-node="video"><div class="node-intro-window"><div class="window-bar"><span class="window-dots"><i></i><i></i><i></i></span><span class="window-address">shotflow / video-node</span></div><a href="assets/node-intro-video.webp" target="_blank" rel="noopener" aria-label="查看视频节点大图"><img src="assets/node-intro-video.webp" alt="视频节点功能分区示意：工具栏预览区、视频显示区、视频生成区" width="1920" height="1080" loading="lazy" decoding="async"></a></div><div class="node-intro-desc"><div><h3>视频节点</h3><p>文生、图生、首尾帧、多模态，一个节点覆盖主流生视频方式；生成后可直接剪辑、补帧、高清增强，再接续往后延长。</p></div><ul class="node-intro-chips"><li>文生视频</li><li>图生视频</li><li>首尾帧</li><li>多模态参考</li><li>视频编辑</li><li>延长视频</li><li>剪辑 / 裁剪</li><li>补帧</li><li>AI 高清增强</li><li>去除 UI</li><li>白板标注</li><li>Skill 洗提示词</li></ul></div></article><article class="node-intro-panel" data-node="image"><div class="node-intro-window"><div class="window-bar"><span class="window-dots"><i></i><i></i><i></i></span><span class="window-address">shotflow / image-node</span></div><a href="assets/node-intro-image.webp" target="_blank" rel="noopener" aria-label="查看图片节点大图"><img src="assets/node-intro-image.webp" alt="图片节点功能分区示意：工具栏预览区、图片显示区、图片生成区" width="1920" height="1080" loading="lazy" decoding="async"></a></div><div class="node-intro-desc"><div><h3>图片节点</h3><p>参考图与描述词生成画面，生成后在节点里直接做局部重绘、抠像、灯光重塑与全景，不用切换工具反复导入导出。</p></div><ul class="node-intro-chips"><li>参考图生图</li><li>局部重绘</li><li>智能抠像</li><li>灯光重塑</li><li>光影拷贝</li><li>细化纹理</li><li>AI 高清增强</li><li>九宫格分镜</li><li>720° 全景</li><li>标注</li><li>裁剪</li></ul></div></article></div></section>
 <section class="demo-section" id="demos" aria-label="功能实操演示"><div class="demo-section-heading"><div class="demo-heading-left"><span>Professional Tools</span><strong>影视级专业工具插件</strong><p>围绕同一张画布，连续完成每一个创作动作。</p></div></div><div class="demo-carousel-zone" id="demo-carousel-zone"><div class="demo-axis"></div><div class="demo-card-orbit" id="demo-card-orbit"></div></div></section>
 <section class="section dark-section" id="advantages"><div class="section-heading"><div><span class="section-label">WHY SHOTFLOW</span><h2>让创作更连贯，<br><em>让作品更接近想象。</em></h2></div><p>Shotflow 将复杂的影视创作流程转化为直观、连贯的画布操作。</p></div><div class="advantage-list"><article><span>01</span><div><h3>AI一键出片</h3><p>提供自由创作、一键出片与电影大师三种模式，兼顾专业创作、快速生成与影视化表达。</p></div><span class="arrow">↗</span></article><article><span>02</span><div><h3>云端协作与一键共享</h3><p>围绕素材与创作节点进行批注、讨论与筛选，一键共享画布，快速统一创作方向与视觉风格。</p></div><span class="arrow">↗</span></article></div></section>
 <section class="section contact-section" id="contact"><div><span class="section-label">CONTACT</span><h2>从一个想法，<br><em>开始一条成片。</em></h2></div><div class="contact-cta"><div class="contact-cta-row"><p class="contact-cta-title">直接开始你的想法</p><a class="contact-cta-button" href="/Shotflow">开始创作</a></div><p class="contact-cta-mail">或者联系我们：<a href="mailto:yanli@xd.com">yanli@xd.com</a></p></div></section>
