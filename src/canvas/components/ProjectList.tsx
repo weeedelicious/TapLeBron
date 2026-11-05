@@ -1722,30 +1722,7 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
               <MenuActionButton label="重命名" onClick={() => handleRenameCanvas(menu.uuid)} />
               <MenuActionButton label="修改封面" onClick={() => handleChangeCover(menu.uuid)} />
               <MenuActionButton label="所属项目" onClick={() => openAssignProjectDialog(menu.uuid)} />
-              <MenuDivider />
-              <MenuSectionTitle label="移动到分类" />
-              {menuCanvas.collectionId ? (
-                <MenuActionButton
-                  label="移除分类"
-                  onClick={() => {
-                    void handleMoveToCollection(menu.uuid, null)
-                  }}
-                />
-              ) : null}
-              {groups.ownCollections.length ? (
-                groups.ownCollections.map((collection) => (
-                  <MenuActionButton
-                    key={collection.id}
-                    label={collection.name}
-                    active={menuCanvas.collectionId === collection.id}
-                    onClick={() => {
-                      void handleMoveToCollection(menu.uuid, collection.id)
-                    }}
-                  />
-                ))
-              ) : (
-                <div style={{ padding: '8px 16px 6px', fontSize: 12, color: '#7c7690' }}>还没有分类</div>
-              )}
+              {/* 分类由所属项目决定（改所属项目会自动归到对应游戏分类），菜单里不再提供手动移动 */}
               <MenuDivider />
             </>
           ) : null}
