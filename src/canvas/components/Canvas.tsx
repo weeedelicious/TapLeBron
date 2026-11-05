@@ -67,6 +67,7 @@ import { DEFAULT_IMAGE_MODEL, defaultAudioParams, defaultImageParams, defaultTex
 import { getImageRatioOptions, normalizeImageRatioValue, normalizeImageResolutionValue, normalizeImageGenerationCount } from '@/lib/imageRules'
 import { getVideoRatioOptions, normalizeVideoRatioValue, normalizeVideoResolutionValue, normalizeVideoDurationValue, normalizeVideoGenerationCount } from '@/lib/videoRules'
 import type { CanvasNodeData, FavoriteLibraryItem, NodeRef, ResourceMeta } from '@/lib/types'
+import { setLiveViewport, useLiveViewport } from '@/store/liveViewport'
 import type { CindyCanvasContext, CindyProposal, CindyProposalNodeSettings } from '@/lib/cindyAssistant'
 import {
   mergeAssetCreatedAtMap,
@@ -1813,6 +1814,129 @@ function normalizeClipboardFile(file: File, index = 0) {
   })
 }
 
+/**
+ * 多选框 + 右侧批量连接口。跟着实时视角走（store/liveViewport.ts）：画布本体只在视角停下来时
+ * 才更新，拖动视角的过程中由这里自己每帧重画，不拖累画布本体和各个节点。
+ */
+function MultiSelectionOverlay({
+  nodes,
+  selectedNodeKeys,
+  isMultiConnectDragging,
+  onStartConnect,
+}: {
+  nodes: FlowNode[]
+  selectedNodeKeys: string[]
+  isMultiConnectDragging: boolean
+  onStartConnect: (event: React.PointerEvent<HTMLButtonElement>) => void
+}) {
+  const viewport = useLiveViewport((state) => state.viewport)
+  const frame = useMemo(() => {
+    if (selectedNodeKeys.length < 2) return null
+    const selectedNodes = collectGroupingTargets(nodes, selectedNodeKeys)
+    if (selectedNodes.length < 2) return null
+    const bounds = getSelectionFrameBounds(selectedNodes, viewport.zoom)
+    if (!bounds) return null
+
+    const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1
+    return {
+      left: bounds.x * zoom + viewport.x,
+      top: bounds.y * zoom + viewport.y,
+      width: bounds.width * zoom,
+      height: bounds.height * zoom,
+    }
+  }, [nodes, selectedNodeKeys, viewport.x, viewport.y, viewport.zoom])
+  if (!frame) return null
+  return (
+          <>
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                left: frame.left,
+                top: frame.top,
+                width: frame.width,
+                height: frame.height,
+                zIndex: 11,
+                pointerEvents: 'none',
+                border: '1px solid rgba(255, 255, 238, 0.62)',
+                borderRadius: 10,
+                boxShadow: [
+                  '0 0 0 1px rgba(255,255,238,0.18)',
+                  '0 0 14px rgba(255,250,218,0.42)',
+                  '0 0 28px rgba(255,236,156,0.2)',
+                ].join(', '),
+                background: 'rgba(255,255,255,0.015)',
+              }}
+            />
+            <button
+              type="button"
+              className={`multi-selection-batch-port nodrag nopan${isMultiConnectDragging ? ' is-dragging' : ''}`}
+              title="批量连接到输入接口"
+              aria-label="批量连接到输入接口"
+              style={{
+                left: frame.left + frame.width + 10,
+                top: frame.top + frame.height / 2,
+              }}
+              onPointerDown={onStartConnect}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+            >
+              <span>+</span>
+            </button>
+          </>
+  )
+}
+
+/** 多选工具条，位置同样跟着实时视角走。 */
+function LiveMultiSelectToolbar({
+  nodes,
+  selectedNodeKeys,
+  canvasRef,
+}: {
+  nodes: FlowNode[]
+  selectedNodeKeys: string[]
+  canvasRef: React.RefObject<HTMLDivElement | null>
+}) {
+  const viewport = useLiveViewport((state) => state.viewport)
+  const position = useMemo(() => {
+    if (selectedNodeKeys.length < 2) return null
+    const canvasRect = canvasRef.current?.getBoundingClientRect()
+    if (!canvasRect) return null
+    const selectedNodes = collectGroupingTargets(nodes, selectedNodeKeys)
+    const bounds = getSelectionFrameBounds(selectedNodes, viewport.zoom)
+    if (!bounds) return null
+
+    const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1
+    const left = canvasRect.left + (bounds.x + bounds.width / 2) * zoom + viewport.x
+    const top = canvasRect.top + bounds.y * zoom + viewport.y - 12
+    return {
+      left,
+      top: Math.max(8, top),
+    }
+  }, [canvasRef, nodes, selectedNodeKeys, viewport.x, viewport.y, viewport.zoom])
+  return <MultiSelectToolbar selectedIds={selectedNodeKeys} position={position} />
+}
+
+/** 右下角缩放控件：百分比跟着实时视角走，放大缩小过程中数字实时变。 */
+function LiveDetailZoomControl({
+  onZoomPercentChange,
+  ...rest
+}: Omit<Parameters<typeof CanvasDetailZoomControl>[0], 'zoomPercent' | 'onZoomOut' | 'onZoomIn'>) {
+  const zoom = useLiveViewport((state) => state.viewport.zoom)
+  const zoomPercent = Math.round(Math.max(0.05, Number(zoom) || 1) * 100)
+  return (
+    <CanvasDetailZoomControl
+      {...rest}
+      zoomPercent={zoomPercent}
+      onZoomPercentChange={onZoomPercentChange}
+      onZoomOut={() => onZoomPercentChange(zoomPercent / 1.2)}
+      onZoomIn={() => onZoomPercentChange(zoomPercent * 1.2)}
+    />
+  )
+}
+
 export function Canvas() {
   const { nodes, edges, viewport, canvasTextScale, setNodes, setEdges, setViewport, setCanvasTextScale, setSelected, setActivePanelNode, setConnectionHoverTarget, updateNodeData, addNodeAt, selectedNodeKeys, deleteNodes, deleteGroupWithChildren, ungroupNodes, copySelected, pasteClipboard, undo, pushHistory, clipboard, historyIndex, duplicateNodes, duplicateEmptyVideoNode, insertFavoritePayload } = useCanvasStore()
   const projectUuid = useCanvasStore(state => state.projectUuid)
@@ -1869,7 +1993,6 @@ export function Canvas() {
   const isMultiConnectDragging = Boolean(multiConnectDrag)
   const canvasTextScalePercent = Math.round(canvasTextScale * 100)
   const canvasZoom = Math.max(0.05, Number(viewport.zoom) || 1)
-  const canvasZoomPercent = Math.round(canvasZoom * 100)
   const isLowDetailRender = canvasZoom < CANVAS_DETAIL_RENDER_ZOOM_THRESHOLD
   const canvasRootStyle = useMemo(() => ({
     position: 'relative',
@@ -3788,9 +3911,19 @@ export function Canvas() {
 
   const noopNodeMenuAction = useCallback(() => {}, [])
 
+  // 移动过程中只更新实时视角（多选框、工具条、缩放百分比跟着走），停下来才写进画布主状态：
+  // 主状态被画布本体和各节点整体订阅，每帧写一次就是每帧把所有节点重新渲染一遍。
+  const onMove = useCallback((_: unknown, vp: Viewport) => {
+    setLiveViewport(vp)
+  }, [])
   const onMoveEnd = useCallback((_: unknown, vp: Viewport) => {
+    setLiveViewport(vp)
     setViewport(vp)
   }, [setViewport])
+  // 按钮缩放、打开画布、定位节点等直接改主状态的地方，同步给实时视角
+  useEffect(() => {
+    setLiveViewport(viewport)
+  }, [viewport])
 
   const applyCanvasZoomPercent = useCallback((percent: number) => {
     const nextZoom = clampValue(percent / 100, 0.05, 4)
@@ -3913,38 +4046,6 @@ export function Canvas() {
       })),
     [edges, flowActiveEdgeIds, selectedEdgeCount]
   )
-  const multiSelectToolbarPosition = useMemo(() => {
-    if (selectedNodeKeys.length < 2) return null
-    const canvasRect = canvasRef.current?.getBoundingClientRect()
-    if (!canvasRect) return null
-    const selectedNodes = collectGroupingTargets(nodes, selectedNodeKeys)
-    const bounds = getSelectionFrameBounds(selectedNodes, viewport.zoom)
-    if (!bounds) return null
-
-    const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1
-    const left = canvasRect.left + (bounds.x + bounds.width / 2) * zoom + viewport.x
-    const top = canvasRect.top + bounds.y * zoom + viewport.y - 12
-    return {
-      left,
-      top: Math.max(8, top),
-    }
-  }, [nodes, selectedNodeKeys, viewport.x, viewport.y, viewport.zoom])
-
-  const multiSelectionFrame = useMemo(() => {
-    if (selectedNodeKeys.length < 2) return null
-    const selectedNodes = collectGroupingTargets(nodes, selectedNodeKeys)
-    if (selectedNodes.length < 2) return null
-    const bounds = getSelectionFrameBounds(selectedNodes, viewport.zoom)
-    if (!bounds) return null
-
-    const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1
-    return {
-      left: bounds.x * zoom + viewport.x,
-      top: bounds.y * zoom + viewport.y,
-      width: bounds.width * zoom,
-      height: bounds.height * zoom,
-    }
-  }, [nodes, selectedNodeKeys, viewport.x, viewport.y, viewport.zoom])
   return (
     // 左边是资产库停靠栏，右边才是画布本体。canvasRef 必须留在画布本体上：
     // 十几处 getBoundingClientRect 都拿它做屏幕坐标→画布坐标的换算，
@@ -3998,7 +4099,7 @@ export function Canvas() {
           onPaneClick={selectGroupFromPaneClick}
           onPaneContextMenu={openCanvasMenu}
           onMoveStart={closeAllContextMenus}
-          onMove={onMoveEnd}
+          onMove={onMove}
           onMoveEnd={onMoveEnd}
           onSelectionChange={onSelectionChange}
           onSelectionEnd={extendSelectionByTitleHits}
@@ -4052,13 +4153,10 @@ export function Canvas() {
           />
         </ReactFlow>
 
-        <CanvasDetailZoomControl
-          zoomPercent={canvasZoomPercent}
+        <LiveDetailZoomControl
           detailActive={!isLowDetailRender}
           thresholdPercent={Math.round(CANVAS_DETAIL_RENDER_ZOOM_THRESHOLD * 100)}
           onZoomPercentChange={applyCanvasZoomPercent}
-          onZoomOut={() => applyCanvasZoomPercent(canvasZoomPercent / 1.2)}
-          onZoomIn={() => applyCanvasZoomPercent(canvasZoomPercent * 1.2)}
           onFitView={() => showCanvasOverview()}
           onOpenTemplateLibrary={() => setTemplateLibraryOpen(true)}
         />
@@ -4071,47 +4169,12 @@ export function Canvas() {
           onApplyProposal={applyCindyProposal}
         />
 
-        {multiSelectionFrame && (
-          <>
-            <div
-              aria-hidden="true"
-              style={{
-                position: 'absolute',
-                left: multiSelectionFrame.left,
-                top: multiSelectionFrame.top,
-                width: multiSelectionFrame.width,
-                height: multiSelectionFrame.height,
-                zIndex: 11,
-                pointerEvents: 'none',
-                border: '1px solid rgba(255, 255, 238, 0.62)',
-                borderRadius: 10,
-                boxShadow: [
-                  '0 0 0 1px rgba(255,255,238,0.18)',
-                  '0 0 14px rgba(255,250,218,0.42)',
-                  '0 0 28px rgba(255,236,156,0.2)',
-                ].join(', '),
-                background: 'rgba(255,255,255,0.015)',
-              }}
-            />
-            <button
-              type="button"
-              className={`multi-selection-batch-port nodrag nopan${isMultiConnectDragging ? ' is-dragging' : ''}`}
-              title="批量连接到输入接口"
-              aria-label="批量连接到输入接口"
-              style={{
-                left: multiSelectionFrame.left + multiSelectionFrame.width + 10,
-                top: multiSelectionFrame.top + multiSelectionFrame.height / 2,
-              }}
-              onPointerDown={startMultiSelectionConnectDrag}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-              }}
-            >
-              <span>+</span>
-            </button>
-          </>
-        )}
+        <MultiSelectionOverlay
+          nodes={nodes}
+          selectedNodeKeys={selectedNodeKeys}
+          isMultiConnectDragging={isMultiConnectDragging}
+          onStartConnect={startMultiSelectionConnectDrag}
+        />
 
         {multiConnectDrag && (
           <svg className="multi-selection-connection-preview" aria-hidden="true">
@@ -4167,7 +4230,7 @@ export function Canvas() {
           />
         </div>
 
-        <MultiSelectToolbar selectedIds={selectedNodeKeys} position={multiSelectToolbarPosition} />
+        <LiveMultiSelectToolbar nodes={nodes} selectedNodeKeys={selectedNodeKeys} canvasRef={canvasRef} />
 
         {connMenu && (
           <ConnectionMenu
