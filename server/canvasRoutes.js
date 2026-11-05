@@ -3539,7 +3539,19 @@ apiRouter.post('/projects/:uuid/nodes/upsert', async (req, res, next) => {
       const expectedVersion = Math.max(0, Number(req.body?.expectedVersion || 0));
       const currentVersion = nodeEventVersion(current);
       if (current && expectedVersion !== currentVersion) {
-        return res.status(409).json({ error: '节点已被其他页面更新', errorCode: 'CANVAS_NODE_VERSION_CONFLICT', currentVersion, node: nodeEventSnapshot(current) });
+        // 带上最后是谁写的：绝大多数冲突是本页自己的生成结果刚被服务端写回（server-generation-result），
+        // 前端据此静默对齐、不弹横幅；别的页面 / 插件改的才提示用户。
+        const [lastWriter] = await getContentPool().query(
+          'SELECT client_id FROM canvas_node_events WHERE canvas_id = ? AND node_key = ? ORDER BY id DESC LIMIT 1',
+          [row.id, nodeKey],
+        );
+        return res.status(409).json({
+          error: '节点已被其他页面更新',
+          errorCode: 'CANVAS_NODE_VERSION_CONFLICT',
+          currentVersion,
+          node: nodeEventSnapshot(current),
+          lastWriterClientId: lastWriter[0]?.client_id || null,
+        });
       }
       // 删除墓碑：画布里没有、但最后一条事件是删除的节点，不许被普通保存重新建回来。
       // 2026-11-03 canvas 497：删除请求在服务端排了 30 多秒才执行，期间刷新出来的页面

@@ -381,6 +381,8 @@ function nodeSaveErrorData(error: unknown) {
           // upsert 的 409 会带上服务端当前那份节点快照（见 canvasRoutes.js 的
           // nodes/upsert）。有它就能把本地这一个节点 rebase 回服务端版本。
           node?: CanvasNode | null;
+          // 这个节点最后一次是谁写的。server-generation-result = 生成结果写回。
+          lastWriterClientId?: string | null;
         };
       };
       code?: string;
@@ -433,6 +435,36 @@ function rebaseConflictedNode(
   const aligned = Number(serverVersion || 0);
   if (aligned && versions.get(nodeKey) !== aligned) versions.set(nodeKey, aligned);
   return true;
+}
+
+/**
+ * 生成结果写回造成的冲突：以服务端快照为准，但把本地节点的位置和大小叠回去。
+ * 返回叠好的快照，以及位置 / 大小是否和服务端那份不同（不同就需要再存一次）。
+ */
+function snapshotWithLocalLayout(snapshot: CanvasNode | null | undefined, local: FlowNode) {
+  if (!snapshot) return { node: snapshot, layoutChanged: false };
+  let data: Record<string, unknown>;
+  try {
+    data = typeof snapshot.data === "string" ? JSON.parse(snapshot.data) : { ...(snapshot.data as Record<string, unknown>) };
+  } catch {
+    return { node: snapshot, layoutChanged: false };
+  }
+  const position = { positionX: local.position.x, positionY: local.position.y };
+  const serverPosition = snapshot.position as { positionX?: number; positionY?: number } | undefined;
+  let layoutChanged =
+    Number(serverPosition?.positionX) !== position.positionX ||
+    Number(serverPosition?.positionY) !== position.positionY;
+  for (const key of ["contentWidth", "contentHeight"] as const) {
+    const localValue = local.data[key];
+    if (localValue !== undefined && localValue !== data[key]) {
+      data[key] = localValue;
+      layoutChanged = true;
+    }
+  }
+  return {
+    node: { ...snapshot, position, data: JSON.stringify(data) } as CanvasNode,
+    layoutChanged,
+  };
 }
 
 function isRetryableNodeSaveError(error: unknown) {
@@ -536,6 +568,7 @@ async function persistNodesNow(
       conflictedNodesByProject.get(projectUuid) ?? new Set<string>();
     const freshConflicts: string[] = [];
     let rebasedThisPass = 0;
+    let layoutRestored = false;
     for (const node of nodes) {
       const nodeKey = String(node.data.nodeKey || node.id);
       const fingerprint = nodeFingerprint(node);
@@ -555,7 +588,12 @@ async function persistNodesNow(
         const conflictData = nodeSaveErrorData(error);
         if (conflictData?.errorCode !== "CANVAS_NODE_VERSION_CONFLICT") throw error;
         // 只有这一个节点服务端更新过。跳过它、继续存别的，不要连坐整个画布。
-        freshConflicts.push(nodeKey);
+        // 生成结果写回造成的冲突：服务端那份就是带结果的权威版本，静默对齐、不弹横幅，
+        // 只把本地对位置 / 大小的调整保留下来（生成写回从不改这两项）。别的页面 / 插件改的才提示。
+        const fromGeneration = String(conflictData.lastWriterClientId || "").startsWith("server-generation");
+        const serverSnapshot = fromGeneration
+          ? snapshotWithLocalLayout(conflictData.node, node)
+          : { node: conflictData.node, layoutChanged: false };
         // 撞冲突的绝大多数情况是「这一页自己的生成结果回来了」：任务完成时服务端把结果写回
         // 节点、版本 +1，而这一轮保存带的还是写回之前的版本号。2026-08-17 线上统计：55 次
         // 409 里 52 次都落在任务轮询 / apply 的 ±5s 内，跟「别人在改你的画布」无关。
@@ -566,12 +604,20 @@ async function persistNodesNow(
         //
         // 现在用 409 带回来的服务端快照把这一个节点 rebase 回去，版本号和指纹基线都对齐，
         // 下一轮保存就能正常写。代价是本地对这个节点的那一次待存改动被丢弃 —— 主场景里它
-        // 就是生成进度状态，而服务端那份才是带着生成结果的权威版本。横幅照旧弹。
+        // 就是生成进度状态，而服务端那份才是带着生成结果的权威版本。
+        // 2026-11-05 起：生成写回造成的冲突不再弹横幅（位置 / 大小保留并补存），别的来源照旧提示。
         const rebased = rebasedThisPass < MAX_REBASE_PER_PASS
-          && rebaseConflictedNode(projectUuid, nodeKey, conflictData.node, conflictData.currentVersion);
+          && rebaseConflictedNode(projectUuid, nodeKey, serverSnapshot.node, conflictData.currentVersion);
         if (rebased) {
           rebasedThisPass += 1;
+          if (!fromGeneration) freshConflicts.push(nodeKey);
+          if (serverSnapshot.layoutChanged) {
+            // 保留下来的位置 / 大小还没存：清掉指纹基线，下一轮保存会把它写上去
+            nodeFingerprintsByProject.get(projectUuid)?.delete(nodeKey);
+            layoutRestored = true;
+          }
         } else {
+          freshConflicts.push(nodeKey);
           // 拿不到快照（别的 409 形态）或这一轮 rebase 已经太多：退回老行为，
           // 至少不会每轮保存都为它打一次 409。
           conflictedNodes.add(nodeKey);
@@ -609,6 +655,10 @@ async function persistNodesNow(
     }
 
     if (latestContentVersion) contentVersionByProject.set(projectUuid, latestContentVersion);
+    if (layoutRestored) {
+      // 对齐时保留了本地的位置 / 大小，排一轮保存把它们写上去
+      schedulePersistNodes(projectUuid, useCanvasStore.getState().nodes, setState);
+    }
     if (saveVersion === nodeSaveVersion) {
       setState({
         isDirty: false,

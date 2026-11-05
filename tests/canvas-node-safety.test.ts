@@ -610,3 +610,65 @@ describe("单节点冲突不许停掉整个画布的保存", () => {
     expect(upsert).not.toHaveBeenCalled(); // 基准过期时继续写会覆盖别人的东西
   });
 });
+
+/**
+ * 生成结果写回造成的冲突不该弹「有 1 个节点在服务端已更新」横幅（2026-11-05 用户反馈"总是弹"）。
+ *
+ * 生成完成时服务端把结果写进节点、版本 +1（client_id = server-generation-result），页面恰好在这
+ * 前后一两秒保存同一个节点就会 409。服务端那份就是带结果的权威版本：静默对齐，只把本地拖动过的
+ * 位置保留下来再存一次。别的页面 / 插件改的冲突照旧提示。
+ */
+describe("生成写回造成的冲突静默对齐", () => {
+  const conflictFrom = (lastWriterClientId: string) => {
+    const node = serverNode("a", 5);
+    const data = JSON.parse(node.data);
+    node.data = JSON.stringify({ ...data, name: "服务端写回的结果" });
+    const error = new Error("conflict") as Error & { response?: unknown };
+    error.response = {
+      status: 409,
+      data: { errorCode: "CANVAS_NODE_VERSION_CONFLICT", currentVersion: 5, node, lastWriterClientId },
+    };
+    return error;
+  };
+
+  async function moveAAndSave(lastWriterClientId: string) {
+    useCanvasStore.getState().loadProject(project(["a"]));
+    upsert.mockClear();
+    let calls = 0;
+    upsert.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) throw conflictFrom(lastWriterClientId);
+      return { ok: true, nodeVersion: 6, contentVersion: "cv-next" };
+    });
+    const events: unknown[] = [];
+    const listener = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener("shotflow:canvas-remote-sync-required", listener);
+    const { CANVAS_REMOTE_SYNC_REQUIRED_EVENT } = await import("@/store/canvasStore");
+    window.addEventListener(CANVAS_REMOTE_SYNC_REQUIRED_EVENT, listener);
+    const state = useCanvasStore.getState();
+    state.setNodes(
+      state.nodes.map((n) => (n.id === "a" ? { ...n, position: { x: 100, y: 50 } } : n)),
+      { persist: true, markDirty: true },
+    );
+    await useCanvasStore.getState().persistNodesAndWait();
+    await useCanvasStore.getState().persistNodesAndWait();
+    window.removeEventListener("shotflow:canvas-remote-sync-required", listener);
+    window.removeEventListener(CANVAS_REMOTE_SYNC_REQUIRED_EVENT, listener);
+    return { events, node: useCanvasStore.getState().nodes.find((n) => n.id === "a")! };
+  }
+
+  it("生成写回：不弹横幅，节点对齐服务端结果，本地拖动的位置保留并补存", async () => {
+    const { events, node } = await moveAAndSave("server-generation-result");
+    expect(events.filter((e) => (e as { conflict?: boolean })?.conflict)).toHaveLength(0);
+    expect(node.data.name).toBe("服务端写回的结果");
+    expect(node.position).toEqual({ x: 100, y: 50 });
+    const resave = (upsert.mock.calls as unknown[][]).at(-1)!;
+    expect((resave[1] as { position: unknown }).position).toEqual({ positionX: 100, positionY: 50 });
+    expect(resave[2]).toBe(5);
+  });
+
+  it("别的页面改的：照旧提示", async () => {
+    const { events } = await moveAAndSave("web-1793873765468-6hsm11gdm7a");
+    expect(events.filter((e) => (e as { conflict?: boolean })?.conflict).length).toBeGreaterThan(0);
+  });
+});
