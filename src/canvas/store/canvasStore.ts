@@ -61,6 +61,7 @@ const NODE_REF_LIST_KEYS = [
   "textList",
   "mixedList",
 ] as const;
+let historyPushedThisTick = false;
 const knownPluginEditAtMsByProject = new Map<string, number>();
 const contentVersionByProject = new Map<string, string>();
 const saveBlockedProjects = new Set<string>();
@@ -1989,6 +1990,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   pushHistory: () => {
+    // 同一轮事件里只记一步：按删除键时 React Flow 先删连线（onEdgesChange）、再删节点
+    // （onNodesChange），两边都会 pushHistory。第二张快照里线和下游引用都已经没了，
+    // 撤销回去节点回来、线不回来（刷新才出现）。合并成一步，撤销回到删除前的完整状态。
+    if (historyPushedThisTick) return;
+    historyPushedThisTick = true;
+    queueMicrotask(() => { historyPushedThisTick = false; });
     const { nodes, edges, history, historyIndex } = get();
     const snapshot: HistorySnapshot = {
       nodes: JSON.parse(JSON.stringify(nodes)),
@@ -2007,7 +2014,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const snapshot = history[historyIndex];
     set({
       nodes: snapshot.nodes,
-      edges: snapshot.edges,
+      // 连线按节点数据重算（和刷新时一样），快照里少了的线也能补回来
+      edges: edgesFromNodeReferences(snapshot.nodes, snapshot.edges),
       historyIndex: historyIndex - 1,
       isDirty: true,
     });
