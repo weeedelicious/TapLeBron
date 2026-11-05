@@ -890,8 +890,8 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
   const openCreateCanvasDialog = useCallback(
     (collectionId: string | null = null) => {
       setMenu(null)
-      const scoped = projectsForCollection(collectionId)
-      setSelectedAssignedProjectId(scoped[0]?.id ?? '')
+      // 新建画布必须手动选所属项目：默认留空，不替用户选第一个，免得建到错的项目里
+      setSelectedAssignedProjectId('')
       setNewCanvasName('')
       setAssignedProjectDialog({ mode: 'create', collectionId })
     },
@@ -919,10 +919,15 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
     if (!assignedProjectDialog) return
     // 兜底值必须取"这个弹窗实际列出的项目"。分类块过滤过之后，用全局 default
     // 会把画布静默建到别的分类的项目里去。
-    const fallbackProjectId = dialogProjects[0]?.id ?? ''
+    // 新建画布不兜底：没选就不让建（按钮本来也是灰的）。改所属项目沿用原来的兜底。
+    const fallbackProjectId = assignedProjectDialog.mode === 'create' ? '' : dialogProjects[0]?.id ?? ''
     const listedProjectId = dialogProjects.some((project) => project.id === selectedAssignedProjectId)
       ? selectedAssignedProjectId
       : fallbackProjectId
+    if (!listedProjectId && assignedProjectDialog.mode === 'create' && dialogProjects.length) {
+      window.alert('请先选择画布所属项目')
+      return
+    }
     if (!listedProjectId) {
       window.alert(
         assignedProjectDialog.mode === 'create' && assignedProjectDialog.collectionId
@@ -1607,7 +1612,7 @@ export function ProjectList({ onOpen, onOpenStudio, user, onLogout }: Props) {
           subtitle={
             assignedProjectDialog.mode === 'create'
               ? '先选择画布所属项目，再继续创建'
-              : `为“${dialogCanvas?.name || '当前画布'}”选择所属项目`
+              : `为“${dialogCanvas?.name || '当前画布'}”选择所属项目，画布会移到该项目所属的游戏分类里`
           }
           projects={dialogProjects}
           nameValue={assignedProjectDialog.mode === 'create' ? newCanvasName : undefined}
@@ -2224,6 +2229,8 @@ function AssignedProjectDialog({
   onConfirm: () => void
   confirmLabel: string
 }) {
+  // 必须选中列表里的一个项目才能确认（新建画布默认不选）
+  const canConfirm = projects.some((project) => project.id === value)
   return (
     <div
       className="shotflow-assigned-dialog-overlay"
@@ -2349,15 +2356,16 @@ function AssignedProjectDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={!projects.length}
+            disabled={!canConfirm}
+            title={canConfirm ? undefined : '请先选择所属项目'}
             style={{
               height: 38,
               padding: '0 16px',
               borderRadius: 10,
               border: '1px solid #7c5cfc',
-              background: projects.length ? '#7c5cfc' : '#312550',
+              background: canConfirm ? '#7c5cfc' : '#312550',
               color: '#fff',
-              cursor: projects.length ? 'pointer' : 'not-allowed',
+              cursor: canConfirm ? 'pointer' : 'not-allowed',
             }}
           >
             {confirmLabel}

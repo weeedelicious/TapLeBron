@@ -2090,6 +2090,30 @@ async function syncShotflowCategoryCollections(ownerId) {
   }
 }
 
+/**
+ * 项目所属游戏分类在画布主人名下对应的分类区域 id。分类区域和 sd2 的 shotflow 画布分类一一对应
+ * （按名字），先对齐一次保证主人名下有这个分类。项目没有分类、或分类读不到时返回 null。
+ */
+async function categoryCollectionIdForProject(ownerId, canvasProjectRow) {
+  const categoryId = canvasProjectRow?.shotflow_category_id ?? canvasProjectRow?.shotflowCategoryId;
+  if (categoryId == null) return null;
+  let categories;
+  try {
+    categories = await listShotflowCategoryRows();
+  } catch (error) {
+    console.warn('[collections] 读取 shotflow 画布分类失败，画布留在原分类:', error.message);
+    return null;
+  }
+  const category = (categories || []).find((item) => Number(item.id) === Number(categoryId));
+  if (!category) return null;
+  await syncShotflowCategoryCollections(ownerId);
+  const [rows] = await getPool().query(
+    'SELECT id FROM canvas_collections WHERE owner_id = ? AND name = ? ORDER BY id ASC LIMIT 1',
+    [ownerId, category.name]
+  );
+  return rows[0]?.id ?? null;
+}
+
 function canvasProjectStatusLabel(status) {
   return CANVAS_PROJECT_STATUS_LABELS[String(status || '')] || '闂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌熼梻瀵割槮缁炬儳缍婇弻鐔兼⒒鐎靛壊妲紒鎯у⒔閹虫捇鈥旈崘顏佸亾閿濆簼绨奸柟鐧哥秮閺岋綁顢橀悙鎼闂侀潧妫欑敮鎺楋綖濠靛鏅查柛娑卞墮椤ユ艾鈹戞幊閸婃鎱ㄩ悜钘夌；闁绘劗鍎ら崑瀣煟濡崵婀介柍褜鍏涚欢姘嚕閹绢喖顫呴柍鈺佸暞閻濇洟姊绘担钘壭撻柨姘亜閿旇鏋ょ紒杈ㄦ瀵挳鎮㈤搹鍦闂備焦鐪归崹钘夘焽瑜嶉悺顓㈡⒒娴ｇ懓顕滄繛鎻掔箻瀹曟劕螖閸涱厾鍔﹀銈嗗笂缁€渚€宕甸鍕厱闁挎繂绻掔粔顔尖攽閳╁啯灏︾€规洏鍔戝鍫曞箣閻橀潧骞€婵犵數濮伴崹鐓庘枖濞戙垺鍎斿┑鍌氭啞閸庡﹪鏌涢銈呮灁缂佲檧鍋撻梻浣圭湽閸ㄨ棄顭囪閻☆參姊绘担渚劸闁挎洏鍊楃槐鐐寸節閸屾粍娈鹃梺瑙勫劶婵倝宕愮紒妯圭箚妞ゆ牜鍋炲▍婊呯磼閵婎煈鍤欐い顏勫暣婵″爼宕卞Δ鈧〖缂傚倷鐒﹁ぐ鍐╂櫠閻ｅ苯鍨濋柛顐熸噰閸嬫捇鏁愭惔鈩冪亶闂佺粯鎸荤粙鎾诲焵椤掆偓閸樻粓宕戦幘缁樼厓鐟滄粓宕滈悢椋庢殾濞村吋娼欑粻濠氭偣閸ヮ亜鐨洪柛鏃撶畱椤啴濡堕崱妤冪懆闂佺锕ょ紞濠傤嚕閹惰棄鐓涢柛灞久肩花璇差渻閵堝棙灏甸柛瀣枑閺呰泛鈽夊杈╋紲闂佺鏈粙鎴澝归鈧弻鈩冩媴缁嬫寧娈婚悗瑙勬礃鐢帡鍩ユ径濠庢僵妞ゆ巻鍋撶紒?';
 }
@@ -3764,6 +3788,16 @@ apiRouter.patch('/projects/:uuid/project', async (req, res, next) => {
     }
 
     await getPool().query('UPDATE canvases SET project_id = ? WHERE id = ?', [canvasProjectRow.id, req.params.uuid]);
+    // 改了所属项目，画布跟着移到该项目所属游戏的分类区域（火炬之光、心动小镇……）。
+    // 项目没归到任何游戏分类时不动；模板等非普通画布不动。
+    const targetCollectionId = row.canvas_role && row.canvas_role !== 'normal'
+      ? null
+      : await categoryCollectionIdForProject(row.owner_id, canvasProjectRow);
+    if (targetCollectionId && Number(targetCollectionId) !== Number(row.collection_id)) {
+      await getPool().query('UPDATE canvases SET collection_id = ? WHERE id = ?', [targetCollectionId, req.params.uuid]);
+      if (row.collection_id != null) await touchCollectionTimestamp(row.collection_id);
+      await touchCollectionTimestamp(targetCollectionId);
+    }
     const updatedRow = await getManageableCanvasForUser(req, req.params.uuid);
     res.json(projectFromCanvasRowForUser(req, updatedRow));
   } catch (error) {
