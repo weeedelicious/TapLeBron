@@ -3173,9 +3173,13 @@ apiRouter.post('/projects', async (req, res, next) => {
       res.status(404).json({ error: 'assigned project not found' });
       return;
     }
+    // 新建的画布放进所选项目所属游戏的分类区域（火炬之光、心动小镇……），和改所属项目同一规则。
+    // 从「测试」这种兜底分类里新建、选了别的游戏的项目时，也归到那个游戏下。项目没有分类时才用点的那个分类。
+    const projectCollectionId = await categoryCollectionIdForProject(req.user.id, canvasProjectRow);
+    const targetCollectionId = projectCollectionId ?? requestedCollectionId;
     const [result] = await getPool().query(
       "INSERT INTO canvases (owner_id, collection_id, project_id, title, data, shared, canvas_role) VALUES (?, ?, ?, ?, ?, 0, 'normal')",
-      [req.user.id, requestedCollectionId, canvasProjectRow.id, name, JSON.stringify(projectDataFor('pending'))]
+      [req.user.id, targetCollectionId, canvasProjectRow.id, name, JSON.stringify(projectDataFor('pending'))]
     );
     ensureProjectScaffold(result.insertId);
     const data = projectDataFor(result.insertId);
@@ -3185,8 +3189,8 @@ apiRouter.post('/projects', async (req, res, next) => {
       createdBy: req.user.id,
       cooldownMs: 0,
     });
-    if (requestedCollectionId !== null) {
-      await touchCollectionTimestamp(requestedCollectionId);
+    if (targetCollectionId !== null) {
+      await touchCollectionTimestamp(targetCollectionId);
     }
     const row = await getManageableCanvasForUser(req, result.insertId);
     res.status(201).json(projectFromCanvasRowForUser(req, row));
