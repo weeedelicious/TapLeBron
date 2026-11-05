@@ -312,7 +312,38 @@ function canvasNodesFromFlow(projectUuid: string, nodes: FlowNode[]) {
   }));
 }
 
+/**
+ * 撤销记录用的节点副本。整份深拷贝在大画布上很贵（canvas 295：一次 200ms，其中 93% 是
+ * params.history 生成历史），而生成历史只会被整体替换、从不就地修改，所以它直接共用，
+ * 其余字段照旧深拷贝。测试环境里把共用的历史冻结：谁要是就地改它，测试马上报错。
+ */
+function snapshotNodesForHistory(nodes: FlowNode[]): FlowNode[] {
+  return nodes.map((node) => {
+    const params = node.data?.params as Record<string, unknown> | undefined;
+    const history = params && Array.isArray(params.history) ? params.history : undefined;
+    if (!history || history.length === 0) return JSON.parse(JSON.stringify(node));
+    const clone = JSON.parse(JSON.stringify({ ...node, data: { ...node.data, params: { ...params, history: [] } } }));
+    if ((import.meta as { env?: { MODE?: string } }).env?.MODE === "test") Object.freeze(history);
+    (clone.data.params as Record<string, unknown>).history = history;
+    return clone;
+  });
+}
+
+/**
+ * 自动保存靠指纹判断节点改没改。节点对象是不可变更新的（改了就是新对象），所以同一个对象
+ * 的指纹按对象缓存，只有改过的节点才重新序列化（canvas 295：每轮保存 70ms → 约 1ms）。
+ */
+const nodeFingerprintCache = new WeakMap<object, string>();
+
 function nodeFingerprint(node: FlowNode) {
+  const cached = nodeFingerprintCache.get(node);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeNodeFingerprint(node);
+  nodeFingerprintCache.set(node, fingerprint);
+  return fingerprint;
+}
+
+function computeNodeFingerprint(node: FlowNode) {
   const data = { ...node.data };
   delete data._collabVersion;
   // 尺寸只看 data.contentWidth / contentHeight（已经在下面的 data 里），不看 node.width /
@@ -1432,7 +1463,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     deletedHereByProject.delete(project.projectMeta.uuid);
 
     const initialSnapshot: HistorySnapshot = {
-      nodes: JSON.parse(JSON.stringify(nodes)),
+      nodes: snapshotNodesForHistory(nodes),
       edges: JSON.parse(JSON.stringify(edges)),
     };
     set({
@@ -1998,7 +2029,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     queueMicrotask(() => { historyPushedThisTick = false; });
     const { nodes, edges, history, historyIndex } = get();
     const snapshot: HistorySnapshot = {
-      nodes: JSON.parse(JSON.stringify(nodes)),
+      nodes: snapshotNodesForHistory(nodes),
       edges: JSON.parse(JSON.stringify(edges)),
     };
     // Trim any future history (after undo) and cap at 30 snapshots

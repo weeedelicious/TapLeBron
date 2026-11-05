@@ -70,3 +70,18 @@ describe("删除节点后撤销", () => {
     expect(useCanvasStore.getState().edges.map((e) => `${e.source}->${e.target}`)).toEqual(["a->b"]);
   });
 });
+
+describe("撤销记录共用生成历史", () => {
+  it("生成历史共用同一份，其余字段是副本", () => {
+    const history = [{ id: "h1", url: "/x.png", prompt: "p" }];
+    const nodes = [node("img", "image", { history, prompt: "当前" })];
+    useCanvasStore.setState({ nodes, edges: [], history: [], historyIndex: -1, projectUuid: null } as any);
+    useCanvasStore.getState().pushHistory();
+    const snap = (useCanvasStore.getState() as any).history.at(-1).nodes[0];
+    expect(snap.data.params.history).toBe(history);
+    expect(snap.data).not.toBe(nodes[0].data);
+    expect(snap.data.params).not.toBe(nodes[0].data.params);
+    expect(Object.isFrozen(history)).toBe(true);
+    expect(() => { (history as unknown[]).push({}) }).toThrow();
+  });
+});
