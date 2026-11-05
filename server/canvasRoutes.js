@@ -5153,6 +5153,13 @@ async function ensureDerivedCover(projectUuid, storedName, width) {
   }
 }
 
+// 画布素材的文件名以内容 sha1 开头（原片、_360/_1080/_poster/_thumb 等派生物），写入时都是
+// 「不存在才写」，同名文件内容永远不变，所以让浏览器直接缓存 30 天，不再每次回来问（以前每张图
+// 每次打开都是一次 304 + 一次权限查库）。private：带登录的内容只让本人浏览器缓存。
+// ⚠️ 以后改派生物的生成规则（码率、尺寸…）必须换文件名（加版本后缀），否则浏览器会继续用旧的。
+const IMMUTABLE_ASSET_NAME_RE = /^[0-9a-f]{40}[^/]*\.(?!json$)[a-z0-9]+$/i;
+const IMMUTABLE_ASSET_CACHE_CONTROL = 'private, max-age=2592000, immutable';
+
 assetRouter.get('/:projectUuid/:filename', async (req, res, next) => {
   try {
     const row = await getReadableCanvasForUser(req, req.params.projectUuid);
@@ -5167,7 +5174,7 @@ assetRouter.get('/:projectUuid/:filename', async (req, res, next) => {
         const derivedPath = await ensureDerivedCover(req.params.projectUuid, storedName, derivedWidth);
         // 内容由「原资产 + 宽度」唯一决定，而宽度已经写进文件名，所以可以永久缓存。
         // 原资产那条路径的缓存头保持原样不动（它可能被覆盖）。
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
         res.sendFile(derivedPath);
         return;
       } catch (error) {
@@ -5180,7 +5187,10 @@ assetRouter.get('/:projectUuid/:filename', async (req, res, next) => {
       res.status(404).end();
       return;
     }
-    res.sendFile(filePath);
+    // headers 只在文件真正开始发送时才加，发送失败的错误响应不会被缓存住
+    res.sendFile(filePath, IMMUTABLE_ASSET_NAME_RE.test(storedName)
+      ? { headers: { 'Cache-Control': IMMUTABLE_ASSET_CACHE_CONTROL } }
+      : undefined);
   } catch (error) {
     next(error);
   }

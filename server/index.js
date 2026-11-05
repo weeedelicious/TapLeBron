@@ -1052,7 +1052,16 @@ app.use('/api/error-library', requireAuth, errorLibraryRouter);
 app.use('/api/cindy-assistant', requireAuth, cindyAssistantRouter);
 app.use('/api/studio', requireAuth, studioRouter);
 app.use('/api', requireAuth, preserveCanvasSessionErrors, rejectGenerationWhileDraining, captureGenerationHttpErrors, canvasApiRouter);
-app.use('/assets', express.static(path.join(distPath, 'assets')));
+// Vite 产物文件名带内容指纹（index-B1IwVygt.js 这种），内容一变名字就变，可以长期缓存；
+// 入口页本身仍是 no-store。没带指纹的老补丁文件（index-empty-video-copy.js 等）不受影响。
+const HASHED_BUILD_ASSET_RE = /-[A-Za-z0-9_-]{8}\.(?:js|css)$/;
+app.use('/assets', express.static(path.join(distPath, 'assets'), {
+  setHeaders(res, filePath) {
+    if (HASHED_BUILD_ASSET_RE.test(path.basename(filePath))) {
+      res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+    }
+  },
+}));
 app.use('/assets', requireAuth, assetRouter);
 app.get('/', (req, res) => {
   res.redirect(302, APP_HOME_PATH);
