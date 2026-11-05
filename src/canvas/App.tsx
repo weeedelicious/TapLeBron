@@ -1,9 +1,48 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Canvas } from "./components/Canvas";
+import "./editorStyles";
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { TopNav } from "./components/TopNav";
 import { ProjectList } from "./components/ProjectList";
 import { ReplaceApiKeyDialog } from "./components/ReplaceApiKeyDialog";
-import { StudioApp } from "./components/StudioApp";
+
+// 画布编辑器和 Studio 按需加载：管理页不再下载编辑器的代码（节点、白板、三维、全景……）。
+// 管理页空闲时会在后台预先把编辑器拉下来（见 ProjectList 那一支），点进画布基本不用等。
+const loadCanvasModule = () => import("./components/Canvas");
+const Canvas = lazy(() => loadCanvasModule().then((module) => ({ default: module.Canvas })));
+const StudioApp = lazy(() => import("./components/StudioApp").then((module) => ({ default: module.StudioApp })));
+
+/** 按需加载的代码没下载成功（网络抖动、发布中途）时给一个重试，不要白屏。 */
+class LazyLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("[shotflow] 页面代码加载失败", error);
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div style={{ height: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "#000", color: "#e8e4ff", fontSize: 14 }}>
+        <span>页面加载失败，可能是网络不稳定</span>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{ border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "6px 14px", background: "transparent", color: "#e8e4ff", cursor: "pointer" }}
+        >
+          重新加载
+        </button>
+      </div>
+    );
+  }
+}
+
+function LazyFallback({ text }: { text: string }) {
+  return (
+    <div style={{ height: "100%", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "#e8e4ff", fontSize: 14 }}>
+      {text}
+    </div>
+  );
+}
 // 独占画布会话完全由 public/canvas-exclusive-session-*.js 在网络层承担：
 // 它拦截 fetch / XMLHttpRequest / EventSource，负责 enter、心跳、令牌、失效阻断页。
 // app 这一层不碰会话，也不要再实现一套——两套并存会互相把对方的会话顶掉。
@@ -56,6 +95,17 @@ export default function App({ user, onLogout }: Props) {
   const [restoring, setRestoring] = useState(
     Boolean(currentProjectIdFromUrl()),
   );
+  // 停在管理页时，空闲下来就在后台把编辑器代码拉下来，点进画布时不用再等下载
+  useEffect(() => {
+    if (view !== "home") return undefined;
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+    const timer = window.setTimeout(() => {
+      const prefetch = () => { void loadCanvasModule().catch(() => {}); };
+      if (idle) idle(prefetch);
+      else prefetch();
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [view]);
   const [openingProjectName, setOpeningProjectName] = useState<string | null>(
     null,
   );
@@ -325,7 +375,13 @@ export default function App({ user, onLogout }: Props) {
   }
 
   if (view === "studio") {
-    return <StudioApp onBack={() => setView("home")} />;
+    return (
+      <LazyLoadBoundary>
+        <Suspense fallback={<LazyFallback text="正在打开 Studio..." />}>
+          <StudioApp onBack={() => setView("home")} />
+        </Suspense>
+      </LazyLoadBoundary>
+    );
   }
 
   if (view === "home") {
@@ -430,7 +486,11 @@ export default function App({ user, onLogout }: Props) {
         className="shotflow-canvas-stage relative overflow-hidden"
         style={{ height: "100%" }}
       >
-        <Canvas />
+        <LazyLoadBoundary>
+          <Suspense fallback={<LazyFallback text="正在打开画布..." />}>
+            <Canvas />
+          </Suspense>
+        </LazyLoadBoundary>
       </div>
     </div>
   );

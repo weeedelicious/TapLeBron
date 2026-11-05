@@ -450,7 +450,9 @@ def guard_frontend_release(targets: list[str], skip: bool) -> None:
 
     print("  发布对账中（产物必须由源码构建、功能不许变少）…")
     result = subprocess.run(
-        [sys.executable, str(checker), "check", str(LOCAL_ROOT / js[0]), str(LOCAL_ROOT / css[0])],
+        # js[0] 是入口主包，其余（画布编辑器、Studio 等按需加载的文件）一起数功能标记
+        [sys.executable, str(checker), "check", str(LOCAL_ROOT / js[0]), str(LOCAL_ROOT / css[0]),
+         *[str(LOCAL_ROOT / extra) for extra in js[1:]]],
         cwd=LOCAL_ROOT,
         capture_output=True,
         timeout=900,

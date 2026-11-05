@@ -127,6 +127,19 @@ def count_markers(text: str, markers: list[tuple[str, str]]) -> dict[str, int]:
     return {needle: text.count(needle) for _, needle in markers}
 
 
+# 入口主包里按需加载的文件名（Vite 产物：名字-8位指纹.js）。2026-11-05 起画布编辑器、Studio
+# 拆成按需加载，功能标记大多在这些文件里，对账要连它们一起数。
+LAZY_CHUNK_RE = re.compile(r"""["'`](?:\./|/assets/|assets/)?([A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*-[A-Za-z0-9_-]{8}\.js)["'`]""")
+
+
+def chunk_names_in(js_text: str, entry_name: str) -> list[str]:
+    names = []
+    for name in LAZY_CHUNK_RE.findall(js_text):
+        if name != entry_name and name not in names:
+            names.append(name)
+    return names
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -134,6 +147,11 @@ def sha256(data: bytes) -> str:
 def cmd_baseline() -> int:
     js_name, css_name, session_name = deployed_entry()
     js = remote(f"cat {REMOTE_ROOT}/dist/assets/{js_name}")
+    for chunk in chunk_names_in(js.decode("utf-8", "replace"), js_name):
+        try:
+            js += b"\n" + remote(f"cat {REMOTE_ROOT}/dist/assets/{chunk}")
+        except Exception:
+            print(f"  （线上没有按需文件 {chunk}，跳过）")
     css = remote(f"cat {REMOTE_ROOT}/dist/assets/{css_name}")
     session = remote(f"cat {REMOTE_ROOT}/public/{session_name}")
     baseline = {
@@ -173,7 +191,7 @@ def load_baseline() -> dict:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
-def cmd_check(js_path: Path, css_path: Path) -> int:
+def cmd_check(js_path: Path, css_path: Path, extra_js: list[Path] | None = None) -> int:
     baseline = load_baseline()
     # 发布入口引用的会话脚本必须真的存在：一旦 index.html 改了文件名而文件没跟上，
     # 页面会静默失去整个独占会话保护（脚本 404，令牌不再注入）。
@@ -181,6 +199,9 @@ def cmd_check(js_path: Path, css_path: Path) -> int:
     if not (LOCAL_ROOT / "public" / session_name).is_file():
         raise Fail(f"发布入口引用了不存在的会话脚本: public/{session_name}")
     js = js_path.read_bytes().decode("utf-8", "replace")
+    # 按需加载的文件（画布编辑器、Studio、三维…）里的标记一起数
+    for extra in extra_js or []:
+        js += "\n" + extra.read_bytes().decode("utf-8", "replace")
     css = css_path.read_bytes().decode("utf-8", "replace")
 
     regressions: list[str] = []
@@ -230,16 +251,18 @@ def build() -> tuple[Path, Path]:
         raise Fail("构建失败:\n" + result.stderr.decode("utf-8", "replace")[-1500:])
     assets = out / "assets"
     js = sorted(assets.glob("index-*.js"))
-    css = sorted(assets.glob("index-*.css"))
+    # cssCodeSplit=false 之后样式文件叫 style-*.css
+    css = sorted(assets.glob("index-*.css")) or sorted(assets.glob("style-*.css"))
     if not js or not css:
-        raise Fail(f"构建产物里找不到 index-*.js / index-*.css（{assets}）")
+        raise Fail(f"构建产物里找不到 index-*.js / index-*.css / style-*.css（{assets}）")
     return js[-1], css[-1]
 
 
 def cmd_build_check() -> int:
     js_path, css_path = build()
     print(f"构建完成: {js_path.name} / {css_path.name}\n")
-    return cmd_check(js_path, css_path)
+    chunks = [js_path.parent / name for name in chunk_names_in(js_path.read_text(encoding="utf-8", errors="replace"), js_path.name)]
+    return cmd_check(js_path, css_path, [chunk for chunk in chunks if chunk.is_file()])
 
 
 def verify_session_script(session_name: str) -> tuple[list[tuple[str, str, str, str, str]], list[str]]:
@@ -326,9 +349,9 @@ def main() -> int:
         if args.command == "baseline":
             return cmd_baseline()
         if args.command == "check":
-            if len(args.paths) != 2:
-                raise Fail("用法: release_check.py check <js> <css>")
-            return cmd_check(Path(args.paths[0]), Path(args.paths[1]))
+            if len(args.paths) < 2:
+                raise Fail("用法: release_check.py check <入口js> <css> [按需加载的 js ...]")
+            return cmd_check(Path(args.paths[0]), Path(args.paths[1]), [Path(p) for p in args.paths[2:]])
         if args.command == "build-check":
             return cmd_build_check()
         if args.command == "verify-deployed":
