@@ -46,18 +46,30 @@ function currentHeroAssets() {
     return HERO_ASSETS;
   }
 }
-const SHEET_ROWS = [
-  { label: 'ss15\u8d5b\u5b63', projectCode: 'ss15_1', kind: 'Cha', name: '\u739b\u8482\u5c14\u8fbe', code: 'c073_Matilda', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c073_Matilda\\Prodesign\\approved\\c073_Matilda.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c073_Matilda\\LookDev\\work\\c073_Matilda_LookDev_003.png', atmosphere: 'X:\\projects2024\\TLI\\SS15_1\\00_Production_Guide\\04\u5f71\u521b\u7f8e\u672f\\\u6c1b\u56f4\u56fe' },
-  { label: '', projectCode: '', kind: 'Cha', name: '\u827e\u5409\u5965', code: 'c074_Ezio', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c074_Ezio\\Prodesign\\approved\\c074_Ezio.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c074_Ezio\\LookDev\\work\\c074_Ezio_LookDev_006.png', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Cha', name: '\u5723\u6bbf\u9a91\u58ebA', code: 'c075_QiShiA', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c075_QiShiA\\Prodesign\\approved\\c075_QiShiA.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c075_QiShiA\\LookDev\\work\\c075_QiShiA_LookDev_002.png', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Cha', name: '\u5723\u6bbf\u9a91\u58ebB', code: 'c076_QiShiB', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c076_QiShiB\\Prodesign\\approved\\c076_QiShiB.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c076_QiShiB\\LookDev\\work\\c076_QiShiB_LookDev_002.png', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Env', name: '\u6536\u85cf\u5927\u5385\u5185', code: 'e017_CollectionHallNei', d2: 'X:\\projects2024\\TLI\\Asset\\Env\\e017_CollectionHallNei\\Prodesign\\approved\\e017_CollectionHallNei.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Env\\e017_CollectionHallNei\\LookDev\\work\\e017_CollectionHallNei_LookDev_001.mov', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Env', name: '\u6536\u85cf\u5927\u5385\u5916', code: 'e018_CollectionHallWai', d2: 'X:\\projects2024\\TLI\\Asset\\Env\\e018_CollectionHallWai\\Prodesign\\approved\\e018_CollectionHallWai.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Env\\e018_CollectionHallWai\\LookDev\\work\\e018_CollectionHallWai_LookDev_001.mov', atmosphere: '' },
-  { label: 'ss15\u82f1\u96c4', projectCode: 'ss15_2', kind: 'Cha', name: '\u7537\u523a\u5ba2', code: 'c077_NanCiKe', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c077_NanCiKe\\Prodesign\\approved\\c077_NanCiKe.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c077_NanCiKe\\LookDev\\work\\c077_NanCiKe_LookDev_001.png', atmosphere: 'X:\\projects2024\\TLI\\SS15_2\\00_Production_Guide\\04\u5f71\u521b\u7f8e\u672f\\\u6c1b\u56f4\u56fe' },
-  { label: '', projectCode: '', kind: 'Cha', name: '\u5f02\u9b54A', code: 'c078_YiMoA', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c078_YiMoA\\Prodesign\\approved\\c078_YiMoB.jpg', d3: 'X:\\projects2024\\TLI\\Asset\\Cha\\c078_YiMoA\\LookDev\\work\\c078_YiMoA_LookDev_001.png', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Cha', name: '\u5f02\u9b54B', code: 'c079_YiMoB', d2: 'X:\\projects2024\\TLI\\Asset\\Cha\\c079_YiMoB\\Prodesign\\approved\\c079_YiMoB.jpg', d3: '', atmosphere: '' },
-  { label: '', projectCode: '', kind: 'Env', name: '\u9ed1\u9698\u53e3\u6218\u573a', code: 'e019_HeiAiKou', d2: 'X:\\projects2024\\TLI\\Asset\\Env\\e019_HeiAiKou\\Prodesign\\approved\\e019_HeiAiKou.jpg', d3: '', atmosphere: '' },
-];
+// 资产清单以飞书「shotflow资产库」表为准（见 project-asset-sheet.json 的 source），每行一个角色 / 场景：
+//  - 2D美术：CGTW 资产任务 Prodesign 环节 approved 框（不取 history）
+//  - 3D美术：过往项目直接用表里的 LookDev 路径；进行中项目（liveProjects）取 LookDev 环节 work 框最大版本号
+//  - 氛围图：项目「影创美术/氛围图」文件夹
+// 表里写的文件不在了，就按同一规则到对应框里现找。文件改了不用重启：每次重建目录都会按 mtime 重读。
+const SHEET_FILE = path.join(__dirname, 'project-asset-sheet.json');
+let sheetCache = null;
+
+function currentSheet() {
+  try {
+    const stat = fs.statSync(SHEET_FILE);
+    if (sheetCache && sheetCache.mtimeMs === stat.mtimeMs) return sheetCache.sheet;
+    const parsed = JSON.parse(fs.readFileSync(SHEET_FILE, 'utf8'));
+    const sheet = {
+      rows: Array.isArray(parsed?.rows) ? parsed.rows : [],
+      liveProjects: (Array.isArray(parsed?.liveProjects) ? parsed.liveProjects : []).map((item) => String(item).toLowerCase()),
+    };
+    sheetCache = { mtimeMs: stat.mtimeMs, sheet };
+    return sheet;
+  } catch (error) {
+    console.warn('project asset sheet unavailable:', error.message);
+    return sheetCache?.sheet || { rows: [], liveProjects: [] };
+  }
+}
 let catalogCache = null;
 
 function httpError(statusCode, message) {
@@ -163,6 +175,86 @@ function disambiguate(items) {
     return { ...item, name: item.name + ' \u00b7 ' + item.projectLabel };
   });
 }
+function assetBaseDir(kind, code) {
+  return 'X:\\projects2024\\TLI\\Asset\\' + kind + '\\' + code;
+}
+
+// 「c073_Matilda_LookDev_003.png」「c009_Bin2_LookDev_v02（全身）.mp4」「..._LookDev_v003(2).mp4」→ 版本号；没有版本号算 0
+function versionOf(fileName) {
+  const match = String(fileName || '').match(/_v?(\d+)[^_\d]*\.[a-z0-9]+$/i);
+  return match ? Number(match[1]) : 0;
+}
+
+// CGTW 文件框（approved / work）里的媒体文件，按版本号、修改时间从旧到新；history 等子文件夹不进
+function listBoxMedia(dirPath) {
+  const root = existingPath(dirPath, true);
+  if (!root) return [];
+  let entries;
+  try { entries = fs.readdirSync(root.filePath, { withFileTypes: true }); } catch { return []; }
+  return entries
+    .filter((entry) => entry.isFile() && mediaTypeOf(entry.name) && entry.name.toLowerCase() !== 'thumbs.db')
+    .map((entry) => {
+      const file = existingPath(path.join(root.filePath, entry.name), false);
+      if (!file) return null;
+      return { file, version: versionOf(entry.name), name: entry.name };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.version - b.version || a.file.stat.mtimeMs - b.file.stat.mtimeMs || a.name.localeCompare(b.name, 'en'));
+}
+
+function latestInBox(dirPath) {
+  const items = listBoxMedia(dirPath);
+  return items.length ? items[items.length - 1].file : null;
+}
+
+function sheetFile(rawPath) {
+  const file = existingPath(String(rawPath || '').trim().replace(/^"+|"+$/g, ''), false);
+  return file && mediaTypeOf(file.filePath) ? file : null;
+}
+
+// 2D美术：表里的路径；不在了就到 Prodesign/approved 框里找和资产代号同名的图，再不行取第一张图
+function pick2dFile(row) {
+  const fromSheet = sheetFile(row.d2);
+  if (fromSheet) return fromSheet;
+  const code = String(row.code || '').trim().toLowerCase();
+  const images = listBoxMedia(assetBaseDir(row.kind, row.code) + '\\Prodesign\\approved')
+    .filter((item) => mediaTypeOf(item.name) === 'image');
+  const named = images.find((item) => path.parse(item.name).name.toLowerCase() === code);
+  return (named || images[0])?.file || null;
+}
+
+// 3D美术：进行中项目取 LookDev/work 最大版本号；过往项目用表里的路径，不在了再取 LookDev/approved、work 的最新一份
+function pick3dFile(row, live) {
+  const base = assetBaseDir(row.kind, row.code) + '\\LookDev';
+  if (live) return latestInBox(base + '\\work') || sheetFile(row.d3);
+  return sheetFile(row.d3) || latestInBox(base + '\\approved') || latestInBox(base + '\\work');
+}
+
+// CGTW 英雄名单里有、但资产库表里没有的英雄，按同一规则补进来
+function addMissingHeroAssets(pending, heroes) {
+  const heroCodes = new Set(heroes.map((item) => item.code));
+  const present = new Set(pending.filter((item) => item.code && heroCodes.has(item.code)).map((item) => item.code.toLowerCase()));
+  for (const hero of heroes) {
+    if (present.has(hero.code.toLowerCase())) continue;
+    const row = { kind: 'Cha', code: hero.code, d2: '', d3: '' };
+    for (const [stage, file, suffix] of [['2d', pick2dFile(row), '2D'], ['3d', latestInBox(assetBaseDir('Cha', hero.code) + '\\LookDev\\work'), '3D']]) {
+      if (!file) continue;
+      pending.push({
+        game: DEFAULT_GAME,
+        projectLabel: '',
+        code: hero.code,
+        name: hero.name + '_' + suffix,
+        stage,
+        assetType: 'character',
+        hero: true,
+        mediaType: mediaTypeOf(file.filePath),
+        filePath: file.filePath,
+        mtimeMs: Number(file.stat.mtimeMs) || 0,
+      });
+    }
+  }
+}
+
 function buildCatalog() {
   const heroes = currentHeroAssets();
   const heroByCode = new Map(heroes.map((item) => [item.code, item.name]));
@@ -171,23 +263,29 @@ function buildCatalog() {
   const pending = [];
   const atmospheres = [];
   const seenAtmosphere = new Set();
-  for (const row of SHEET_ROWS) {
+  const sheet = currentSheet();
+  let projectCode = '';
+  for (const row of sheet.rows) {
     const kind = classifyLabel(row.label);
     if (kind === 'game') game = String(row.label).trim();
-    else if (kind === 'project') projectLabel = String(row.label).trim();
+    else if (kind === 'project') {
+      projectLabel = String(row.label).trim();
+      projectCode = String(row.projectCode || '').trim().toLowerCase();
+    }
     if (row.kind === 'Cha' || row.kind === 'Env') {
       const assetType = row.kind === 'Cha' ? 'character' : 'scene';
-      const baseName = String(row.name || row.code || '\u672a\u547d\u540d').trim();
-      for (const [stage, rawPath, suffix] of [['2d', row.d2, '2D'], ['3d', row.d3, '3D']]) {
-        if (!rawPath) continue;
-        const file = existingPath(rawPath, false);
-        if (!file || !mediaTypeOf(file.filePath)) continue;
+      const code = String(row.code || '').trim();
+      const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
+      const live = sheet.liveProjects.some((prefix) => projectCode.startsWith(prefix));
+      const heroName = heroByCode.get(code) || heroDisplayName(row.gameName);
+      for (const [stage, file, suffix] of [['2d', pick2dFile(row), '2D'], ['3d', pick3dFile(row, live), '3D']]) {
+        if (!file) continue;
         pending.push({
           game,
           projectLabel,
-          code: String(row.code || ''),
-          hero: heroByCode.has(String(row.code || '')),
-          name: ((heroByCode.get(String(row.code || '')) || baseName) + '_' + suffix),
+          code,
+          hero: Boolean(heroName),
+          name: ((heroName || baseName) + '_' + suffix),
           stage,
           assetType,
           mediaType: mediaTypeOf(file.filePath),
@@ -203,54 +301,7 @@ function buildCatalog() {
       for (const file of listAtmosphereFiles(row.atmosphere, projectLabel)) atmospheres.push({ ...file, game });
     }
   }
-function heroAssetDir(code) {
-  return 'X:\\projects2024\\TLI\\Asset\\Cha\\' + code;
-}
-
-function listHeroMedia(dirPath) {
-  const root = existingPath(dirPath, true);
-  if (!root) return [];
-  let entries;
-  try { entries = fs.readdirSync(root.filePath, { withFileTypes: true }); } catch { return []; }
-  return entries
-    .filter((entry) => entry.isFile() && mediaTypeOf(entry.name) && entry.name.toLowerCase() !== 'thumbs.db')
-    .map((entry) => {
-      const file = existingPath(path.join(root.filePath, entry.name), false);
-      if (!file) return null;
-      const version = Number((entry.name.match(/_(\\d+)\./) || [])[1] || 0);
-      return { file, version, name: entry.name };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.version - b.version || a.name.localeCompare(b.name, 'en'));
-}
-
-function addMissingHeroAssets(pending, heroes = currentHeroAssets()) {
-  const heroCodes = new Set(heroes.map((item) => item.code));
-  const present = new Set(pending.filter((item) => item.code && heroCodes.has(item.code)).map((item) => item.code));
-  for (const hero of heroes) {
-    if (present.has(hero.code)) continue;
-    const base = heroAssetDir(hero.code);
-    const approved = listHeroMedia(base + '\\Prodesign\\approved').filter((item) => mediaTypeOf(item.name) === 'image');
-    const lookdev = listHeroMedia(base + '\\LookDev\\work');
-    const picks = [['2d', approved[0], '2D'], ['3d', lookdev.length ? lookdev[lookdev.length - 1] : null, '3D']];
-    for (const [stage, picked, suffix] of picks) {
-      if (!picked) continue;
-      pending.push({
-        game: DEFAULT_GAME,
-        projectLabel: '',
-        code: hero.code,
-        name: hero.name + '_' + suffix,
-        stage,
-        assetType: 'character',
-        hero: true,
-        mediaType: mediaTypeOf(picked.file.filePath),
-        filePath: picked.file.filePath,
-        mtimeMs: Number(picked.file.stat.mtimeMs) || 0,
-      });
-    }
-  }
-}
-addMissingHeroAssets(pending, heroes);
+  addMissingHeroAssets(pending, heroes);
   const byGame = new Map();
   for (const item of pending.concat(atmospheres)) {
     if (!byGame.has(item.game)) byGame.set(item.game, []);
