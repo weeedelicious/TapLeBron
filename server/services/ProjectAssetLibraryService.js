@@ -59,19 +59,23 @@ function currentSheet() {
     const stat = fs.statSync(SHEET_FILE);
     if (sheetCache && sheetCache.mtimeMs === stat.mtimeMs) return sheetCache.sheet;
     const parsed = JSON.parse(fs.readFileSync(SHEET_FILE, 'utf8'));
-    // 每行带上所属游戏和该游戏的进行中项目，后面按行处理即可
+    // 每行带上所属游戏和该游戏的进行中项目，后面按行处理即可。
+    // heroLabel：「英雄」筛选按钮在这个游戏叫什么（心动小镇叫 NPC）；heroCodes：表里没有局内代号时，按代号标记归到这个筛选的资产
     const rows = [];
+    const games = {};
     for (const source of Array.isArray(parsed?.sources) ? parsed.sources : []) {
       const game = String(source?.game || '').trim() || DEFAULT_GAME;
       const liveProjects = (Array.isArray(source?.liveProjects) ? source.liveProjects : []).map((item) => String(item).toLowerCase());
-      for (const row of Array.isArray(source?.rows) ? source.rows : []) rows.push({ ...row, game, liveProjects });
+      const heroCodes = new Set((Array.isArray(source?.heroCodes) ? source.heroCodes : []).map((item) => String(item).trim().toLowerCase()));
+      games[game] = { heroLabel: String(source?.heroLabel || '').trim(), heroCodes };
+      for (const row of Array.isArray(source?.rows) ? source.rows : []) rows.push({ ...row, game, liveProjects, heroCodes });
     }
-    const sheet = { rows };
+    const sheet = { rows, games };
     sheetCache = { mtimeMs: stat.mtimeMs, sheet };
     return sheet;
   } catch (error) {
     console.warn('project asset sheet unavailable:', error.message);
-    return sheetCache?.sheet || { rows: [] };
+    return sheetCache?.sheet || { rows: [], games: {} };
   }
 }
 let catalogCache = null;
@@ -310,7 +314,7 @@ function buildCatalog() {
           game,
           projectLabel,
           code,
-          hero: Boolean(heroName),
+          hero: Boolean(heroName) || row.heroCodes.has(code.toLowerCase()),
           name: ((heroName || baseName) + '_' + suffix),
           stage,
           assetType,
@@ -344,7 +348,7 @@ function buildCatalog() {
       mtimeMs: item.mtimeMs,
       filePath: item.filePath,
     }));
-    return { id: gameIdFor(name), name, assets };
+    return { id: gameIdFor(name), name, heroLabel: sheet.games[name]?.heroLabel || '', assets };
   }).filter((item) => item.assets.length > 0).sort((a, b) => a.id - b.id || a.name.localeCompare(b.name, 'zh-CN'));
   const byToken = new Map();
   for (const item of games) {
@@ -387,7 +391,7 @@ async function listProjectModules(projectId) {
       { id: 'all', label: '\u5168\u90e8' },
       { id: 'character', label: '\u89d2\u8272' },
       { id: 'scene', label: '\u573a\u666f' },
-      { id: 'hero', label: "英雄" },
+      { id: 'hero', label: game.heroLabel || currentSheet().games[game.name]?.heroLabel || "英雄" },
     ],
     assets: game.assets.map(({ filePath, ...asset }) => asset),
     modules: [],

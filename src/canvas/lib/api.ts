@@ -1157,7 +1157,7 @@ export const projectAssetLibraryApi = {
   listProjects: () =>
     http.get<{ projects: ProjectAssetLibraryProject[] }>("/project-asset-library/projects").then((r) => r.data.projects ?? []),
   listModules: (projectId: number) =>
-    http.get<{ project: { id: number; name: string }; assets: ProjectAssetLibraryItem[] }>(`/project-asset-library/projects/${projectId}/modules`).then((r) => r.data),
+    http.get<{ project: { id: number; name: string }; assets: ProjectAssetLibraryItem[]; assetTypes?: { id: string; label: string }[] }>(`/project-asset-library/projects/${projectId}/modules`).then((r) => r.data),
   fileUrl: (projectId: number, relativePath: string) =>
     `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&original=1`,
   /** 按短边缩：360 = 列表小图和悬停预览（360P），1080 = 浏览大图（1080P，原图更小时服务端直接给原图）。 */

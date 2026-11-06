@@ -725,6 +725,7 @@ function ProjectAssetLibraryPane({
     }
   })
   const [assets, setAssets] = useState<ProjectAssetLibraryItem[]>([])
+  const [typeLabels, setTypeLabels] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [stage, setStage] = useState<StageId>(() => readProjectAssetFilter('shotflow:project-asset-library:stage', PROJECT_ASSET_STAGES.map((item) => item.id)))
@@ -774,6 +775,8 @@ function ProjectAssetLibraryPane({
       const data = await projectAssetLibraryApi.listModules(id)
       if (token !== requestSeqRef.current) return
       setAssets(Array.isArray(data.assets) ? data.assets : [])
+      // 筛选按钮名按游戏走：火炬叫「英雄」，心动小镇叫「NPC」
+      setTypeLabels(Object.fromEntries((Array.isArray(data.assetTypes) ? data.assetTypes : []).map((item) => [item.id, item.label])))
       rememberProjectAssetSetting('shotflow:project-asset-library:project-id', String(id))
     } catch (err) {
       if (token !== requestSeqRef.current) return
@@ -848,7 +851,7 @@ function ProjectAssetLibraryPane({
         </div>
         <div className="favorite-library-type-buttons project-asset-filter-row">
           {PROJECT_ASSET_TYPES.map((item) => (
-            <button key={item.id} type="button" className={assetType === item.id ? 'is-active' : undefined} onClick={() => chooseType(item.id)}>{item.label}</button>
+            <button key={item.id} type="button" className={assetType === item.id ? 'is-active' : undefined} onClick={() => chooseType(item.id)}>{typeLabels[item.id] || item.label}</button>
           ))}
         </div>
       </div>

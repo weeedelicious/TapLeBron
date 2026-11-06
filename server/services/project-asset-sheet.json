@@ -616,6 +616,15 @@
    "cgtw": "proj_film_simplify（电影部_简化流程）项目 XXD = 心动小镇",
    "syncedAt": "2026-11-06",
    "liveProjects": [],
+   "heroLabel": "NPC",
+   "heroCodes": [
+    "c001_Annie",
+    "c101_Eric",
+    "c102_Patti",
+    "c103_Waves",
+    "c105_Vanya",
+    "c106_Maximo"
+   ],
    "rows": [
     {
      "label": "海外pv",
