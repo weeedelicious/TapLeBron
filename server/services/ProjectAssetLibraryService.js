@@ -46,7 +46,7 @@ function currentHeroAssets() {
     return HERO_ASSETS;
   }
 }
-// 资产清单以飞书「shotflow资产库」表为准（见 project-asset-sheet.json 的 source），每行一个角色 / 场景：
+// 资产清单以各游戏的飞书「shotflow资产库」表为准（project-asset-sheet.json 的 sources，一个游戏一份），每行一个角色 / 场景：
 //  - 2D美术：CGTW 资产任务 Prodesign 环节 approved 框（不取 history）
 //  - 3D美术：过往项目直接用表里的 LookDev 路径；进行中项目（liveProjects）取 LookDev 环节 work 框最大版本号
 //  - 氛围图：项目「影创美术/氛围图」文件夹
@@ -59,15 +59,19 @@ function currentSheet() {
     const stat = fs.statSync(SHEET_FILE);
     if (sheetCache && sheetCache.mtimeMs === stat.mtimeMs) return sheetCache.sheet;
     const parsed = JSON.parse(fs.readFileSync(SHEET_FILE, 'utf8'));
-    const sheet = {
-      rows: Array.isArray(parsed?.rows) ? parsed.rows : [],
-      liveProjects: (Array.isArray(parsed?.liveProjects) ? parsed.liveProjects : []).map((item) => String(item).toLowerCase()),
-    };
+    // 每行带上所属游戏和该游戏的进行中项目，后面按行处理即可
+    const rows = [];
+    for (const source of Array.isArray(parsed?.sources) ? parsed.sources : []) {
+      const game = String(source?.game || '').trim() || DEFAULT_GAME;
+      const liveProjects = (Array.isArray(source?.liveProjects) ? source.liveProjects : []).map((item) => String(item).toLowerCase());
+      for (const row of Array.isArray(source?.rows) ? source.rows : []) rows.push({ ...row, game, liveProjects });
+    }
+    const sheet = { rows };
     sheetCache = { mtimeMs: stat.mtimeMs, sheet };
     return sheet;
   } catch (error) {
     console.warn('project asset sheet unavailable:', error.message);
-    return sheetCache?.sheet || { rows: [], liveProjects: [] };
+    return sheetCache?.sheet || { rows: [] };
   }
 }
 let catalogCache = null;
@@ -207,6 +211,24 @@ function latestInBox(dirPath) {
   return items.length ? items[items.length - 1].file : null;
 }
 
+// 资产文件夹（…\Asset\Cha\c013_Erica3）：优先从表里的路径取（文件夹名偶尔和代号不一样，如「c086_female cat」），
+// 表里没写路径的才按代号拼
+const ASSET_DIR_RE = /^(.*?\\Asset\\(?:Cha|Env|Props)\\[^\\]+)\\/i;
+function assetDirOf(row) {
+  for (const raw of [row.d2, row.d3]) {
+    const match = String(raw || '').trim().replace(/^"+/, '').match(ASSET_DIR_RE);
+    if (match) return match[1];
+  }
+  return assetBaseDir(row.kind, row.code);
+}
+
+// 表里「角色/场景」偶尔漏填，按路径里的 Asset\Cha / Asset\Env 判断
+function rowKind(row) {
+  if (row.kind === 'Cha' || row.kind === 'Env') return row.kind;
+  const match = String(row.d2 || row.d3 || '').match(/\\Asset\\(Cha|Env)\\/i);
+  return match ? (match[1].toLowerCase() === 'env' ? 'Env' : 'Cha') : '';
+}
+
 function sheetFile(rawPath) {
   const file = existingPath(String(rawPath || '').trim().replace(/^"+|"+$/g, ''), false);
   return file && mediaTypeOf(file.filePath) ? file : null;
@@ -217,7 +239,7 @@ function pick2dFile(row) {
   const fromSheet = sheetFile(row.d2);
   if (fromSheet) return fromSheet;
   const code = String(row.code || '').trim().toLowerCase();
-  const images = listBoxMedia(assetBaseDir(row.kind, row.code) + '\\Prodesign\\approved')
+  const images = listBoxMedia(assetDirOf(row) +'\\Prodesign\\approved')
     .filter((item) => mediaTypeOf(item.name) === 'image');
   const named = images.find((item) => path.parse(item.name).name.toLowerCase() === code);
   return (named || images[0])?.file || null;
@@ -225,7 +247,7 @@ function pick2dFile(row) {
 
 // 3D美术：进行中项目取 LookDev/work 最大版本号；过往项目用表里的路径，不在了再取 LookDev/approved、work 的最新一份
 function pick3dFile(row, live) {
-  const base = assetBaseDir(row.kind, row.code) + '\\LookDev';
+  const base = assetDirOf(row) +'\\LookDev';
   if (live) return latestInBox(base + '\\work') || sheetFile(row.d3);
   return sheetFile(row.d3) || latestInBox(base + '\\approved') || latestInBox(base + '\\work');
 }
@@ -266,17 +288,21 @@ function buildCatalog() {
   const sheet = currentSheet();
   let projectCode = '';
   for (const row of sheet.rows) {
-    const kind = classifyLabel(row.label);
-    if (kind === 'game') game = String(row.label).trim();
-    else if (kind === 'project') {
+    if (row.game !== game) {
+      game = row.game;
+      projectLabel = '';
+      projectCode = '';
+    }
+    if (classifyLabel(row.label) === 'project') {
       projectLabel = String(row.label).trim();
       projectCode = String(row.projectCode || '').trim().toLowerCase();
     }
-    if (row.kind === 'Cha' || row.kind === 'Env') {
-      const assetType = row.kind === 'Cha' ? 'character' : 'scene';
+    const assetKind = rowKind(row);
+    if (assetKind) {
+      const assetType = assetKind === 'Cha' ? 'character' : 'scene';
       const code = String(row.code || '').trim();
       const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
-      const live = sheet.liveProjects.some((prefix) => projectCode.startsWith(prefix));
+      const live = Boolean(projectCode) && row.liveProjects.some((prefix) => projectCode.startsWith(prefix));
       const heroName = heroByCode.get(code) || heroDisplayName(row.gameName);
       for (const [stage, file, suffix] of [['2d', pick2dFile(row), '2D'], ['3d', pick3dFile(row, live), '3D']]) {
         if (!file) continue;
