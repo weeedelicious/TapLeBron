@@ -137,6 +137,8 @@ export default function App({ user, onLogout }: Props) {
     ) => {
       setOpeningProjectName(name ?? null);
       setRestoring(true);
+      // 编辑器代码和画布数据一起下载，不要等数据到了再下代码、又多一屏「正在打开」
+      void loadCanvasModule().catch(() => {});
       try {
         // 拦截脚本会在这个请求前自动完成 enter 并带上会话头
         const project = await projectsApi.get(uuid);
@@ -195,6 +197,8 @@ export default function App({ user, onLogout }: Props) {
       }
 
       if (!cancelled) setRestoring(true);
+      // 刷新 / 直接打开画布链接时没经过管理页的空闲预取，这里和画布数据并行下载编辑器代码
+      void loadCanvasModule().catch(() => {});
 
       try {
         // 刷新时若这个标签页没有有效会话，拦截脚本会直接接管页面显示阻断提示，
@@ -487,7 +491,8 @@ export default function App({ user, onLogout }: Props) {
         style={{ height: "100%" }}
       >
         <LazyLoadBoundary>
-          <Suspense fallback={<LazyFallback text="正在打开画布..." />}>
+          {/* 和上一屏「正在打开画布」用同一个样子：编辑器代码偶尔还没下完时接着转，不像又加载了一遍 */}
+          <Suspense fallback={<CanvasOpeningScreen name={useCanvasStore.getState().projectName} />}>
             <Canvas />
           </Suspense>
         </LazyLoadBoundary>

@@ -3711,6 +3711,9 @@ apiRouter.get('/projects/:uuid/events', async (req, res, next) => {
       id: `ready-${Date.now()}`,
       type: 'ready',
       canvasId,
+      // 带上此刻的内容版本：前端拿它和刚加载的那份比，一样就不再整份重拉画布。
+      // 以前不带，每次打开画布 SSE 一连上就会把整份画布 JSON 再下载一遍（大画布十几 MB）。
+      contentVersion: crypto.createHash('sha1').update(JSON.stringify(nodeListFromData(data, row.id))).digest('hex'),
       pluginEditAtMs: Number(data.projectDraft?.lastPluginEditAtMs || 0),
       changedNodeKeys: canvasChangedNodeKeysSince(canvasId, req.query.knownPluginEditAtMs),
     });
