@@ -684,6 +684,7 @@ const PROJECT_ASSET_TYPES = [
   { id: 'character', label: '角色' },
   { id: 'scene', label: '场景' },
   { id: 'hero', label: '英雄' },
+  { id: 'prop', label: '道具' },
 ] as const
 
 function readProjectAssetFilter<T extends string>(key: string, allow: readonly T[]): T {
@@ -807,9 +808,15 @@ function ProjectAssetLibraryPane({
   }, [gameId, games, loadAssets])
 
   const keyword = query.trim().toLowerCase()
+  // 类型按钮按游戏走：后端只返回这个游戏有的类型（RO 有道具、没有英雄标记）；
+  // 记住的筛选在当前游戏里没有时，按「全部」显示
+  const visibleTypes = Object.keys(typeLabels).length
+    ? PROJECT_ASSET_TYPES.filter((item) => item.id in typeLabels)
+    : PROJECT_ASSET_TYPES.filter((item) => item.id !== 'prop')
+  const effectiveType: TypeId = visibleTypes.some((item) => item.id === assetType) ? assetType : 'all'
   const filtered = assets.filter((item) => (
     (stage === 'all' || item.stage === stage)
-    && (assetType === 'all' || (assetType === 'hero' ? Boolean(item.hero) : item.assetType === assetType))
+    && (effectiveType === 'all' || (effectiveType === 'hero' ? Boolean(item.hero) : item.assetType === effectiveType))
     && (!keyword || String(item.name || '').toLowerCase().includes(keyword))
   ))
 
@@ -851,8 +858,8 @@ function ProjectAssetLibraryPane({
           ))}
         </div>
         <div className="favorite-library-type-buttons project-asset-filter-row">
-          {PROJECT_ASSET_TYPES.map((item) => (
-            <button key={item.id} type="button" className={assetType === item.id ? 'is-active' : undefined} onClick={() => chooseType(item.id)}>{typeLabels[item.id] || item.label}</button>
+          {visibleTypes.map((item) => (
+            <button key={item.id} type="button" className={effectiveType === item.id ? 'is-active' : undefined} onClick={() => chooseType(item.id)}>{typeLabels[item.id] || item.label}</button>
           ))}
         </div>
       </div>

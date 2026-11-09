@@ -1023,6 +1023,221 @@
      "atmosphere": ""
     }
    ]
+  },
+  {
+   "game": "RO",
+   "source": "CGTeamWork RO_Film（仙境传说_Film，proj_ro_film）m_asset 资产列表（去掉 C999_test）",
+   "cgtw": "proj_ro_film",
+   "syncedAt": "2026-11-09",
+   "liveProjects": [
+    "ro2"
+   ],
+   "rows": [
+    {
+     "label": "RO2_PV",
+     "projectCode": "ro2_pv",
+     "kind": "Cha",
+     "name": "男刺客",
+     "code": "c007_NanCiKe",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c007_NanCiKe",
+     "d2": "",
+     "d3": "",
+     "atmosphere": "X:\\projects2024\\RO\\RO2_PV\\00_Production_Guide\\03-影创美术\\气氛图"
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "喵波利",
+     "code": "c008_BoLiMiao",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c008_BoLiMiao",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "小怪（木乃伊）",
+     "code": "c009_MuNaiYi",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c009_MuNaiYi",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "女商人",
+     "code": "c010_NvShangRen",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c010_NvShangRen",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "女主教",
+     "code": "c011_NvZhuJiao",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c011_NvZhuJiao",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "男骑士",
+     "code": "c012_NanQiShi",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c012_NanQiShi",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "多兰族",
+     "code": "c013_DuoLanZu",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c013_DuoLanZu",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "女修罗",
+     "code": "c014_NvXiuLuo",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c014_NvXiuLuo",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Cha",
+     "name": "俄赛里斯",
+     "code": "c015_AoSaiLiSi",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Cha\\c015_AoSaiLiSi",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Env",
+     "name": "梦罗克主城",
+     "code": "e006_MengLuoKe",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Env\\e006_MengLuoKe",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Env",
+     "name": "金字塔内景",
+     "code": "e007_JinZiTaNei",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Env\\e007_JinZiTaNei",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Env",
+     "name": "金字塔外景",
+     "code": "e008_JinZiTaWai",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Env\\e008_JinZiTaWai",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Prop",
+     "name": "藏宝图",
+     "code": "p005_CangBaoTu",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p005_CangBaoTu",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Prop",
+     "name": "宝箱",
+     "code": "p006_BaoXiang",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p006_BaoXiang",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Prop",
+     "name": "灵魂天平",
+     "code": "p007_TianPing",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p007_TianPing",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Prop",
+     "name": "宝物",
+     "code": "p008_BaoWu",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p008_BaoWu",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    },
+    {
+     "label": "",
+     "projectCode": "",
+     "kind": "Prop",
+     "name": "推车",
+     "code": "p009_TuiChe",
+     "gameName": "",
+     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p009_TuiChe",
+     "d2": "",
+     "d3": "",
+     "atmosphere": ""
+    }
+   ]
   }
  ]
 }

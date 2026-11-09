@@ -219,6 +219,8 @@ function latestInBox(dirPath) {
 // 表里没写路径的才按代号拼
 const ASSET_DIR_RE = /^(.*?\\Asset\\(?:Cha|Env|Props)\\[^\\]+)\\/i;
 function assetDirOf(row) {
+  // 清单直接给了资产文件夹（RO 这类没有飞书表、按 CGTW 资产列表生成的清单）就用它
+  if (row.assetDir) return String(row.assetDir);
   for (const raw of [row.d2, row.d3]) {
     const match = String(raw || '').trim().replace(/^"+/, '').match(ASSET_DIR_RE);
     if (match) return match[1];
@@ -228,9 +230,11 @@ function assetDirOf(row) {
 
 // 表里「角色/场景」偶尔漏填，按路径里的 Asset\Cha / Asset\Env 判断
 function rowKind(row) {
-  if (row.kind === 'Cha' || row.kind === 'Env') return row.kind;
-  const match = String(row.d2 || row.d3 || '').match(/\\Asset\\(Cha|Env)\\/i);
-  return match ? (match[1].toLowerCase() === 'env' ? 'Env' : 'Cha') : '';
+  if (row.kind === 'Cha' || row.kind === 'Env' || row.kind === 'Prop') return row.kind;
+  const match = String(row.d2 || row.d3 || row.assetDir || '').match(/\\Asset\\(Cha|Env|Prop)\\/i);
+  if (!match) return '';
+  const kind = match[1].toLowerCase();
+  return kind === 'env' ? 'Env' : kind === 'prop' ? 'Prop' : 'Cha';
 }
 
 function sheetFile(rawPath) {
@@ -308,7 +312,7 @@ function buildCatalog() {
     }
     const assetKind = rowKind(row);
     if (assetKind) {
-      const assetType = assetKind === 'Cha' ? 'character' : 'scene';
+      const assetType = assetKind === 'Cha' ? 'character' : assetKind === 'Prop' ? 'prop' : 'scene';
       const code = String(row.code || '').trim();
       const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
       const live = Boolean(projectCode) && row.liveProjects.some((prefix) => projectCode.startsWith(prefix));
@@ -397,7 +401,9 @@ async function listProjectModules(projectId) {
       { id: 'all', label: '\u5168\u90e8' },
       { id: 'character', label: '\u89d2\u8272' },
       { id: 'scene', label: '\u573a\u666f' },
-      { id: 'hero', label: game.heroLabel || currentSheet().games[game.name]?.heroLabel || "英雄" },
+      // 英雄 / NPC、道具：这个游戏里有才出按钮（RO 目前没有英雄标记）
+      ...(game.assets.some((asset) => asset.hero) ? [{ id: 'hero', label: game.heroLabel || currentSheet().games[game.name]?.heroLabel || "英雄" }] : []),
+      ...(game.assets.some((asset) => asset.assetType === 'prop') ? [{ id: 'prop', label: '道具' }] : []),
     ],
     assets: game.assets.map(({ filePath, ...asset }) => asset),
     modules: [],
