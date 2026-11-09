@@ -15,6 +15,7 @@ import { UiMaskModelLayer } from './UiMaskModelLayer.js';
 import { randomUUID } from '../utils/randomUUID.js';
 import { localRequest } from '../utils/LocalVideo.js';
 import { trimOpacityRange } from './opacityClip.js';
+import { mergeMaskTracks } from './UiMaskMerge.js';
 
 export class UiMaskEditor {
   constructor(node){
@@ -23,7 +24,7 @@ export class UiMaskEditor {
     this.dialog=document.createElement('dialog');this.dialog.className='ui-mask-editor';
     this.dialog.setAttribute('aria-label','遮罩创作工作台');
     this.dialog.innerHTML=`<header><div class="ui-mask-title"><strong>遮罩创作工作台</strong><span data-view="source"></span></div><div class="ui-mask-row"><button data-action="focus" hidden aria-pressed="false" title="收起属性与时间轴，最大化画面（Tab）">专注画面 Tab</button><button data-action="save" hidden>保存草稿</button><button data-action="close" hidden>保存并关闭</button></div></header>
-      <div class="ui-mask-toolbar" role="toolbar" aria-label="画面工具"><div class="ui-mask-tool-group"><button data-action="select" aria-pressed="true">选择 V</button><button data-action="add" aria-pressed="false">矩形 R</button><button data-action="pen" aria-pressed="false">钢笔 G</button><button data-action="path-handles" aria-pressed="false" title="W 开 / 关：在选中遮罩的轮廓边缘单击加点">添加锚点 W</button><button data-action="point-delete" hidden title="Delete 删除选中锚点；Shift+Delete 删除整块遮罩">删除锚点</button><button data-action="path-finish" hidden>完成轮廓 Enter</button><button data-action="pan" hidden aria-pressed="false">平移 H</button><button data-action="center" hidden title="无需拖动，先创建矩形，再用变换数值微调">居中添加 C</button></div><div class="ui-mask-tool-group" hidden><button data-action="undo" title="Ctrl+Z">撤销</button><button data-action="redo" title="Ctrl+Shift+Z">重做</button></div><div class="ui-mask-tool-group"><button data-action="zoom-out" hidden aria-label="缩小画面">−</button><button data-action="fit" hidden data-view="zoom" title="适应画面（F）">适应</button><button data-action="zoom-in" hidden aria-label="放大画面">＋</button><button data-action="actual" hidden>1:1</button></div><label><input type="checkbox" data-field="overlay" checked>覆盖预览</label><label class="ui-mask-opacity">浓度 <input type="range" data-field="opacity" min="0" max="100" value="70" aria-label="覆盖预览浓度"></label><button data-action="help" hidden aria-expanded="false">快捷键 ?</button></div>
+      <div class="ui-mask-toolbar" role="toolbar" aria-label="画面工具"><div class="ui-mask-tool-group"><button data-action="select" aria-pressed="true">选择 V</button><button data-action="add" aria-pressed="false">矩形 R</button><button data-action="pen" aria-pressed="false">钢笔 G</button><button data-action="merge" aria-pressed="false" title="M：按住左键拖框，框到的遮罩合成一块">合并 M</button><button data-action="path-handles" aria-pressed="false" title="W 开 / 关：在选中遮罩的轮廓边缘单击加点">添加锚点 W</button><button data-action="point-delete" hidden title="Delete 删除选中锚点；Shift+Delete 删除整块遮罩">删除锚点</button><button data-action="path-finish" hidden>完成轮廓 Enter</button><button data-action="pan" hidden aria-pressed="false">平移 H</button><button data-action="center" hidden title="无需拖动，先创建矩形，再用变换数值微调">居中添加 C</button></div><div class="ui-mask-tool-group" hidden><button data-action="undo" title="Ctrl+Z">撤销</button><button data-action="redo" title="Ctrl+Shift+Z">重做</button></div><div class="ui-mask-tool-group"><button data-action="zoom-out" hidden aria-label="缩小画面">−</button><button data-action="fit" hidden data-view="zoom" title="适应画面（F）">适应</button><button data-action="zoom-in" hidden aria-label="放大画面">＋</button><button data-action="actual" hidden>1:1</button></div><label><input type="checkbox" data-field="overlay" checked>覆盖预览</label><label class="ui-mask-opacity">浓度 <input type="range" data-field="opacity" min="0" max="100" value="70" aria-label="覆盖预览浓度"></label><button data-action="help" hidden aria-expanded="false">快捷键 ?</button></div>
       <div class="ui-mask-shortcuts" data-view="shortcuts" hidden>R 画矩形 · V 选择 · H / 中键平移 · F 适应画面 · 滚轮缩放 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Space 播放 · Delete 删除 · Ctrl+D 复制遮罩 · Ctrl+Z 撤销 · Esc 退出绘制。半透明仅用于预览，输出始终为纯黑遮罩。</div>
       <div class="ui-mask-workspace"><main><div class="ui-mask-view-hint"><strong data-view="tool">选择工具</strong><span data-view="hint" role="status"></span></div><div class="ui-mask-stage"><div class="ui-mask-surface"><canvas aria-label="遮罩画面：拖动绘制或移动，角点缩放，圆点旋转" aria-haspopup="menu" tabindex="0"></canvas></div></div><div class="ui-mask-transport"><button data-action="first" title="第一帧">|‹</button><button data-action="previous" title="上一帧">‹</button><button data-action="play">播放</button><button data-action="next" title="下一帧">›</button><button data-action="last" title="最后一帧">›|</button><input data-field="seek" aria-label="播放进度" type="range" min="0" value="0"><label>帧 <input data-field="frame" type="number" min="1" aria-label="当前帧"></label><span data-view="time"></span><select data-field="speed" aria-label="播放速度"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select><label><input type="checkbox" data-field="loop">循环</label></div>
       <section class="ui-mask-keyframes" data-view="keyframes"><div class="ui-mask-timeline-resizer" role="separator" aria-label="调整时间轴高度" aria-orientation="horizontal" tabindex="0"></div><div class="ui-mask-key-actions"><strong>动画</strong><label><input type="checkbox" data-field="auto-key" checked>自动 K</label><button data-action="key-previous" title="上一关键帧">‹◆</button><button data-action="key-add">设键 S</button><button data-action="key-next" title="下一关键帧">◆›</button><button data-action="key-delete">删键</button><label>选中键 <input type="number" data-field="key-frame" min="1" aria-label="选中键所在帧"></label><label class="ui-mask-timeline-zoom">时间轴 <input type="range" data-field="timeline-zoom" min="1" max="8" step="0.5" value="1" aria-label="时间轴缩放"></label></div><div class="ui-mask-timeline-scroll"><div class="ui-mask-timeline" data-view="keys" aria-label="所选遮罩的关键帧轨道"></div></div><div class="ui-mask-key-caption" data-view="key-caption"></div></section></main>
@@ -49,7 +50,7 @@ export class UiMaskEditor {
     this.field('seek').max=s.frames-1;this.field('seek').step=1;
     this.abort=new AbortController();const signal=this.abort.signal;
     const actions={close:()=>this.saveAndClose(),save:()=>node.flushDocument().then(()=>this.status('草稿已保存')).catch(e=>this.status(`保存失败：${e.message}`)),play:()=>this.toggle(),previous:()=>this.stepFrame(-1),next:()=>this.stepFrame(1),first:()=>this.seek(0),last:()=>this.seek(s.frames-1),
-      select:()=>this.setTool('select'),pen:()=>this.setTool('pen'),'path-handles':()=>this.pathEditor.toggleAddMode(),'point-delete':()=>this.pathEditor.remove(),'path-finish':()=>this.pathDrawing.finish(),pan:()=>this.setTool('pan'),center:()=>this.createCentered(),duplicate:()=>this.duplicate(),
+      select:()=>this.setTool('select'),pen:()=>this.setTool('pen'),merge:()=>this.setTool(this.tool==='merge'?'select':'merge'),'path-handles':()=>this.pathEditor.toggleAddMode(),'point-delete':()=>this.pathEditor.remove(),'path-finish':()=>this.pathDrawing.finish(),pan:()=>this.setTool('pan'),center:()=>this.createCentered(),duplicate:()=>this.duplicate(),
       focus:()=>this.toggleFocus(),help:()=>{const help=this.$('[data-view="shortcuts"]');help.hidden=!help.hidden;this.$('[data-action="help"]').setAttribute('aria-expanded',String(!help.hidden));},locate:()=>this.seek(this.track()?.ranges[Number(this.field('range').value)]?.[0]??0),
       add:()=>this.add(this.category),delete:()=>this.deleteSelection(),
       undo:()=>this.undo(),redo:()=>this.redoEdit(),enable:()=>this.edit(()=>this.visibleTracks().forEach(t=>t.enabled=true)),disable:()=>this.edit(()=>this.visibleTracks().forEach(t=>t.enabled=false)),
@@ -122,6 +123,7 @@ export class UiMaskEditor {
         else if(this.contextMenu.contains(e.target))return;
       }
       if(isTextInput(e.target)||hasEditorGesture())return;
+      if(e.key==='Escape'&&this.tool==='merge'&&!this.marqueeBox){e.preventDefault();this.setTool('select');return;}
       if(e.key==='Escape'&&!this.curvePanel?.menu.hidden){e.preventDefault();this.curvePanel.menu.hidden=true;return;}
       if(this.pathDrawing?.keydown(e)){e.preventDefault();return;}
       if(this.curvePanel?.keydown(e)){e.preventDefault();return;}
@@ -131,7 +133,7 @@ export class UiMaskEditor {
       else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?this.redoEdit():this.undo();}
       else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'){e.preventDefault();this.duplicate();}
       else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();actions.save();}
-      else if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&['v','r','g','h','f','c','?'].includes(e.key.toLowerCase())){e.preventDefault();const key=e.key.toLowerCase();({v:actions.select,r:actions.add,g:actions.pen,h:actions.pan,f:actions.fit,c:actions.center,'?':actions.help})[key]();}
+      else if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&['v','r','g','h','f','c','m','?'].includes(e.key.toLowerCase())){e.preventDefault();const key=e.key.toLowerCase();({v:actions.select,r:actions.add,g:actions.pen,m:actions.merge,h:actions.pan,f:actions.fit,c:actions.center,'?':actions.help})[key]();}
       else if(e.key==='Tab'&&e.target===this.canvas){e.preventDefault();this.toggleFocus();}
       else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();e.shiftKey?actions.delete():this.keyFocus?this.deleteKey():actions.delete();}
       else if(e.key.toLowerCase()==='s'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();this.addKey();}
@@ -166,7 +168,7 @@ export class UiMaskEditor {
     const settings=this.settingsButton=bar.querySelector(':scope > button');settings.onclick=()=>{const on=this.dialog.classList.toggle('mask-settings-open');settings.setAttribute('aria-expanded',String(on));};
     this.dialog.addEventListener('pointerdown',ev=>{if(!ev.target.closest('aside')&&!settings.contains(ev.target)){this.dialog.classList.remove('mask-settings-open');settings.setAttribute('aria-expanded','false');}},{signal:this.abort.signal});
     this.$('.ui-mask-stage').addEventListener('dblclick',ev=>this.doubleClickMask(ev),{signal:this.abort.signal});
-    this.$('[data-view=shortcuts]').textContent='V 选择：空白处左键框选 · Shift 点击切换 / 拖框追加 · Alt 减选 · Ctrl 拖框（可从遮罩内部开始） · Ctrl+A 全选当前帧 · Ctrl+I 反选 · Esc 取消选择 · 拖动选中项整体移动 · 拖动锚点编辑 · 拖动边缘整条边移动 · Alt 拖锚点拉曲线 · W 添加锚点（边缘单击加点） · 中键轻点边缘加点 · Delete 删锚点 / 未选锚点时删遮罩 · Shift+Delete 删遮罩 · Ctrl+D 复制选中 · Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · C 居中添加 · R 矩形 · G 钢笔（单击加点，拖动拉曲线，Enter 闭合） · H / 中键平移 · F 适应画面 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Tab 专注画面 · Ctrl+S 保存草稿 · Esc 退出当前操作，最后保存并关闭 · F2 遮罩设置。多选时属性区只编辑主选遮罩。';
+    this.$('[data-view=shortcuts]').textContent='V 选择：空白处左键框选 · Shift 点击切换 / 拖框追加 · Alt 减选 · Ctrl 拖框（可从遮罩内部开始） · Ctrl+A 全选当前帧 · Ctrl+I 反选 · Esc 取消选择 · 拖动选中项整体移动 · 拖动锚点编辑 · 拖动边缘整条边移动 · Alt 拖锚点拉曲线 · W 添加锚点（边缘单击加点） · 中键轻点边缘加点 · Delete 删锚点 / 未选锚点时删遮罩 · Shift+Delete 删遮罩 · Ctrl+D 复制选中 · Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · C 居中添加 · R 矩形 · G 钢笔（单击加点，拖动拉曲线，Enter 闭合） · M 合并（拖框把框到的遮罩合成一块） · H / 中键平移 · F 适应画面 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Tab 专注画面 · Ctrl+S 保存草稿 · Esc 退出当前操作，最后保存并关闭 · F2 遮罩设置。多选时属性区只编辑主选遮罩。';
     for(const p of this.dialog.querySelectorAll('aside .ui-mask-note'))if(p.textContent.includes('纯黑'))p.textContent='当前类别单独输出，另一类草稿保留。属性不透明度会写入输出，原音频保留。';
     this.layoutStudio();
   }
@@ -237,6 +239,19 @@ export class UiMaskEditor {
     const update=q=>{moved=Math.hypot(q.clientX-e.clientX,q.clientY-e.clientY)>3;const v=this.point(q);this.marqueeBox=[Math.min(p[0],v[0]),Math.min(p[1],v[1]),Math.max(p[0],v[0]),Math.max(p[1],v[1])];if(moved)this.selectTracks(combineSelection(before,marqueeIds(this.visibleTracks(),this.frame,this.node.document.source,this.marqueeBox),mode),primary);this.draw();};
     startEditorGesture(e,{element:this.canvas,scope:this.dialog,move:update,end:q=>{update(q);if(!moved&&mode==='replace')this.selectTracks([]);this.marqueeBox=null;this.render();this.status(`已选 ${this.selectedIds.size} 个遮罩 · Shift 追加 · Alt 减选 · Delete 删除`);},cancel:()=>{this.marqueeBox=null;this.selectTracks(before,primary);this.render();}});
   }
+  // 合并工具：拖框选中遮罩，松手把框到的（至少两个）合成一块，可 Ctrl+Z 撤销
+  mergeMarquee(e){
+    if(this.node.busy||this.video.seeking||this.video.readyState<2)return;this.video.pause();this.canvas.focus({preventScroll:true});this.keyFocus=false;
+    const p=this.point(e);let moved=false,hits=[];
+    const update=q=>{moved=moved||Math.hypot(q.clientX-e.clientX,q.clientY-e.clientY)>3;const v=this.point(q);this.marqueeBox=[Math.min(p[0],v[0]),Math.min(p[1],v[1]),Math.max(p[0],v[0]),Math.max(p[1],v[1])];if(moved){hits=marqueeIds(this.visibleTracks(),this.frame,this.node.document.source,this.marqueeBox);this.selectTracks(hits,hits[0]);}this.draw();};
+    startEditorGesture(e,{element:this.canvas,scope:this.dialog,move:update,end:q=>{update(q);this.marqueeBox=null;
+      if(!moved){this.render();this.status('按住左键拖框，把要合并的遮罩框进去');return;}
+      if(hits.length<2){this.render();this.status(hits.length?'只框到 1 个遮罩，至少框两个才能合并':'没有框到遮罩');return;}
+      const ids=new Set(hits);let mergedId=null;
+      this.edit(()=>{const tracks=this.node.document.tracks,members=tracks.filter(t=>ids.has(t.id));const merged=mergeMaskTracks(members,this.frame,this.node.document.source,(kind,box,frame)=>this.newTrack(kind,box,frame));const at=tracks.findIndex(t=>ids.has(t.id));this.node.document.tracks=tracks.filter(t=>!ids.has(t.id));this.node.document.tracks.splice(Math.max(0,at),0,merged);mergedId=merged.id;this.selectTracks([merged.id],merged.id);});
+      if(mergedId){this.render();this.rebuildUnion?.();this.status(`已把 ${ids.size} 个遮罩合并成 1 个 · Ctrl+Z 撤销`);}
+    },cancel:()=>{this.marqueeBox=null;this.render();}});
+  }
   track(){return this.node.document.tracks.find(t=>t.id===this.selected);}
   visibleTracks(){return this.node.document.tracks.filter(t=>this.category===t.kind);}
   status(text){if(!this.closed)this.$('[data-view="status"]').textContent=text;}
@@ -264,12 +279,12 @@ export class UiMaskEditor {
   }
   renderTool(){
     const tool=this.tool||'select';this.dialog.dataset.tool=tool;
-    for(const [action,value] of [['select','select'],['add','draw'],['pen','pen'],['pan','pan']])this.$(`[data-action="${action}"]`).setAttribute('aria-pressed',String(tool===value));
-    this.$('[data-view="tool"]').textContent={select:'选择工具',draw:`绘制${this.category==='static'?'静态':'动态'}遮罩`,pan:'平移画面',path:'编辑遮罩路径',pen:'钢笔绘制'}[tool];
+    for(const [action,value] of [['select','select'],['add','draw'],['pen','pen'],['pan','pan'],['merge','merge']])this.$(`[data-action="${action}"]`).setAttribute('aria-pressed',String(tool===value));
+    this.$('[data-view="tool"]').textContent={select:'选择工具',draw:`绘制${this.category==='static'?'静态':'动态'}遮罩`,pan:'平移画面',path:'编辑遮罩路径',pen:'钢笔绘制',merge:'合并遮罩'}[tool];
     this.$('[data-action=path-finish]').hidden=tool!=='pen';
     this.$('[data-action=path-handles]').setAttribute('aria-pressed',String(this.pathEditor?.addMode??false));
-    this.canvas.style.cursor=this.video.seeking?'progress':{select:'default',draw:'crosshair',pan:'grab',path:'crosshair',pen:'crosshair'}[tool];
-    this.hint(this.video.error?'视频读取失败，请保存并重新打开。':this.video.readyState<2?'视频正在载入，工具已就绪，画面显示后即可操作。':this.video.seeking?'正在定位这一帧，工具会保持选中，画面就绪后即可操作。':{select:'单选即可拖锚点 / 拖边缘移动整条边 · W 添加锚点 · Alt 拖锚点拉曲线 · 中键轻点边缘加点 / 拖动平移 · 双击遮罩打开动画属性 · S 为已勾选属性设键',draw:'在视频画面上按住左键拖出矩形 · 可连续绘制 · Esc 返回选择',pan:'拖动画面平移 · 滚轮缩放 · F 恢复完整画面',path:'拖点和手柄 · Alt 拖锚点拉曲线 / 拖手柄断开 · 双击边缘加点 · W 添加锚点 · S 为已勾选属性设键 · Esc 完成',pen:'单击加点 · 按住拖动拉曲线 · 点首点或 Enter 闭合 · 可画到画幅外 · Esc 取消'}[tool]);
+    this.canvas.style.cursor=this.video.seeking?'progress':{select:'default',draw:'crosshair',pan:'grab',path:'crosshair',pen:'crosshair',merge:'crosshair'}[tool];
+    this.hint(this.video.error?'视频读取失败，请保存并重新打开。':this.video.readyState<2?'视频正在载入，工具已就绪，画面显示后即可操作。':this.video.seeking?'正在定位这一帧，工具会保持选中，画面就绪后即可操作。':{select:'单选即可拖锚点 / 拖边缘移动整条边 · W 添加锚点 · Alt 拖锚点拉曲线 · 中键轻点边缘加点 / 拖动平移 · 双击遮罩打开动画属性 · S 为已勾选属性设键',draw:'在视频画面上按住左键拖出矩形 · 可连续绘制 · Esc 返回选择',pan:'拖动画面平移 · 滚轮缩放 · F 恢复完整画面',path:'拖点和手柄 · Alt 拖锚点拉曲线 / 拖手柄断开 · 双击边缘加点 · W 添加锚点 · S 为已勾选属性设键 · Esc 完成',pen:'单击加点 · 按住拖动拉曲线 · 点首点或 Enter 闭合 · 可画到画幅外 · Esc 取消',merge:'按住左键拖框，框到的遮罩（至少两个）合成一块 · 静态合成轮廓、动态合成每帧外框 · Ctrl+Z 撤销 · M / Esc 退出'}[tool]);
   }
   toggleFocus(){this.curvePanel?.setExpanded(false);this.focusMode=!this.focusMode;this.dialog.classList.toggle('ui-mask-focus',this.focusMode);const b=this.$('[data-action="focus"]');b.setAttribute('aria-pressed',String(this.focusMode));b.textContent=this.focusMode?'恢复工作区 Tab':'专注画面 Tab';this.canvas.focus({preventScroll:true});}
   setupSplitters(){
@@ -390,6 +405,7 @@ export class UiMaskEditor {
     if(e.button===1||this.tool==='pan'){this.pan(e);return;}
     if(e.button!==0||this.node.busy)return;
     if(this.video.seeking||this.video.readyState<2){this.renderTool();return;}
+    if(this.tool==='merge'){this.mergeMarquee(e);return;}
     if(this.pathEditor?.pointer(e))return;
     if(this.tool==='path')return;
     if(this.tool==='pen'){this.pathDrawing.pointer(e);return;}
@@ -542,7 +558,7 @@ export class UiMaskEditor {
       if(t.maskOperation==='erase'&&t.enabled)ctx.strokeStyle='#ffb469';
       const points=trackPolygon(t,this.frame,this.node.document.source);ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0]*w,p[1]*h):ctx.moveTo(p[0]*w,p[1]*h));ctx.closePath();ctx.stroke();
       if(this.selectedIds.has(t.id)){ctx.font=`${22*scale}px system-ui`;const label=maskDisplayId(t),lx=Math.max(0,b[0]*w),ly=Math.max(28*scale,b[1]*h-6*scale);ctx.fillStyle='#172c3e';ctx.fillRect(lx,ly-24*scale,ctx.measureText(label).width+10*scale,30*scale);ctx.fillStyle='#bbf7e5';ctx.fillText(label,lx+5*scale,ly);}
-      if(this.selectedIds.size===1&&t.id===this.selected&&!['draw','path','pen'].includes(this.tool)){const handles=this.handles(t);ctx.fillStyle='#f0fff9';ctx.strokeStyle='#8ce1cd';ctx.lineWidth=scale;if(!this.pathEditor?.active())for(const corner of handles.corners)ctx.fillRect(corner[0]*w-4*scale,corner[1]*h-4*scale,8*scale,8*scale);ctx.beginPath();ctx.moveTo(handles.midpoint[0]*w,handles.midpoint[1]*h);ctx.lineTo(handles.rotation[0]*w,handles.rotation[1]*h);ctx.stroke();ctx.beginPath();ctx.arc(handles.rotation[0]*w,handles.rotation[1]*h,5*scale,0,Math.PI*2);ctx.fill();}
+      if(this.selectedIds.size===1&&t.id===this.selected&&!['draw','path','pen','merge'].includes(this.tool)){const handles=this.handles(t);ctx.fillStyle='#f0fff9';ctx.strokeStyle='#8ce1cd';ctx.lineWidth=scale;if(!this.pathEditor?.active())for(const corner of handles.corners)ctx.fillRect(corner[0]*w-4*scale,corner[1]*h-4*scale,8*scale,8*scale);ctx.beginPath();ctx.moveTo(handles.midpoint[0]*w,handles.midpoint[1]*h);ctx.lineTo(handles.rotation[0]*w,handles.rotation[1]*h);ctx.stroke();ctx.beginPath();ctx.arc(handles.rotation[0]*w,handles.rotation[1]*h,5*scale,0,Math.PI*2);ctx.fill();}
     }
     if(this.pending){const b=this.pending;ctx.fillStyle='#69d5b938';ctx.fillRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.strokeStyle='#97ffe4';ctx.lineWidth=2*scale;ctx.strokeRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);}
     if(this.marqueeBox){const b=this.marqueeBox;ctx.fillStyle='#75dcca20';ctx.fillRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.strokeStyle='#aaf7e1';ctx.lineWidth=scale;ctx.setLineDash([5*scale,3*scale]);ctx.strokeRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.setLineDash([]);}
