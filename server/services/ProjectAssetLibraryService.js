@@ -53,13 +53,34 @@ function currentHeroAssets() {
 //  - 氛围图：项目「影创美术/氛围图」文件夹
 // 表里写的文件不在了，就按同一规则到对应框里现找。文件改了不用重启：每次重建目录都会按 mtime 重读。
 const SHEET_FILE = path.join(__dirname, 'project-asset-sheet.json');
+// sources[].rowsFile：这一份清单由本机定时任务从 CGTW 同步（tools/sync_cgtw_hero_names.py 一起跑），
+// 写在 server/data 下；文件在就用文件里的行（CGTW 多删少补），不在就用 sheet 里写死的 rows 兜底。
+const SHEET_DATA_DIR = path.join(__dirname, '..', 'data');
 let sheetCache = null;
+
+function rowsFileMtime(name) {
+  try { return fs.statSync(path.join(SHEET_DATA_DIR, path.basename(String(name)))).mtimeMs; } catch { return 0; }
+}
+
+function syncedRows(source) {
+  if (!source?.rowsFile) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(SHEET_DATA_DIR, path.basename(String(source.rowsFile))), 'utf8'));
+    return Array.isArray(parsed?.rows) && parsed.rows.length ? parsed.rows : null;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn('project asset rows file unavailable:', source.rowsFile, error.message);
+    return null;
+  }
+}
 
 function currentSheet() {
   try {
     const stat = fs.statSync(SHEET_FILE);
-    if (sheetCache && sheetCache.mtimeMs === stat.mtimeMs) return sheetCache.sheet;
-    const parsed = JSON.parse(fs.readFileSync(SHEET_FILE, 'utf8'));
+    const raw = fs.readFileSync(SHEET_FILE, 'utf8');
+    const peek = JSON.parse(raw);
+    const stamp = [stat.mtimeMs, ...(Array.isArray(peek?.sources) ? peek.sources : []).map((source) => (source?.rowsFile ? rowsFileMtime(source.rowsFile) : 0))].join(':');
+    if (sheetCache && sheetCache.stamp === stamp) return sheetCache.sheet;
+    const parsed = peek;
     // 每行带上所属游戏和该游戏的进行中项目，后面按行处理即可。
     // heroLabel：「英雄」筛选按钮在这个游戏叫什么（心动小镇叫 NPC）；heroCodes：表里没有局内代号时，按代号标记归到这个筛选的资产
     const rows = [];
@@ -69,10 +90,11 @@ function currentSheet() {
       const liveProjects = (Array.isArray(source?.liveProjects) ? source.liveProjects : []).map((item) => String(item).toLowerCase());
       const heroCodes = new Set((Array.isArray(source?.heroCodes) ? source.heroCodes : []).map((item) => String(item).trim().toLowerCase()));
       games[game] = { heroLabel: String(source?.heroLabel || '').trim(), heroCodes };
-      for (const row of Array.isArray(source?.rows) ? source.rows : []) rows.push({ ...row, game, liveProjects, heroCodes });
+      const sourceRows = syncedRows(source) || (Array.isArray(source?.rows) ? source.rows : []);
+      for (const row of sourceRows) rows.push({ ...row, game, liveProjects, heroCodes });
     }
     const sheet = { rows, games };
-    sheetCache = { mtimeMs: stat.mtimeMs, sheet };
+    sheetCache = { stamp, sheet };
     return sheet;
   } catch (error) {
     console.warn('project asset sheet unavailable:', error.message);
@@ -371,6 +393,12 @@ function getCatalog() {
   return catalogCache;
 }
 
+// 资产库「刷新」：不等 20 秒缓存过期，立刻按 CGTW 文件框重扫——文件没了就删、新出的就补
+function refreshCatalog() {
+  catalogCache = null;
+  return getCatalog();
+}
+
 function gamesForCatalog(catalog) {
   const games = catalog.games.slice();
   for (const [name, id] of Object.entries(KNOWN_GAME_IDS)) {
@@ -573,6 +601,7 @@ async function readProjectAssetFile(projectId, relativePath, width, shortEdgeVal
 }
 
 module.exports = {
+  refreshCatalog,
   currentHeroAssets,
   heroDisplayName,
   listProjectsWithPaths,

@@ -1070,6 +1070,17 @@ body {
   box-shadow: 0 0 0 2px rgba(124, 92, 252, 0.16);
 }
 
+/* 项目资产库「刷新」结果：补了几个、删了几个 */
+.project-asset-refresh-notice {
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: rgba(196, 238, 222, 0.92);
+  background: rgba(73, 182, 165, 0.12);
+  border: 1px solid rgba(73, 182, 165, 0.28);
+}
+
 .favorite-library-error {
   padding: 9px 10px;
   border-radius: 11px;

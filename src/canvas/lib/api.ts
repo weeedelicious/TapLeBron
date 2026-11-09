@@ -1142,6 +1142,8 @@ export type ProjectAssetLibraryItem = {
   /** character / scene */
   assetType?: string;
   hero?: boolean;
+  /** 文件修改时间；拼进图片地址，同名文件被替换后浏览器不会继续用旧缓存 */
+  mtimeMs?: number;
 };
 
 /** 从项目资产库拖进 / 双击插入画布时的载荷；有 projectId + relativePath 时由服务端导入原文件。 */
@@ -1154,15 +1156,16 @@ export type ProjectAssetInsertPayload = {
 };
 
 export const projectAssetLibraryApi = {
-  listProjects: () =>
-    http.get<{ projects: ProjectAssetLibraryProject[] }>("/project-asset-library/projects").then((r) => r.data.projects ?? []),
+  /** refresh=true：面板点「刷新」，服务端跳过目录缓存立刻重扫 CGTW 文件框 */
+  listProjects: (refresh = false) =>
+    http.get<{ projects: ProjectAssetLibraryProject[] }>("/project-asset-library/projects", refresh ? { params: { refresh: 1 } } : undefined).then((r) => r.data.projects ?? []),
   listModules: (projectId: number) =>
     http.get<{ project: { id: number; name: string }; assets: ProjectAssetLibraryItem[]; assetTypes?: { id: string; label: string }[] }>(`/project-asset-library/projects/${projectId}/modules`).then((r) => r.data),
-  fileUrl: (projectId: number, relativePath: string) =>
-    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&original=1`,
+  fileUrl: (projectId: number, relativePath: string, version?: number) =>
+    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&original=1${version ? `&v=${Math.round(version)}` : ''}`,
   /** 按短边缩：360 = 列表小图和悬停预览（360P），1080 = 浏览大图（1080P，原图更小时服务端直接给原图）。 */
-  shortEdgeUrl: (projectId: number, relativePath: string, shortEdge: 360 | 1080) =>
-    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&s=${shortEdge}`,
+  shortEdgeUrl: (projectId: number, relativePath: string, shortEdge: 360 | 1080, version?: number) =>
+    `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&s=${shortEdge}${version ? `&v=${Math.round(version)}` : ''}`,
   thumbUrl: (projectId: number, relativePath: string, width = 360) =>
     `/api/project-asset-library/file?projectId=${encodeURIComponent(String(projectId))}&path=${encodeURIComponent(relativePath)}&w=${encodeURIComponent(String(width))}`,
   importToCanvas: (canvasUuid: string, projectId: number, relativePath: string, name?: string) =>

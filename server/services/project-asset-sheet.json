@@ -1026,7 +1026,7 @@
   },
   {
    "game": "RO",
-   "source": "CGTeamWork RO_Film（仙境传说_Film，proj_ro_film）m_asset 资产列表（去掉 C999_test）",
+   "source": "CGTeamWork RO_Film（仙境传说_Film，proj_ro_film）m_asset 资产列表：本机计划任务每 15 分钟同步到 server/data/project-asset-rows-ro.json（多删少补），下面 rows 是同步文件缺失时的兜底",
    "cgtw": "proj_ro_film",
    "syncedAt": "2026-11-09",
    "liveProjects": [
@@ -1237,7 +1237,8 @@
      "d3": "",
      "atmosphere": ""
     }
-   ]
+   ],
+   "rowsFile": "project-asset-rows-ro.json"
   }
  ]
 }

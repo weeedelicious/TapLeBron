@@ -54,7 +54,7 @@ def build_list(rows):
     return heroes
 
 
-def main():
+def sync_heroes():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
@@ -99,6 +99,17 @@ def main():
         raise RuntimeError('上传失败：' + result.stderr.decode('utf-8', 'replace')[:300])
     print(f'已更新服务器英雄名单：{len(heroes)} 个英雄（之前 {len(previous)} 个）')
     return 0
+
+
+def main():
+    code = sync_heroes()
+    # 顺带同步 RO 资产清单（CGTW 多删少补）；它出错不影响英雄名单这一步
+    try:
+        import sync_cgtw_asset_rows
+        sync_cgtw_asset_rows.sync(dry_run='--dry-run' in sys.argv)
+    except Exception as error:  # noqa: BLE001
+        print(f'RO 资产清单同步失败：{error}')
+    return code
 
 
 if __name__ == '__main__':

@@ -10576,6 +10576,8 @@ function favoriteLibraryTypeFilter(type, alias, where, params) {
 
 apiRouter.get('/project-asset-library/projects', async (req, res, next) => {
   try {
+    // ?refresh=1：资产库面板点「刷新」，跳过目录缓存立刻重扫
+    if (String(req.query.refresh || '') === '1') projectAssetLibraryService.refreshCatalog();
     res.json({ projects: await projectAssetLibraryService.listProjectsWithPaths() });
   } catch (error) {
     next(error);

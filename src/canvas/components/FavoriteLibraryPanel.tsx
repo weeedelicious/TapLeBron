@@ -746,6 +746,10 @@ function ProjectAssetLibraryPane({
   const hoverTimerRef = useRef<number | null>(null)
   // 切换游戏时旧请求可能晚到，用序号丢掉过期结果。
   const requestSeqRef = useRef(0)
+  // 「刷新」：服务端立刻重扫，拿到新列表后跟刷新前比一下，告诉用户补了几个、删了几个
+  const refreshRequestedRef = useRef(false)
+  const assetsRef = useRef<{ gameId: number; assets: ProjectAssetLibraryItem[] } | null>(null)
+  const [refreshNotice, setRefreshNotice] = useState('')
 
   const clearHover = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -759,16 +763,24 @@ function ProjectAssetLibraryPane({
     if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current)
   }, [])
 
-  const loadGames = useCallback(async () => {
+  const loadGames = useCallback(async (refresh = false) => {
     try {
-      const list = await projectAssetLibraryApi.listProjects()
+      const list = await projectAssetLibraryApi.listProjects(refresh)
       setGames(Array.isArray(list) ? list : [])
       setError('')
     } catch (err) {
       setGames([])
       setError(projectAssetErrorText(err, '游戏列表加载失败'))
+      refreshRequestedRef.current = false
+      setRefreshNotice('')
     }
   }, [])
+  // 刷新结果提示 5 秒后自己消失（「正在刷新」那句等结果出来再换）
+  useEffect(() => {
+    if (!refreshNotice || refreshNotice.startsWith('正在')) return undefined
+    const timer = window.setTimeout(() => setRefreshNotice(''), 5000)
+    return () => window.clearTimeout(timer)
+  }, [refreshNotice])
 
   const loadAssets = useCallback(async (id: number, token: number) => {
     setLoading(true)
@@ -776,12 +788,30 @@ function ProjectAssetLibraryPane({
     try {
       const data = await projectAssetLibraryApi.listModules(id)
       if (token !== requestSeqRef.current) return
-      setAssets(Array.isArray(data.assets) ? data.assets : [])
+      const nextAssets = Array.isArray(data.assets) ? data.assets : []
+      if (refreshRequestedRef.current) {
+        refreshRequestedRef.current = false
+        const previous = assetsRef.current?.gameId === id ? assetsRef.current.assets : null
+        if (previous) {
+          const key = (item: ProjectAssetLibraryItem) => `${item.relativePath}@${item.mtimeMs ?? ''}`
+          const before = new Set(previous.map(key))
+          const after = new Set(nextAssets.map(key))
+          const added = nextAssets.filter((item) => !before.has(key(item))).length
+          const removed = previous.filter((item) => !after.has(key(item))).length
+          setRefreshNotice(added || removed ? `已刷新：新增 / 更新 ${added} 个，移除 ${removed} 个` : '已刷新：资产库没有变化')
+        } else {
+          setRefreshNotice('已刷新')
+        }
+      }
+      assetsRef.current = { gameId: id, assets: nextAssets }
+      setAssets(nextAssets)
       // 筛选按钮名按游戏走：火炬叫「英雄」，心动小镇叫「NPC」
       setTypeLabels(Object.fromEntries((Array.isArray(data.assetTypes) ? data.assetTypes : []).map((item) => [item.id, item.label])))
       rememberProjectAssetSetting('shotflow:project-asset-library:project-id', String(id))
     } catch (err) {
       if (token !== requestSeqRef.current) return
+      refreshRequestedRef.current = false
+      setRefreshNotice('')
       setAssets([])
       setError(projectAssetErrorText(err, '项目资产库加载失败'))
     } finally {
@@ -791,7 +821,11 @@ function ProjectAssetLibraryPane({
 
   useEffect(() => { void loadGames() }, [loadGames])
   useEffect(() => {
-    const refresh = () => { void loadGames() }
+    const refresh = () => {
+      refreshRequestedRef.current = true
+      setRefreshNotice('正在刷新资产库…')
+      void loadGames(true)
+    }
     window.addEventListener('shotflow:project-assets-refresh', refresh)
     return () => window.removeEventListener('shotflow:project-assets-refresh', refresh)
   }, [loadGames])
@@ -864,6 +898,7 @@ function ProjectAssetLibraryPane({
         </div>
       </div>
       {error ? <div className="favorite-library-error">{error}</div> : null}
+      {refreshNotice && !error ? <div className="project-asset-refresh-notice">{refreshNotice}</div> : null}
       <div className="favorite-library-list favorite-library-tile-grid" onScroll={clearHover}>
         {loading ? (
           <div className="favorite-library-empty">正在加载项目资产库...</div>
@@ -876,9 +911,9 @@ function ProjectAssetLibraryPane({
             </div>
           ) : filtered.map((item) => {
             const projectNumber = Number(gameId)
-            const originalUrl = projectAssetLibraryApi.fileUrl(projectNumber, item.relativePath)
+            const originalUrl = projectAssetLibraryApi.fileUrl(projectNumber, item.relativePath, item.mtimeMs)
             // 列表小图和悬停预览都用 360P（短边 360），浏览大图用 1080P；插入画布 / 下载仍是原图
-            const thumbUrl = projectAssetLibraryApi.shortEdgeUrl(projectNumber, item.relativePath, 360)
+            const thumbUrl = projectAssetLibraryApi.shortEdgeUrl(projectNumber, item.relativePath, 360, item.mtimeMs)
             const previewUrl = thumbUrl
             const payload: ProjectAssetInsertPayload = {
               projectId: projectNumber,
@@ -930,9 +965,9 @@ function ProjectAssetLibraryPane({
                         name: item.name,
                         kind: item.mediaType === 'video' ? 'video' : 'image',
                         items: filtered.map((entry) => ({
-                          url: projectAssetLibraryApi.fileUrl(projectNumber, entry.relativePath),
-                          viewerUrl: entry.mediaType === 'video' ? undefined : projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 1080),
-                          thumbUrl: projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 360),
+                          url: projectAssetLibraryApi.fileUrl(projectNumber, entry.relativePath, entry.mtimeMs),
+                          viewerUrl: entry.mediaType === 'video' ? undefined : projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 1080, entry.mtimeMs),
+                          thumbUrl: projectAssetLibraryApi.shortEdgeUrl(projectNumber, entry.relativePath, 360, entry.mtimeMs),
                           name: entry.name,
                         })),
                       })
