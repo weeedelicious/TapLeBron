@@ -1,0 +1,27 @@
+{
+  "name": "infinite-canvas-video",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:workflow": "node --test tests/workflow-persistence.test.mjs",
+    "test:reference-flow": "node --test tests/hud-reference-context.test.mjs",
+    "test:export": "node --test tests/video-export.test.mjs",
+    "test:mask": "node --test tests/ui-mask.test.mjs tests/ui-mask-path-tools.test.mjs tests/ui-mask-keyframes.test.mjs tests/ui-mask-animation.test.mjs tests/ui-mask-appearance.test.mjs tests/ui-mask-geometry.test.mjs tests/ui-mask-selection.test.mjs tests/ui-mask-editor.test.mjs tests/ui-mask-seek-playback.test.mjs tests/ui-mask-api.test.mjs tests/ui-mask-controller.test.mjs tests/ui-mask-detector-config.test.mjs",
+    "test:mask-trained": ".hud-research\\ui-detect-venv\\Scripts\\python.exe tests/ui-mask-trained.test.py",
+    "test:mask-video": ".hud-research\\venv\\Scripts\\python.exe tests/ui-mask-core.test.py",
+    "test:mask-detection": ".hud-research\\venv\\Scripts\\python.exe tests/ui-mask-detect.test.py"
+  },
+  "devDependencies": {
+    "mp4box": "^0.5.2",
+    "vite": "^5.0.0",
+    "vite-plugin-singlefile": "^2.0.0"
+  },
+  "dependencies": {
+    "framegen": "^1.4.0",
+    "mp4-muxer": "^5.2.2"
+  }
+}

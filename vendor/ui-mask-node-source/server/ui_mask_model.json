@@ -1,0 +1,13 @@
+{
+  "version": "hud-v1-20261020",
+  "updatedAt": "2026-10-20",
+  "weights": ".hud-research/ui-detect-models/hud-detector-v1-best.pt",
+  "sha256": "06dffd283ecee6b993d98d858b4a2f4c6d95947b72428827c9c084f5bb61336d",
+  "runtime": ".hud-research/ui-detect-venv",
+  "imgsz": 1280,
+  "confidence": 0.15,
+  "candidateConfidence": 0.05,
+  "requiresManualReview": true,
+  "trainingStatus": "paused",
+  "selection": "Original 12-epoch HUD baseline. The later six-epoch fine-tune and diagnostic blends were rejected."
+}

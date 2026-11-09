@@ -1,0 +1,4 @@
+# CPU-only manual masking, basic proposals, and video export.
+numpy==1.26.4
+opencv-python==4.10.0.84
+imageio-ffmpeg==0.6.0

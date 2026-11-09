@@ -1,0 +1,24 @@
+{
+  "version": "hud-panel-a15-20261027",
+  "label": "赛事整板 a15",
+  "weights": "outputs/ui-mask-panel-a-20261027/webpage-a15.pt",
+  "sha256": "d66bc9a756de680ba07b341063b1361efa20b9b39570811a28fc99b003cf07e0",
+  "runtime": ".hud-research/ui-detect-venv",
+  "imgsz": 1280,
+  "confidence": 0.25,
+  "candidateConfidence": 0.15,
+  "requiresManualReview": true,
+  "selection": "Broadcast whole-panel detector. Node 辅助识别 option; default AI 辅助 remains hud-v1.",
+  "panels": [
+    {"name": "overview", "label": "赛事总览", "box": [0.0, 0.0, 0.2617, 0.0778]},
+    {"name": "compass", "label": "罗盘", "box": [0.2719, 0.0, 0.7016, 0.145]},
+    {"name": "minimap", "label": "小地图", "box": [0.8438, 0.0, 0.9945, 0.3264]},
+    {"name": "leaderboard", "label": "排行榜", "box": [0.8438, 0.3333, 1.0, 1.0]},
+    {"name": "team_status", "label": "队伍状态", "box": [0.0094, 0.7264, 0.1227, 0.9333]},
+    {"name": "team_resource", "label": "队伍资源", "box": [0.1219, 0.7667, 0.1961, 0.9333]},
+    {"name": "character", "label": "角色状态", "box": [0.3305, 0.675, 0.6695, 0.8153]},
+    {"name": "equipment", "label": "装备物品", "box": [0.3305, 0.8222, 0.6703, 0.9875]},
+    {"name": "pip", "label": "解说窗", "box": [0.6672, 0.7944, 0.8477, 0.9875]},
+    {"name": "bottom_bar", "label": "底部横条", "box": [0.0, 0.9333, 0.46, 1.0]}
+  ]
+}
