@@ -151,29 +151,28 @@ function listAtmosphereFiles(dirPath, projectLabel) {
         if (depth < 2) walk(full, depth + 1);
         continue;
       }
-      if (!entry.isFile() || mediaTypeOf(entry.name) !== 'image') continue;
+      if (!entry.isFile() || !mediaTypeOf(entry.name)) continue;
       const file = existingPath(full, false);
       if (!file) continue;
       found.push({
         baseName: path.parse(entry.name).name,
-        mediaType: 'image',
+        mediaType: mediaTypeOf(entry.name),
         filePath: file.filePath,
         mtimeMs: Number(file.stat.mtimeMs) || 0,
       });
     }
   };
   walk(root.filePath, 0);
-  if (!found.length) return [];
-  const cover = found.find((item) => item.baseName === '氛围图') || found[0];
-  return [{
-    name: label + '_氛围图',
+  // 氛围图指认逻辑：项目「影创美术/氛围图」文件夹里有什么拾取什么（图片和视频都要，含子文件夹），不再只挑一张封面
+  return found.map((item) => ({
+    name: item.baseName === '氛围图' ? label + '_氛围图' : label + '_氛围图_' + item.baseName,
     projectLabel: label,
     stage: 'atmosphere',
     assetType: '',
-    mediaType: cover.mediaType,
-    filePath: cover.filePath,
-    mtimeMs: cover.mtimeMs,
-  }];
+    mediaType: item.mediaType,
+    filePath: item.filePath,
+    mtimeMs: item.mtimeMs,
+  }));
 }
 
 function disambiguate(items) {

@@ -2,7 +2,7 @@
  "rules": {
   "2d": "CGTW 资产任务 Prodesign 环节 approved 框（不取 history）",
   "3d": "过往项目取表里 LookDev 路径；进行中项目（liveProjects）取 LookDev 环节 work 框最大版本号",
-  "atmosphere": "项目 影创美术/氛围图 文件夹"
+  "atmosphere": "项目「影创美术/氛围图」文件夹，里面有什么拾取什么（图片和视频，含子文件夹）"
  },
  "sources": [
   {
@@ -635,7 +635,7 @@
      "gameName": "",
      "d2": "X:\\projects2024\\XXD\\Asset\\Cha\\c083_Man\\Prodesign\\approved\\c083_Man_Prodesign_Final.png",
      "d3": "X:\\projects2024\\XXD\\Asset\\Cha\\c083_Man\\LookDev\\approved\\c083_Man_lookdev_Final.png",
-     "atmosphere": ""
+     "atmosphere": "X:\\projects2024\\XXD\\pv13\\00_Production_Guide\\04影创美术\\氛围图"
     },
     {
      "label": "",
