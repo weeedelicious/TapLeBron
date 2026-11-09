@@ -10,7 +10,15 @@ const aliasToModel = Object.entries(rules.models).reduce((acc, [model, rule]) =>
   return acc;
 }, {});
 
-const RETIRED_IMAGE_MODELS = {};
+// 2026-11-09 GPT image 2.5 下线：旧节点里的 2.5 自动按同款改用 2.6
+const RETIRED_IMAGE_MODELS = {
+  'gpt-image-2.5-flare': 'gpt-image-2.6-flare',
+  'openai/gpt-image-2.5-flare': 'gpt-image-2.6-flare',
+  'gpt image 2.5 flare': 'gpt-image-2.6-flare',
+  'gpt-image-2.5-sunburst': 'gpt-image-2.6-sunburst',
+  'openai/gpt-image-2.5-sunburst': 'gpt-image-2.6-sunburst',
+  'gpt image 2.5 sunburst': 'gpt-image-2.6-sunburst',
+};
 
 function normalizeImageModel(model) {
   const value = String(model || '').trim();

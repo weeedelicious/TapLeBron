@@ -14,16 +14,21 @@ function imageNode(model: string, options: { references?: number; resolution?: s
   } as unknown as CanvasNodeData
 }
 
-describe('Image 2.5 generation progress estimates', () => {
+// 2026-11-09 生产网关实测：Flare 文生图约 12s、1 张参考约 14s；Sunburst 文生图约 48s、1 张参考约 72s
+describe('Image 2.6 generation progress estimates', () => {
   it('uses production-calibrated estimates for text and image generation', () => {
-    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.5-flare')).estimatedMs).toBe(17_000)
-    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.5-sunburst')).estimatedMs).toBe(22_000)
-    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.5-sunburst', { references: 1 })).estimatedMs).toBe(36_000)
-    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.5-sunburst', {
+    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.6-flare')).estimatedMs).toBe(12_000)
+    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.6-sunburst')).estimatedMs).toBe(48_000)
+    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.6-sunburst', { references: 1 })).estimatedMs).toBe(72_000)
+    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.6-sunburst', {
       references: 1,
       resolution: '4K',
       count: 2,
-    })).estimatedMs).toBe(48_672)
+    })).estimatedMs).toBe(89_856)
+  })
+
+  it('old 2.5 nodes estimate as the matching 2.6 model', () => {
+    expect(estimateTaskFromNodeData(imageNode('gpt-image-2.5-flare')).estimatedMs).toBe(12_000)
   })
 
   it('does not derive a short ETA from the synthetic 6% visual head start', () => {

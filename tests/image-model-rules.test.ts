@@ -21,14 +21,14 @@ import {
 const openAIImageProvider = require('../server/providers/OpenAIImageProvider')
 
 describe('图片节点可选模型', () => {
-  it('下拉包含 Nano Pro / 2.1、GPT、Image 2.5 和 Seedream Pro / Lite', () => {
+  it('下拉包含 Nano Pro / 2.1、GPT、Image 2.6 和 Seedream Pro / Lite', () => {
     const models = listSelectableImageModels()
     expect(models.map((item) => item.value)).toEqual([
       'gemini-3-pro-image',
       'gemini-nano-banana-2.1',
       'gpt-image-2',
-      'gpt-image-2.5-flare',
-      'gpt-image-2.5-sunburst',
+      'gpt-image-2.6-flare',
+      'gpt-image-2.6-sunburst',
       'seedream-5-pro',
       'seedream-5-lite',
     ])
@@ -36,8 +36,8 @@ describe('图片节点可选模型', () => {
       'Nano-banana Pro',
       'Nano-banana 2.1',
       'GPT image 2.0',
-      'GPT image 2.5 Flare',
-      'GPT image 2.5 Sunburst',
+      'GPT image 2.6 Flare',
+      'GPT image 2.6 Sunburst',
       'Seedream 5 Pro',
       'Seedream 5 Lite',
     ])
@@ -58,16 +58,26 @@ describe('图片节点可选模型', () => {
   })
 })
 
-describe('Image 2.5 网关模型', () => {
+describe('Image 2.6 网关模型', () => {
   it('下拉与生成进度统一显示 GPT 名称', () => {
-    expect(getImageModelDisplayName('gpt-image-2.5-flare')).toBe('GPT image 2.5 Flare')
-    expect(getImageModelDisplayName('openai/gpt-image-2.5-sunburst')).toBe('GPT image 2.5 Sunburst')
+    expect(getImageModelDisplayName('gpt-image-2.6-flare')).toBe('GPT image 2.6 Flare')
+    expect(getImageModelDisplayName('openai/gpt-image-2.6-sunburst')).toBe('GPT image 2.6 Sunburst')
     expect(getImageModelDisplayName('seedance-2.5')).toBe('seedance-2.5')
   })
 
+  it('2.5 下线：旧节点按同款改用 2.6，但出过的图仍显示 2.5 的名字', () => {
+    expect(normalizeImageModelValue('gpt-image-2.5-flare')).toBe('gpt-image-2.6-flare')
+    expect(normalizeImageModelValue('openai/gpt-image-2.5-sunburst')).toBe('gpt-image-2.6-sunburst')
+    expect(openAIImageProvider.normalizeImageModel('gpt-image-2.5-flare')).toBe('gpt-image-2.6-flare')
+    expect(openAIImageProvider.providerModelForImage('gpt-image-2.5-sunburst')).toBe('openai/gpt-image-2.6-sunburst')
+    expect(listSelectableImageModels().some((item) => item.value.startsWith('gpt-image-2.5'))).toBe(false)
+    expect(getImageModelDisplayName('gpt-image-2.5-flare')).toBe('GPT image 2.5 Flare')
+    expect(getImageModelDisplayName('openai/gpt-image-2.5-sunburst')).toBe('GPT image 2.5 Sunburst')
+  })
+
   it.each([
-    ['gpt-image-2.5-flare', 'openai/gpt-image-2.5-flare'],
-    ['gpt-image-2.5-sunburst', 'openai/gpt-image-2.5-sunburst'],
+    ['gpt-image-2.6-flare', 'openai/gpt-image-2.6-flare'],
+    ['gpt-image-2.6-sunburst', 'openai/gpt-image-2.6-sunburst'],
   ])('%s 保留完整 wire model id', (model, providerModel) => {
     expect(normalizeImageModelValue(providerModel)).toBe(model)
     expect(openAIImageProvider.normalizeImageModel(providerModel)).toBe(model)
@@ -75,7 +85,7 @@ describe('Image 2.5 网关模型', () => {
     expect(openAIImageProvider.isGptImageModel(model)).toBe(true)
   })
 
-  it.each(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])('%s 沿用 GPT 图片能力', (model) => {
+  it.each(['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])('%s 沿用 GPT 图片能力', (model) => {
     expect(getImageResolutionOptions(model)).toEqual(['1K', '2K', '4K'])
     expect(getImageRatioOptions(model).map((item) => item.value)).toEqual(
       getImageRatioOptions('gpt-image-2').map((item) => item.value),
@@ -85,11 +95,33 @@ describe('Image 2.5 网关模型', () => {
     expect(validateImageCapability({
       model,
       prompt: '一只猫',
-      imageCount: 10,
+      imageCount: 16,
       ratio: '16:9',
       resolution: '4K',
       count: 4,
     })).toBe('')
+    expect(validateImageCapability({
+      model,
+      prompt: '一只猫',
+      imageCount: 17,
+      ratio: '16:9',
+      resolution: '1K',
+      count: 1,
+    })).not.toBe('')
+  })
+
+  // 2026-11-09 生产网关实测：两款都能出 3840x2160 / 2160x3840 / 2880x2880 / 3840x1920
+  it.each(['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])('%s 的 4K 是真 4K', (model) => {
+    expect(openAIImageProvider.imageSizeForModel(model, '16:9', '4K')).toBe('3840x2160')
+    expect(openAIImageProvider.imageSizeForModel(model, '9:16', '4K')).toBe('2160x3840')
+    expect(openAIImageProvider.imageSizeForModel(model, '1:1', '4K')).toBe('2880x2880')
+    expect(openAIImageProvider.imageSizeForModel(model, '2:1', '4K')).toBe('3840x1920')
+    expect(openAIImageProvider.imageSizeForModel(model, '16:9', '2K')).toBe('2048x1152')
+    expect(openAIImageProvider.imageSizeForModel(model, '1:1', '1K')).toBe('1024x1024')
+  })
+
+  it('GPT image 2.0 的 4K 尺寸不变', () => {
+    expect(openAIImageProvider.imageSizeForModel('gpt-image-2', '16:9', '4K')).toBe('2736x1536')
   })
 })
 
@@ -231,8 +263,8 @@ describe('没被这次改动带跑的模型', () => {
 describe('GPT Image moderation', () => {
   it.each([
     'gpt-image-2',
-    'gpt-image-2.5-flare',
-    'gpt-image-2.5-sunburst',
+    'gpt-image-2.6-flare',
+    'gpt-image-2.6-sunburst',
   ])('%s uses low moderation', (model) => {
     expect(openAIImageProvider.imageModerationForModel(model)).toBe('low')
   })

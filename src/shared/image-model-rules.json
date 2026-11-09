@@ -371,16 +371,16 @@
         "maxAspectRatio": 3
       }
     },
-    "gpt-image-2.5-flare": {
-      "label": "GPT image 2.5 Flare",
+    "gpt-image-2.6-flare": {
+      "label": "GPT image 2.6 Flare",
       "provider": "openai-compatible",
-      "providerModel": "openai/gpt-image-2.5-flare",
+      "providerModel": "openai/gpt-image-2.6-flare",
       "frontendSelectable": true,
       "aliases": [
-        "image2.5 flare",
-        "image 2.5 flare",
-        "gpt image 2.5 flare",
-        "openai/gpt-image-2.5-flare"
+        "image2.6 flare",
+        "image 2.6 flare",
+        "gpt image 2.6 flare",
+        "openai/gpt-image-2.6-flare"
       ],
       "modes": [
         "text2image",
@@ -427,42 +427,42 @@
         4
       ],
       "maxGenerationCount": 10,
-      "maxReferenceImages": 10,
+      "maxReferenceImages": 16,
       "progressEstimate": {
-        "text2imageSeconds": 17,
-        "image2imageSeconds": 34,
+        "text2imageSeconds": 12,
+        "image2imageSeconds": 14,
         "resolutionMultipliers": {
           "1K": 1,
-          "2K": 1.15,
-          "4K": 1.3
+          "2K": 1.3,
+          "4K": 1.7
         },
         "extraOutputMultiplier": 0.04,
-        "extraReferenceMultiplier": 0.03
+        "extraReferenceMultiplier": 0.1
       },
       "sizeStrategy": "computed",
       "computedSize": {
         "targetAreas": {
           "1K": 1048576,
           "2K": 2359296,
-          "4K": 4194304
+          "4K": 8294400
         },
         "fallback": "1024x1024",
         "step": 16,
         "maxWidth": 3840,
-        "maxHeight": 2160,
+        "maxHeight": 3840,
         "maxAspectRatio": 3
       }
     },
-    "gpt-image-2.5-sunburst": {
-      "label": "GPT image 2.5 Sunburst",
+    "gpt-image-2.6-sunburst": {
+      "label": "GPT image 2.6 Sunburst",
       "provider": "openai-compatible",
-      "providerModel": "openai/gpt-image-2.5-sunburst",
+      "providerModel": "openai/gpt-image-2.6-sunburst",
       "frontendSelectable": true,
       "aliases": [
-        "image2.5 sunburst",
-        "image 2.5 sunburst",
-        "gpt image 2.5 sunburst",
-        "openai/gpt-image-2.5-sunburst"
+        "image2.6 sunburst",
+        "image 2.6 sunburst",
+        "gpt image 2.6 sunburst",
+        "openai/gpt-image-2.6-sunburst"
       ],
       "modes": [
         "text2image",
@@ -509,14 +509,14 @@
         4
       ],
       "maxGenerationCount": 10,
-      "maxReferenceImages": 10,
+      "maxReferenceImages": 16,
       "progressEstimate": {
-        "text2imageSeconds": 22,
-        "image2imageSeconds": 36,
+        "text2imageSeconds": 48,
+        "image2imageSeconds": 72,
         "resolutionMultipliers": {
           "1K": 1,
-          "2K": 1.15,
-          "4K": 1.3
+          "2K": 1.1,
+          "4K": 1.2
         },
         "extraOutputMultiplier": 0.04,
         "extraReferenceMultiplier": 0.03
@@ -526,12 +526,12 @@
         "targetAreas": {
           "1K": 1048576,
           "2K": 2359296,
-          "4K": 4194304
+          "4K": 8294400
         },
         "fallback": "1024x1024",
         "step": 16,
         "maxWidth": 3840,
-        "maxHeight": 2160,
+        "maxHeight": 3840,
         "maxAspectRatio": 3
       }
     },

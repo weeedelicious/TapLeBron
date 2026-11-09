@@ -76,8 +76,27 @@ export const IMAGE_DEFAULTS = rules.defaults
 export const IMAGE_RATIO_OPTIONS = rules.ratioOptions
 export const IMAGE_RESOLUTION_OPTIONS = rules.resolutionOptions
 
-/** 下线模型的改名映射。Seedream 5 Lite 已重新上线，目前没有需要改名的模型。 */
-const RETIRED_IMAGE_MODELS: Record<string, string> = {}
+/** 下线模型的改名映射。2026-11-09 GPT image 2.5 下线：旧节点里的 2.5 自动按同款改用 2.6。 */
+const RETIRED_IMAGE_MODELS: Record<string, string> = {
+  'gpt-image-2.5-flare': 'gpt-image-2.6-flare',
+  'openai/gpt-image-2.5-flare': 'gpt-image-2.6-flare',
+  'gpt image 2.5 flare': 'gpt-image-2.6-flare',
+  'gpt-image-2.5-sunburst': 'gpt-image-2.6-sunburst',
+  'openai/gpt-image-2.5-sunburst': 'gpt-image-2.6-sunburst',
+  'gpt image 2.5 sunburst': 'gpt-image-2.6-sunburst',
+}
+
+/** 下线模型出过的图，信息栏照旧显示当时的模型名，不跟着映射改成新模型。 */
+const RETIRED_IMAGE_MODEL_LABELS: Record<string, string> = {
+  'gpt-image-2.5-flare': 'GPT image 2.5 Flare',
+  'openai/gpt-image-2.5-flare': 'GPT image 2.5 Flare',
+  'gpt-image-2.5-sunburst': 'GPT image 2.5 Sunburst',
+  'openai/gpt-image-2.5-sunburst': 'GPT image 2.5 Sunburst',
+}
+
+export function retiredImageModelLabel(model?: string): string {
+  return RETIRED_IMAGE_MODEL_LABELS[String(model || '').trim().toLowerCase()] || ''
+}
 
 export function normalizeImageModelValue(model?: string): string {
   const value = String(model || '').trim()
@@ -111,6 +130,8 @@ export function listSelectableImageModels() {
 export function getImageModelDisplayName(model?: string): string {
   const value = String(model || '').trim()
   if (!value) return ''
+  const retired = retiredImageModelLabel(value)
+  if (retired) return retired
   const canonical = aliasToModel[value.toLowerCase()]
   if (!canonical) return value
   const rule = getImageModelRule(canonical)

@@ -37,6 +37,7 @@ import {
   normalizeImageGenerationCount,
   normalizeImageRatioValue,
   normalizeImageResolutionValue,
+  retiredImageModelLabel,
 } from '@/lib/imageRules'
 import { inferMultiCameraGridRatio, makeMultiCameraGridParams } from '@/lib/multiCameraGrid'
 import { textPromptFromRefs } from '@/lib/textPrompt'
@@ -148,12 +149,15 @@ function galleryItemsFromNodeData(data: CanvasNodeData): GalleryItem[] {
   return sortable.map((item, index) => ({
     url: item.url,
     order: index + 1,
-    model: normalizeImageModel(generationMeta[item.url]?.model || fallbackModel),
+    // 不在这里映射：下线模型（如 GPT image 2.5）出的图要照旧显示当时的模型名
+    model: String(generationMeta[item.url]?.model || fallbackModel),
     resolution: String(generationMeta[item.url]?.resolution || fallbackResolution).toUpperCase(),
   }))
 }
 
 function galleryModelLabel(model: string) {
+  const retired = retiredImageModelLabel(model)
+  if (retired) return retired
   const normalized = normalizeImageModel(model)
   return IMAGE_MODELS.find(option => option.value === normalized)?.label || normalized
 }
