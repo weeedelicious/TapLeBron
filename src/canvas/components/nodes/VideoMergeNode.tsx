@@ -115,7 +115,8 @@ export function VideoMergeNode({ id, data, selected }: Props) {
     setGenError(null)
     setIsSubmitting(true)
     try {
-      const res = await generateApi.video(data.projectUuid, id, {
+      // 合成走专用的 ffmpeg 渲染接口；/generate/video 是视频模型生成，服务端会直接拒绝 video_merge
+      const res = await generateApi.videoMerge(data.projectUuid, id, {
         ...(params as unknown as Record<string, unknown>),
         action: 'video_merge',
         mergeClips: clips,
