@@ -5,7 +5,17 @@ import { pathCoordinates } from './UiMaskPathGeometry.js';
 import { insertPathPoint } from './MaskBezierGeometry.js';
 
 export class UiMaskPathEditor {
-  constructor(editor) { this.e=editor; this.index=-1; this.showHandles=true; this.addMode=false; }
+  constructor(editor) { this.e=editor; this.index=-1; this.showHandles=true; this.addMode=false; this.hoverEdge=-1; this.dragEdge=-1; }
+  // 每条边（三次贝塞尔）的中点，路径坐标；闭合路径最后一条边连回第一个点
+  edgeMidpoints(path) {
+    const count=path.length>=3?path.length:path.length-1,out=[];
+    for(let i=0;i<count;i++){
+      const v=path[i],n=path[(i+1)%path.length];
+      const a=v.point,b=a.map((x,j)=>x+v.out[j]),d=n.point,c=d.map((x,j)=>x+n.in[j]);
+      out.push(a.map((_,j)=>(a[j]+3*b[j]+3*c[j]+d[j])/8));
+    }
+    return out;
+  }
   active() {
     const e=this.e,t=e.track();
     if(this.trackId!==t?.id){this.trackId=t?.id;this.index=-1;}
@@ -27,6 +37,11 @@ export class UiMaskPathEditor {
   // 轮廓边缘命中：返回边的起点下标（这条边连着 i 和 i+1 两个锚点），没命中返回 -1
   edgeHit(screen, path) {
     const {to}=this.coordinates(this.e.track()),r=this.e.canvas.getBoundingClientRect();
+    if(path.length>=2){
+      const mids=this.edgeMidpoints(path).map(m=>to(m));
+      const near=mids.findIndex(q=>Math.hypot((q[0]-screen[0])*r.width,(q[1]-screen[1])*r.height)<12);
+      if(near>=0)return near;
+    }
     const result=insertPathPoint(path,[screen[0]*r.width,screen[1]*r.height],
       p=>{const q=to(p);return [q[0]*r.width,q[1]*r.height];},8);
     return result?result.index-1:-1;
@@ -43,6 +58,12 @@ export class UiMaskPathEditor {
     if(!this.active())return;
     const e=this.e,t=e.track(),path=pathAt(t,e.frame),{to}=this.coordinates(t);
     const w=e.canvas.width,h=e.canvas.height,scale=w/Math.max(1,e.canvas.getBoundingClientRect().width);
+    if(path.length>=2)for(const [i,m] of this.edgeMidpoints(path).entries()){
+      const q=to(m),hot=i===this.hoverEdge||i===this.dragEdge,r=(hot?7:5)*scale;
+      ctx.beginPath();ctx.arc(q[0]*w,q[1]*h,r,0,Math.PI*2);
+      ctx.fillStyle=hot?'#ffe095':'rgba(16,27,41,.92)';ctx.fill();
+      ctx.lineWidth=(hot?2:1.5)*scale;ctx.strokeStyle=hot?'#fff3c4':'#8ce1cd';ctx.stroke();
+    }
     for(const [i,v] of path.entries()){
       const p=to(v.point);
       if(this.showHandles&&i===this.index)for(const side of ['in','out']){
@@ -129,9 +150,10 @@ export class UiMaskPathEditor {
   // 鼠标停在选中遮罩的边上时换光标：可拖动整条边显示移动，添加锚点模式显示加号
   hover(event) {
     const e=this.e;
-    if(event.buttons||!this.active()||e.video.seeking){if(this.edgeCursor){this.edgeCursor=false;e.renderTool();}return;}
+    if(event.buttons||!this.active()||e.video.seeking){if(this.hoverEdge>=0&&!event.buttons){this.hoverEdge=-1;e.draw();}if(this.edgeCursor){this.edgeCursor=false;e.renderTool();}return;}
     const t=e.track(),path=pathAt(t,e.frame),screen=e.point(event,false);
-    const onEdge=!this.hit(screen,path)&&this.edgeHit(screen,path)>=0;
+    const edge=this.hit(screen,path)?-1:this.edgeHit(screen,path),onEdge=edge>=0;
+    if(edge!==this.hoverEdge){this.hoverEdge=edge;e.draw();}
     if(onEdge){this.edgeCursor=true;e.canvas.style.cursor=this.addMode?'copy':'move';}
     else if(this.edgeCursor){this.edgeCursor=false;e.renderTool();}
   }
@@ -147,6 +169,7 @@ export class UiMaskPathEditor {
     const before=e.snapshot(),{from}=this.coordinates(t),local=from(screen),ends=[i,(i+1)%original.length];
     const bounded=n=>Math.max(-PATH_COORDINATE_LIMIT,Math.min(PATH_COORDINATE_LIMIT,n));
     let moved=false;
+    this.dragEdge=i;
     e.canvas.style.cursor='move';
     const update=ev=>{
       if(!moved&&Math.hypot(ev.clientX-event.clientX,ev.clientY-event.clientY)<3)return;
@@ -155,8 +178,8 @@ export class UiMaskPathEditor {
       setAppearanceValue(e.track(),'shape',e.frame,path);e.draw();
     };
     startEditorGesture(event,{element:e.canvas,scope:e.dialog,move:update,
-      end:ev=>{update(ev);if(moved)e.commit(before);e.renderTool();},
-      cancel:()=>{e.node.document.tracks=before;e.render();}});
+      end:ev=>{update(ev);this.dragEdge=-1;if(moved)e.commit(before);e.renderTool();e.draw();},
+      cancel:()=>{this.dragEdge=-1;e.node.document.tracks=before;e.render();}});
     return true;
   }
 }
