@@ -2511,8 +2511,7 @@ export function VideoNode({ id, data, selected }: Props) {
               url: [],
               action: 'ui_mask',
               sourceKind: 'ui_mask',
-              contentWidth: 520,
-              contentHeight: 380,
+              // 不写死尺寸：遮罩节点按源视频比例自己定大小，跟视频节点一致
               // 节点创建后自动打开一次工作台，之后只在双击 / 点按钮时打开
               params: { videoList: [sourceRef], openOnCreate: true } as unknown as Record<string, unknown>,
             } as Partial<CanvasNodeData>)

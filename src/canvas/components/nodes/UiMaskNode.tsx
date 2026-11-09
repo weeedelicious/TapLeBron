@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { addEdge } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import type { CanvasNodeData } from '@/lib/types'
 import { NodeShell } from '@/components/nodes/NodeShell'
 import { useCanvasStore } from '@/store/canvasStore'
+import { videoVariantsForUrl } from '@/lib/mediaPreview'
 
 declare global {
   interface Window {
@@ -56,13 +57,27 @@ function placeOutput(nodeId: string, output: UiMaskOutput) {
   })
 }
 
-/** 节点尺寸跟图片 / 视频节点一致：520 宽，预览按 16:9 */
+/** 节点尺寸跟视频 / 图片节点同一套规则：按视频比例放进 520 × 400 的框里，最窄 220 */
 export const UI_MASK_NODE_WIDTH = 520
-export const UI_MASK_NODE_HEIGHT = 380
+export const UI_MASK_NODE_HEIGHT = 400
+const UI_MASK_NODE_MIN_WIDTH = 220
+
+function fitFrameToAspect(w: number, h: number, maxWidth: number, maxHeight: number, minWidth: number) {
+  const safeW = Math.max(1, w)
+  const safeH = Math.max(1, h)
+  let width = maxWidth
+  let height = width * (safeH / safeW)
+  if (height > maxHeight) {
+    height = maxHeight
+    width = height * (safeW / safeH)
+  }
+  width = Math.max(minWidth, width)
+  return { width: Math.round(width), height: Math.round(height) }
+}
 
 /**
- * UI 遮罩节点：一张和其它节点同规格、可拖动的卡片。
- * 双击卡片或点按钮打开全屏的遮罩创作工作台（public/ui-mask-bridge.js 注入的 window.ShotflowUiMask）。
+ * UI 遮罩节点：外观和尺寸跟视频节点一样——画面铺满节点，比例跟着源视频走。
+ * 双击节点或点画面上的按钮打开全屏的遮罩创作工作台（public/ui-mask-bridge.js 注入的 window.ShotflowUiMask）。
  * 选中节点不再自动打开——节点要能拖，拖动必然会选中；只有刚从视频节点创建出来时自动打开一次。
  */
 export function UiMaskNode({ id, data, selected }: NodeProps) {
@@ -71,6 +86,18 @@ export function UiMaskNode({ id, data, selected }: NodeProps) {
   const source = (params.videoList || [])[0] || null
   const sourceUrl = source?.url || ''
   const openedOnCreate = useRef(false)
+  const [hovered, setHovered] = useState(false)
+  // 源视频节点上记着这条视频的宽高和封面图（新视频才有）；没有就等 <video> 读到元数据
+  const sourceVariants = useCanvasStore((state) => {
+    if (!sourceUrl) return null
+    const sourceNode = state.nodes.find((node) => node.id === source?.nodeId || node.data.nodeKey === source?.nodeId)
+    return sourceNode ? videoVariantsForUrl(sourceNode.data, sourceUrl) : null
+  })
+  const [metaSize, setMetaSize] = useState<{ w: number; h: number } | null>(null)
+  const aspectW = Number(sourceVariants?.width) || metaSize?.w || 16
+  const aspectH = Number(sourceVariants?.height) || metaSize?.h || 9
+  const frame = fitFrameToAspect(aspectW, aspectH, UI_MASK_NODE_WIDTH, UI_MASK_NODE_HEIGHT, UI_MASK_NODE_MIN_WIDTH)
+  const posterUrl = String(sourceVariants?.posterUrl || '')
 
   const openWorkspace = () => {
     if (!sourceUrl) return
@@ -102,69 +129,93 @@ export function UiMaskNode({ id, data, selected }: NodeProps) {
   }, [params.openOnCreate, sourceUrl, id])
 
   return (
-    <NodeShell nodeKey={id} data={data as CanvasNodeData & { nodeKey: string }} selected={selected} minWidth={UI_MASK_NODE_WIDTH} minHeight={300}>
+    <NodeShell
+      nodeKey={id}
+      data={data as CanvasNodeData & { nodeKey: string }}
+      selected={selected}
+      minWidth={frame.width}
+      maxWidth={frame.width}
+      minHeight={frame.height}
+      bodyStyle={sourceUrl ? { background: 'transparent', overflow: 'visible' } : undefined}
+    >
       <div
         onDoubleClick={(event) => {
           event.stopPropagation()
           openWorkspace()
         }}
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, height: '100%', boxSizing: 'border-box' }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          position: 'relative',
+          width: frame.width,
+          height: frame.height,
+          borderRadius: 'inherit',
+          overflow: 'hidden',
+          background: '#0b1118',
+        }}
       >
-        <div
-          style={{
-            position: 'relative',
-            width: '100%',
-            aspectRatio: '16 / 9',
-            borderRadius: 10,
-            overflow: 'hidden',
-            background: '#0b1118',
-            border: '1px solid rgba(255,255,255,0.06)',
-          }}
-        >
-          {sourceUrl ? (
+        {sourceUrl ? (
+          posterUrl ? (
+            <img
+              src={posterUrl}
+              alt=""
+              draggable={false}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
+            />
+          ) : (
             <video
               src={`${sourceUrl}#t=0.1`}
               muted
               playsInline
               preload="metadata"
               draggable={false}
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget
+                if (video.videoWidth && video.videoHeight) setMetaSize({ w: video.videoWidth, h: video.videoHeight })
+              }}
               // 预览只看首帧；不吃指针事件，拖动落到节点本身
-              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
             />
-          ) : (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e8b478', fontSize: 13 }}>
-              先把视频连到这个节点
-            </div>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ flex: 1, minWidth: 0, color: sourceUrl ? '#9eb1c4' : '#e8b478', fontSize: 12 }}>
-            {sourceUrl ? '已连接视频，双击卡片或点右边按钮打开工作台' : '连接视频后可以手画遮罩或 AI 辅助识别'}
-          </span>
+          )
+        ) : (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, textAlign: 'center', color: '#e8b478', fontSize: 13 }}>
+            先把视频连到这个节点
+          </div>
+        )}
+        {sourceUrl ? (
           <button
             type="button"
             className="nodrag nopan"
-            disabled={!sourceUrl}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
               openWorkspace()
             }}
             style={{
-              flexShrink: 0,
-              height: 32,
-              padding: '0 14px',
-              borderRadius: 8,
-              border: '1px solid #3b6d66',
-              background: sourceUrl ? '#1d3b37' : '#1a2430',
-              color: sourceUrl ? '#dff5ef' : '#6f8193',
-              fontSize: 13,
-              cursor: sourceUrl ? 'pointer' : 'not-allowed',
+              position: 'absolute',
+              left: '50%',
+              bottom: 14,
+              transform: 'translateX(-50%)',
+              padding: '9px 20px',
+              border: 0,
+              borderRadius: 999,
+              background: 'rgba(255,255,255,0.94)',
+              color: '#1c1c1c',
+              fontSize: 14,
+              fontWeight: 650,
+              letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 10px 28px rgba(0,0,0,0.28)',
+              cursor: 'pointer',
+              // 平时只露画面，鼠标移上来或选中时才出按钮，跟视频节点一样干净
+              opacity: hovered || selected ? 1 : 0,
+              pointerEvents: hovered || selected ? 'auto' : 'none',
+              transition: 'opacity 0.15s ease',
             }}
           >
             打开遮罩工作台
           </button>
-        </div>
+        ) : null}
       </div>
     </NodeShell>
   )
