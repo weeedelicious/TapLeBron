@@ -250,26 +250,34 @@ export class UiMaskEditor {
   scaleHandleHit(ev){
     const t=this.track();if(this.tool!=='select'||this.selectedIds.size!==1||!t||!activeAt(t,this.frame))return null;
     const handles=this.handles(t);if(!handles)return null;const q=this.point(ev,false),r=this.canvas.getBoundingClientRect();
-    return Math.hypot((q[0]-handles.scale[0])*r.width,(q[1]-handles.scale[1])*r.height)<12?{t,handles}:null;
+    const index=handles.scales.findIndex(c=>Math.hypot((q[0]-c[0])*r.width,(q[1]-c[1])*r.height)<12);
+    return index>=0?{t,handles,index}:null;
   }
   scaleHover(ev){
-    if(ev.buttons||this.scaling)return;const hot=!!this.scaleHandleHit(ev);
-    if(hot!==!!this.scaleHot){this.scaleHot=hot;this.draw();}
-    if(hot)this.canvas.style.cursor='nwse-resize';
+    if(ev.buttons||this.scaling)return;const hit=this.scaleHandleHit(ev),hot=hit?hit.index:-1;
+    if(hot!==(this.scaleHot??-1)){this.scaleHot=hot;this.draw();}
+    // 左上 / 右下用 ↖↘，右上 / 左下用 ↗↙
+    if(hit)this.canvas.style.cursor=hit.index%2===0?'nwse-resize':'nesw-resize';
   }
-  // 等比缩放：按住右下角外的方块拖，以遮罩中心为基准整体放大缩小，形状和旋转不变；不出画面
+  // 等比缩放：按住某个角外的方块拖，对角那个角不动，靠近这个角的两条边一起按比例放大缩小；
+  // 形状和旋转不变，不出画面
   scaleGesture(e){
-    const hit=this.scaleHandleHit(e);if(!hit)return false;const {t}=hit;
+    const hit=this.scaleHandleHit(e);if(!hit)return false;const {t,index,handles}=hit;
     if(!this.canTransform(t)||this.video.seeking||this.video.readyState<2)return true;
     this.canvas.focus({preventScroll:true});this.video.pause();this.keyFocus=false;
     const before=this.snapshot(),frame=this.frame,pose=poseAt(t,frame),b=boxAt(t,frame),W=this.canvas.width,H=this.canvas.height;
-    const cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2,hw=(b[2]-b[0])/2,hh=(b[3]-b[1])/2,p=this.point(e,false);
-    const dist=q=>Math.hypot((q[0]-cx)*W,(q[1]-cy)*H),start=Math.max(1,dist(p));
-    const maxScale=Math.min(cx/hw,(1-cx)/hw,cy/hh,(1-cy)/hh),minScale=Math.max(4/(hw*2*W),4/(hh*2*H));
-    let moved=false;this.scaling=true;this.draw();
+    // 像素坐标里算：固定点 = 对角；拖动点在原对角线上的投影决定缩放比例（旋转过的遮罩也成立）
+    const hw=(b[2]-b[0])/2,hh=(b[3]-b[1])/2,px=v=>[v[0]*W,v[1]*H];
+    const anchor=px(handles.corners[(index+2)%4]),corner=px(handles.corners[index]),diag=[corner[0]-anchor[0],corner[1]-anchor[1]],diagLen2=Math.max(1,diag[0]**2+diag[1]**2);
+    const minScale=Math.max(4/(hw*2*W),4/(hh*2*H));
+    const boxFor=k=>{const c=[anchor[0]+diag[0]*k/2,anchor[1]+diag[1]*k/2];return [c[0]/W-hw*k,c[1]/H-hh*k,c[0]/W+hw*k,c[1]/H+hh*k];};
+    const inside=box=>box[0]>=0&&box[1]>=0&&box[2]<=1&&box[3]<=1;
+    let moved=false;this.scaling=true;this.scalingIndex=index;this.draw();
     const update=ev=>{if(Math.hypot(ev.clientX-e.clientX,ev.clientY-e.clientY)>3)moved=true;if(!moved)return;
-      const k=Math.max(minScale,Math.min(maxScale,dist(this.point(ev,false))/start));
-      const box=[cx-hw*k,cy-hh*k,cx+hw*k,cy+hh*k].map(v=>Math.max(0,Math.min(1,v)));
+      const q=px(this.point(ev,false));let k=Math.max(minScale,((q[0]-anchor[0])*diag[0]+(q[1]-anchor[1])*diag[1])/diagLen2);
+      // 碰到画面边缘就停：在 [最小, 想要] 之间二分出不出画面的最大比例
+      if(!inside(boxFor(k))){let lo=Math.min(minScale,1),hi=k;for(let i=0;i<24;i++){const m=(lo+hi)/2;if(inside(boxFor(m)))lo=m;else hi=m;}k=lo;}
+      const box=boxFor(k).map(v=>Math.max(0,Math.min(1,v)));
       const fresh=structuredClone(before.find(row=>row.id===t.id));if(fresh.kind==='dynamic')ensureTrackChannels(fresh);setTrackPose(fresh,frame,{box,angle:pose.angle});
       this.node.document.tracks[this.node.document.tracks.findIndex(row=>row.id===t.id)]=fresh;this.selectedKey=frame;this.property='width';this.draw();};
     startEditorGesture(e,{element:this.canvas,scope:this.dialog,move:update,end:ev=>{update(ev);this.scaling=false;if(moved){this.commit(before);this.status('已等比缩放 · Ctrl+Z 撤销');}this.render();},cancel:()=>{this.scaling=false;this.node.document.tracks=before;this.render();}});
@@ -465,10 +473,10 @@ export class UiMaskEditor {
     const proxy={...t,polygon:undefined,appearance:undefined,staticAppearance:undefined},corners=trackPolygon(proxy,this.frame,this.node.document.source);
     const midpoint=[(corners[0][0]+corners[1][0])/2,(corners[0][1]+corners[1][1])/2],a=poseAt(t,this.frame).angle*Math.PI/180;
     const rect=this.canvas.getBoundingClientRect();
-    // 等比缩放手柄：右下角往外沿对角线 22px（避开锚点和边的命中范围）
-    const center=[(corners[0][0]+corners[2][0])/2,(corners[0][1]+corners[2][1])/2],dx=(corners[2][0]-center[0])*rect.width,dy=(corners[2][1]-center[1])*rect.height,len=Math.max(1,Math.hypot(dx,dy));
-    const scale=[corners[2][0]+dx/len*22/rect.width,corners[2][1]+dy/len*22/rect.height];
-    return {corners,midpoint,center,scale,rotation:[midpoint[0]+Math.sin(a)*24/rect.width,midpoint[1]-Math.cos(a)*24/rect.height]};
+    // 等比缩放手柄：四个角各一个，从角往外沿对角线 22px（避开锚点和边的命中范围）
+    const center=[(corners[0][0]+corners[2][0])/2,(corners[0][1]+corners[2][1])/2];
+    const scales=corners.map(c=>{const dx=(c[0]-center[0])*rect.width,dy=(c[1]-center[1])*rect.height,len=Math.max(1,Math.hypot(dx,dy));return [c[0]+dx/len*22/rect.width,c[1]+dy/len*22/rect.height];});
+    return {corners,midpoint,center,scales,rotation:[midpoint[0]+Math.sin(a)*24/rect.width,midpoint[1]-Math.cos(a)*24/rect.height]};
   }
   renderRange(){
     const t=this.track(),r=t?.ranges[Number(this.field('range').value)];
@@ -584,7 +592,7 @@ export class UiMaskEditor {
       if(t.maskOperation==='erase'&&t.enabled)ctx.strokeStyle='#ffb469';
       const points=trackPolygon(t,this.frame,this.node.document.source);ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0]*w,p[1]*h):ctx.moveTo(p[0]*w,p[1]*h));ctx.closePath();ctx.stroke();
       if(this.selectedIds.has(t.id)){ctx.font=`${22*scale}px system-ui`;const label=maskDisplayId(t),lx=Math.max(0,b[0]*w),ly=Math.max(28*scale,b[1]*h-6*scale);ctx.fillStyle='#172c3e';ctx.fillRect(lx,ly-24*scale,ctx.measureText(label).width+10*scale,30*scale);ctx.fillStyle='#bbf7e5';ctx.fillText(label,lx+5*scale,ly);}
-      if(this.selectedIds.size===1&&t.id===this.selected&&!['draw','path','pen','merge'].includes(this.tool)){const handles=this.handles(t);ctx.fillStyle='#f0fff9';ctx.strokeStyle='#8ce1cd';ctx.lineWidth=scale;if(!this.pathEditor?.active())for(const corner of handles.corners)ctx.fillRect(corner[0]*w-4*scale,corner[1]*h-4*scale,8*scale,8*scale);ctx.beginPath();ctx.moveTo(handles.midpoint[0]*w,handles.midpoint[1]*h);ctx.lineTo(handles.rotation[0]*w,handles.rotation[1]*h);ctx.stroke();ctx.beginPath();ctx.arc(handles.rotation[0]*w,handles.rotation[1]*h,5*scale,0,Math.PI*2);ctx.fill();if(this.tool==='select'){const hot=this.scaleHot||this.scaling,sx=handles.scale[0]*w,sy=handles.scale[1]*h,r=(hot?9:7)*scale;ctx.fillStyle=hot?'#ffe095':'#172c3e';ctx.strokeStyle=hot?'#fff3c4':'#8ce1cd';ctx.lineWidth=1.5*scale;ctx.fillRect(sx-r,sy-r,r*2,r*2);ctx.strokeRect(sx-r,sy-r,r*2,r*2);ctx.strokeStyle=hot?'#172c3e':'#bbf7e5';ctx.beginPath();ctx.moveTo(sx-r*.55,sy-r*.55);ctx.lineTo(sx+r*.55,sy+r*.55);ctx.moveTo(sx+r*.55,sy+r*.05);ctx.lineTo(sx+r*.55,sy+r*.55);ctx.lineTo(sx+r*.05,sy+r*.55);ctx.moveTo(sx-r*.55,sy-r*.05);ctx.lineTo(sx-r*.55,sy-r*.55);ctx.lineTo(sx-r*.05,sy-r*.55);ctx.stroke();}}
+      if(this.selectedIds.size===1&&t.id===this.selected&&!['draw','path','pen','merge'].includes(this.tool)){const handles=this.handles(t);ctx.fillStyle='#f0fff9';ctx.strokeStyle='#8ce1cd';ctx.lineWidth=scale;if(!this.pathEditor?.active())for(const corner of handles.corners)ctx.fillRect(corner[0]*w-4*scale,corner[1]*h-4*scale,8*scale,8*scale);ctx.beginPath();ctx.moveTo(handles.midpoint[0]*w,handles.midpoint[1]*h);ctx.lineTo(handles.rotation[0]*w,handles.rotation[1]*h);ctx.stroke();ctx.beginPath();ctx.arc(handles.rotation[0]*w,handles.rotation[1]*h,5*scale,0,Math.PI*2);ctx.fill();if(this.tool==='select')for(const [si,sp] of handles.scales.entries()){const hot=si===(this.scaling?this.scalingIndex:this.scaleHot),sx=sp[0]*w,sy=sp[1]*h,r=(hot?9:7)*scale,flip=si%2?-1:1;ctx.fillStyle=hot?'#ffe095':'#172c3e';ctx.strokeStyle=hot?'#fff3c4':'#8ce1cd';ctx.lineWidth=1.5*scale;ctx.fillRect(sx-r,sy-r,r*2,r*2);ctx.strokeRect(sx-r,sy-r,r*2,r*2);ctx.strokeStyle=hot?'#172c3e':'#bbf7e5';ctx.beginPath();ctx.moveTo(sx-r*.55*flip,sy-r*.55);ctx.lineTo(sx+r*.55*flip,sy+r*.55);ctx.moveTo(sx+r*.55*flip,sy+r*.05);ctx.lineTo(sx+r*.55*flip,sy+r*.55);ctx.lineTo(sx+r*.05*flip,sy+r*.55);ctx.moveTo(sx-r*.55*flip,sy-r*.05);ctx.lineTo(sx-r*.55*flip,sy-r*.55);ctx.lineTo(sx-r*.05*flip,sy-r*.55);ctx.stroke();}}
     }
     if(this.pending){const b=this.pending;ctx.fillStyle='#69d5b938';ctx.fillRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.strokeStyle='#97ffe4';ctx.lineWidth=2*scale;ctx.strokeRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);}
     if(this.marqueeBox){const b=this.marqueeBox;ctx.fillStyle='#75dcca20';ctx.fillRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.strokeStyle='#aaf7e1';ctx.lineWidth=scale;ctx.setLineDash([5*scale,3*scale]);ctx.strokeRect(b[0]*w,b[1]*h,(b[2]-b[0])*w,(b[3]-b[1])*h);ctx.setLineDash([]);}
