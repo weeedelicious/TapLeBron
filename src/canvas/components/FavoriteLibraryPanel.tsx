@@ -674,6 +674,7 @@ function placeProjectAssetHover(rect: DOMRect) {
 
 const PROJECT_ASSET_STAGES = [
   { id: 'all', label: '全部' },
+  { id: 'game', label: '游戏美术' },
   { id: '2d', label: '2D美术' },
   { id: '3d', label: '3D美术' },
   { id: 'atmosphere', label: '氛围图' },

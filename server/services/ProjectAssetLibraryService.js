@@ -48,6 +48,7 @@ function currentHeroAssets() {
 }
 // 资产清单以各游戏的飞书「shotflow资产库」表为准（project-asset-sheet.json 的 sources，一个游戏一份），每行一个角色 / 场景：
 //  - 2D美术：CGTW 资产任务 Prodesign 环节 approved 框（不取 history）
+//  - 游戏美术：CGTW 资产任务 Predesign 环节 approved 框（不取 history）
 //  - 3D美术：过往项目直接用表里的 LookDev 路径；进行中项目（liveProjects）取 LookDev 环节 work 框最大版本号
 //  - 氛围图：项目「影创美术/氛围图」文件夹
 // 表里写的文件不在了，就按同一规则到对应框里现找。文件改了不用重启：每次重建目录都会按 mtime 重读。
@@ -256,6 +257,11 @@ function pick3dFile(row, live) {
   return sheetFile(row.d3) || latestInBox(base + '\\approved') || latestInBox(base + '\\work');
 }
 
+// 游戏美术：Predesign/approved 框里的定稿（每个资产目前一张，有多张取最新）
+function pickGameArtFile(row) {
+  return latestInBox(assetDirOf(row) + '\\Predesign\\approved');
+}
+
 // CGTW 英雄名单里有、但资产库表里没有的英雄，按同一规则补进来
 function addMissingHeroAssets(pending, heroes) {
   const heroCodes = new Set(heroes.map((item) => item.code));
@@ -263,7 +269,7 @@ function addMissingHeroAssets(pending, heroes) {
   for (const hero of heroes) {
     if (present.has(hero.code.toLowerCase())) continue;
     const row = { kind: 'Cha', code: hero.code, d2: '', d3: '' };
-    for (const [stage, file, suffix] of [['2d', pick2dFile(row), '2D'], ['3d', latestInBox(assetBaseDir('Cha', hero.code) + '\\LookDev\\work'), '3D']]) {
+    for (const [stage, file, suffix] of [['game', pickGameArtFile(row), '游戏美术'], ['2d', pick2dFile(row), '2D'], ['3d', latestInBox(assetBaseDir('Cha', hero.code) + '\\LookDev\\work'), '3D']]) {
       if (!file) continue;
       pending.push({
         game: DEFAULT_GAME,
@@ -308,7 +314,7 @@ function buildCatalog() {
       const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
       const live = Boolean(projectCode) && row.liveProjects.some((prefix) => projectCode.startsWith(prefix));
       const heroName = heroByCode.get(code) || heroDisplayName(row.gameName);
-      for (const [stage, file, suffix] of [['2d', pick2dFile(row), '2D'], ['3d', pick3dFile(row, live), '3D']]) {
+      for (const [stage, file, suffix] of [['game', pickGameArtFile(row), '游戏美术'], ['2d', pick2dFile(row), '2D'], ['3d', pick3dFile(row, live), '3D']]) {
         if (!file) continue;
         pending.push({
           game,
@@ -383,6 +389,7 @@ async function listProjectModules(projectId) {
     project: { id: game.id, name: game.name },
     stages: [
       { id: 'all', label: '\u5168\u90e8' },
+      { id: 'game', label: '\u6e38\u620f\u7f8e\u672f' },
       { id: '2d', label: '2D\u7f8e\u672f' },
       { id: '3d', label: '3D\u7f8e\u672f' },
       { id: 'atmosphere', label: '\u6c1b\u56f4\u56fe' },
