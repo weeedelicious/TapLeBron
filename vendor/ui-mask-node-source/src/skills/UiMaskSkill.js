@@ -36,7 +36,7 @@ export class UiMaskSkill extends BaseNode {
     if(changed&&key==='outputSource'){this.editor?.close();this.modelOutput.editSession?.editor?.close();if(value==='editor')this.restore();}
     if(changed&&(key==='outputCategory'||(key==='dynamicMode'&&this.getParam('outputCategory')==='dynamic'))){
       this.results=[];if(this.maskTask){this.maskTask.exportId=null;this.maskTask.confirmedRevision=null;}
-      this.show('覆盖方式已改变，请检查并确认生成黑色遮罩视频');
+      this.show('覆盖方式已改变，请检查后点「输出」生成黑色遮罩视频');
       const control=this.element?.querySelector(`[data-key="${key}"]`);if(control)control.value=value;
       if(key==='outputCategory')this.editor?.setCategory(value);
       this.persist();
@@ -182,7 +182,7 @@ export class UiMaskSkill extends BaseNode {
         }else if(this.jobMatchesMode(job)&&this.document&&job.revision===this.document.revision&&job.mode===this.outputMode()&&job.category===this.getParam('outputCategory')&&!this.dirty){
           this.results=job.results;this.maskTask.confirmedRevision=job.revision;this.maskTask.exportMode=job.mode;this.maskTask.exportCategory=job.category;
         }else{
-          this.results=[];this.maskTask.exportId=null;this.maskTask.confirmedRevision=null;this.show('已有输出与当前范围或类别不同，请重新确认生成');
+          this.results=[];this.maskTask.exportId=null;this.maskTask.confirmedRevision=null;this.show('已有输出与当前范围或类别不同，请重新点「输出」');
         }
         this.persist();this.refresh();this.propagate();return;
       }

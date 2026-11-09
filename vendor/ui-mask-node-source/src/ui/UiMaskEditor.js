@@ -23,7 +23,7 @@ export class UiMaskEditor {
     this.dialog=document.createElement('dialog');this.dialog.className='ui-mask-editor';
     this.dialog.setAttribute('aria-label','遮罩创作工作台');
     this.dialog.innerHTML=`<header><div class="ui-mask-title"><strong>遮罩创作工作台</strong><span data-view="source"></span></div><div class="ui-mask-row"><button data-action="focus" hidden aria-pressed="false" title="收起属性与时间轴，最大化画面（Tab）">专注画面 Tab</button><button data-action="save" hidden>保存草稿</button><button data-action="close" hidden>保存并关闭</button></div></header>
-      <div class="ui-mask-toolbar" role="toolbar" aria-label="画面工具"><div class="ui-mask-tool-group"><button data-action="select" aria-pressed="true">选择 V</button><button data-action="add" aria-pressed="false">矩形 R</button><button data-action="pen" aria-pressed="false">钢笔 G</button><button data-action="path-handles" aria-pressed="true" title="W 显示／隐藏当前锚点的曲线手柄">手柄 W</button><button data-action="point-delete" hidden title="Delete 删除选中锚点；Shift+Delete 删除整块遮罩">删除锚点</button><button data-action="path-finish" hidden>完成轮廓 Enter</button><button data-action="pan" hidden aria-pressed="false">平移 H</button><button data-action="center" hidden title="无需拖动，先创建矩形，再用变换数值微调">居中添加 C</button></div><div class="ui-mask-tool-group" hidden><button data-action="undo" title="Ctrl+Z">撤销</button><button data-action="redo" title="Ctrl+Shift+Z">重做</button></div><div class="ui-mask-tool-group"><button data-action="zoom-out" hidden aria-label="缩小画面">−</button><button data-action="fit" hidden data-view="zoom" title="适应画面（F）">适应</button><button data-action="zoom-in" hidden aria-label="放大画面">＋</button><button data-action="actual" hidden>1:1</button></div><label><input type="checkbox" data-field="overlay" checked>覆盖预览</label><label class="ui-mask-opacity">浓度 <input type="range" data-field="opacity" min="0" max="100" value="70" aria-label="覆盖预览浓度"></label><button data-action="help" hidden aria-expanded="false">快捷键 ?</button></div>
+      <div class="ui-mask-toolbar" role="toolbar" aria-label="画面工具"><div class="ui-mask-tool-group"><button data-action="select" aria-pressed="true">选择 V</button><button data-action="add" aria-pressed="false">矩形 R</button><button data-action="pen" aria-pressed="false">钢笔 G</button><button data-action="path-handles" aria-pressed="false" title="W 开 / 关：在选中遮罩的轮廓边缘单击加点">添加锚点 W</button><button data-action="point-delete" hidden title="Delete 删除选中锚点；Shift+Delete 删除整块遮罩">删除锚点</button><button data-action="path-finish" hidden>完成轮廓 Enter</button><button data-action="pan" hidden aria-pressed="false">平移 H</button><button data-action="center" hidden title="无需拖动，先创建矩形，再用变换数值微调">居中添加 C</button></div><div class="ui-mask-tool-group" hidden><button data-action="undo" title="Ctrl+Z">撤销</button><button data-action="redo" title="Ctrl+Shift+Z">重做</button></div><div class="ui-mask-tool-group"><button data-action="zoom-out" hidden aria-label="缩小画面">−</button><button data-action="fit" hidden data-view="zoom" title="适应画面（F）">适应</button><button data-action="zoom-in" hidden aria-label="放大画面">＋</button><button data-action="actual" hidden>1:1</button></div><label><input type="checkbox" data-field="overlay" checked>覆盖预览</label><label class="ui-mask-opacity">浓度 <input type="range" data-field="opacity" min="0" max="100" value="70" aria-label="覆盖预览浓度"></label><button data-action="help" hidden aria-expanded="false">快捷键 ?</button></div>
       <div class="ui-mask-shortcuts" data-view="shortcuts" hidden>R 画矩形 · V 选择 · H / 中键平移 · F 适应画面 · 滚轮缩放 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Space 播放 · Delete 删除 · Ctrl+D 复制遮罩 · Ctrl+Z 撤销 · Esc 退出绘制。半透明仅用于预览，输出始终为纯黑遮罩。</div>
       <div class="ui-mask-workspace"><main><div class="ui-mask-view-hint"><strong data-view="tool">选择工具</strong><span data-view="hint" role="status"></span></div><div class="ui-mask-stage"><div class="ui-mask-surface"><canvas aria-label="遮罩画面：拖动绘制或移动，角点缩放，圆点旋转" aria-haspopup="menu" tabindex="0"></canvas></div></div><div class="ui-mask-transport"><button data-action="first" title="第一帧">|‹</button><button data-action="previous" title="上一帧">‹</button><button data-action="play">播放</button><button data-action="next" title="下一帧">›</button><button data-action="last" title="最后一帧">›|</button><input data-field="seek" aria-label="播放进度" type="range" min="0" value="0"><label>帧 <input data-field="frame" type="number" min="1" aria-label="当前帧"></label><span data-view="time"></span><select data-field="speed" aria-label="播放速度"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select><label><input type="checkbox" data-field="loop">循环</label></div>
       <section class="ui-mask-keyframes" data-view="keyframes"><div class="ui-mask-timeline-resizer" role="separator" aria-label="调整时间轴高度" aria-orientation="horizontal" tabindex="0"></div><div class="ui-mask-key-actions"><strong>动画</strong><label><input type="checkbox" data-field="auto-key" checked>自动 K</label><button data-action="key-previous" title="上一关键帧">‹◆</button><button data-action="key-add">设键 S</button><button data-action="key-next" title="下一关键帧">◆›</button><button data-action="key-delete">删键</button><label>选中键 <input type="number" data-field="key-frame" min="1" aria-label="选中键所在帧"></label><label class="ui-mask-timeline-zoom">时间轴 <input type="range" data-field="timeline-zoom" min="1" max="8" step="0.5" value="1" aria-label="时间轴缩放"></label></div><div class="ui-mask-timeline-scroll"><div class="ui-mask-timeline" data-view="keys" aria-label="所选遮罩的关键帧轨道"></div></div><div class="ui-mask-key-caption" data-view="key-caption"></div></section></main>
@@ -49,7 +49,7 @@ export class UiMaskEditor {
     this.field('seek').max=s.frames-1;this.field('seek').step=1;
     this.abort=new AbortController();const signal=this.abort.signal;
     const actions={close:()=>this.saveAndClose(),save:()=>node.flushDocument().then(()=>this.status('草稿已保存')).catch(e=>this.status(`保存失败：${e.message}`)),play:()=>this.toggle(),previous:()=>this.stepFrame(-1),next:()=>this.stepFrame(1),first:()=>this.seek(0),last:()=>this.seek(s.frames-1),
-      select:()=>this.setTool('select'),pen:()=>this.setTool('pen'),'path-handles':()=>this.pathEditor.toggleHandles(),'point-delete':()=>this.pathEditor.remove(),'path-finish':()=>this.pathDrawing.finish(),pan:()=>this.setTool('pan'),center:()=>this.createCentered(),duplicate:()=>this.duplicate(),
+      select:()=>this.setTool('select'),pen:()=>this.setTool('pen'),'path-handles':()=>this.pathEditor.toggleAddMode(),'point-delete':()=>this.pathEditor.remove(),'path-finish':()=>this.pathDrawing.finish(),pan:()=>this.setTool('pan'),center:()=>this.createCentered(),duplicate:()=>this.duplicate(),
       focus:()=>this.toggleFocus(),help:()=>{const help=this.$('[data-view="shortcuts"]');help.hidden=!help.hidden;this.$('[data-action="help"]').setAttribute('aria-expanded',String(!help.hidden));},locate:()=>this.seek(this.track()?.ranges[Number(this.field('range').value)]?.[0]??0),
       add:()=>this.add(this.category),delete:()=>this.deleteSelection(),
       undo:()=>this.undo(),redo:()=>this.redoEdit(),enable:()=>this.edit(()=>this.visibleTracks().forEach(t=>t.enabled=true)),disable:()=>this.edit(()=>this.visibleTracks().forEach(t=>t.enabled=false)),
@@ -148,7 +148,7 @@ export class UiMaskEditor {
     this.video.addEventListener('seeking',()=>this.renderTool(),{signal});
     this.video.addEventListener('error',()=>{this.hint('视频读取失败，请保存草稿并重新打开。');this.status('视频读取失败，请保存草稿并重新打开。');},{signal});
     document.body.appendChild(this.dialog);this.release=enterEditorModal(this.dialog);this.dialog.showModal();
-    this.setupObjectBar();this.pathEditor=new UiMaskPathEditor(this);this.pathDrawing=new UiMaskPathDrawing(this);this.viewport=new UiMaskViewport(this);
+    this.setupObjectBar();this.pathEditor=new UiMaskPathEditor(this);this.canvas.addEventListener('pointermove',ev=>this.pathEditor.hover(ev));this.pathDrawing=new UiMaskPathDrawing(this);this.viewport=new UiMaskViewport(this);
     this.curvePanel=new UiMaskCurvePanel(this);
     this.resizeObserver=new ResizeObserver(()=>{this.setZoom(this.zoom,undefined,this.zoomMode);this.renderKeys();});this.resizeObserver.observe(this.$('.ui-mask-stage'));
     if(node.document.modelBase)this.modelLayer=new UiMaskModelLayer(this);
@@ -166,7 +166,7 @@ export class UiMaskEditor {
     const settings=this.settingsButton=bar.querySelector(':scope > button');settings.onclick=()=>{const on=this.dialog.classList.toggle('mask-settings-open');settings.setAttribute('aria-expanded',String(on));};
     this.dialog.addEventListener('pointerdown',ev=>{if(!ev.target.closest('aside')&&!settings.contains(ev.target)){this.dialog.classList.remove('mask-settings-open');settings.setAttribute('aria-expanded','false');}},{signal:this.abort.signal});
     this.$('.ui-mask-stage').addEventListener('dblclick',ev=>this.doubleClickMask(ev),{signal:this.abort.signal});
-    this.$('[data-view=shortcuts]').textContent='V 选择：空白处左键框选 · Shift 点击切换 / 拖框追加 · Alt 减选 · Ctrl 拖框（可从遮罩内部开始） · Ctrl+A 全选当前帧 · Ctrl+I 反选 · Esc 取消选择 · 拖动选中项整体移动 · 拖动锚点编辑 · Alt 拖锚点拉曲线 · W 显示手柄 · 中键轻点边缘加点 · Delete 删锚点 / 未选锚点时删遮罩 · Shift+Delete 删遮罩 · Ctrl+D 复制选中 · Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · C 居中添加 · R 矩形 · G 钢笔（单击加点，拖动拉曲线，Enter 闭合） · H / 中键平移 · F 适应画面 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Tab 专注画面 · Ctrl+S 保存草稿 · Esc 退出当前操作，最后保存并关闭 · F2 遮罩设置。多选时属性区只编辑主选遮罩。';
+    this.$('[data-view=shortcuts]').textContent='V 选择：空白处左键框选 · Shift 点击切换 / 拖框追加 · Alt 减选 · Ctrl 拖框（可从遮罩内部开始） · Ctrl+A 全选当前帧 · Ctrl+I 反选 · Esc 取消选择 · 拖动选中项整体移动 · 拖动锚点编辑 · 拖动边缘整条边移动 · Alt 拖锚点拉曲线 · W 添加锚点（边缘单击加点） · 中键轻点边缘加点 · Delete 删锚点 / 未选锚点时删遮罩 · Shift+Delete 删遮罩 · Ctrl+D 复制选中 · Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · C 居中添加 · R 矩形 · G 钢笔（单击加点，拖动拉曲线，Enter 闭合） · H / 中键平移 · F 适应画面 · S 为「显示属性」中勾选的属性设键 · ← → 逐帧 · Tab 专注画面 · Ctrl+S 保存草稿 · Esc 退出当前操作，最后保存并关闭 · F2 遮罩设置。多选时属性区只编辑主选遮罩。';
     for(const p of this.dialog.querySelectorAll('aside .ui-mask-note'))if(p.textContent.includes('纯黑'))p.textContent='当前类别单独输出，另一类草稿保留。属性不透明度会写入输出，原音频保留。';
     this.layoutStudio();
   }
@@ -174,8 +174,10 @@ export class UiMaskEditor {
     const dialog=this.dialog;
     const top=document.createElement('div');top.className='ui-mask-topbar';
     const tools=document.createElement('div');tools.className='ui-mask-top-tools';
-    const title=dialog.querySelector('.ui-mask-title strong');if(title)tools.append(title);
-    const toolbar=dialog.querySelector('.ui-mask-toolbar');while(toolbar?.firstChild)tools.append(toolbar.firstChild);toolbar?.replaceWith(top);top.append(tools);
+    const title=dialog.querySelector('.ui-mask-title strong');if(title)top.append(title);
+    const toolbar=dialog.querySelector('.ui-mask-toolbar');while(toolbar?.firstChild)tools.append(toolbar.firstChild);toolbar?.replaceWith(top);
+    // Shotflow：画面工具挪到画面下方、时间轴上面，顶栏只留标题和关闭
+    const bottom=document.createElement('div');bottom.className='ui-mask-topbar ui-mask-bottombar';bottom.append(tools);
     const close=document.createElement('button');close.type='button';close.className='ui-mask-close';close.textContent='×';close.title='关闭当前窗口';close.setAttribute('aria-label','关闭当前窗口');close.onclick=()=>this.saveAndClose();top.append(close);
     dialog.querySelector('header')?.setAttribute('hidden','');
     const side=document.createElement('div');side.className='ui-mask-studio-side';
@@ -186,13 +188,13 @@ export class UiMaskEditor {
     const kind=document.createElement('select');kind.innerHTML='<option value="static">静态 UI</option><option value="dynamic">动态 UI</option>';kind.setAttribute('aria-label','类别');kind.onchange=()=>this.changeKind(kind.value);kindLabel.append(kind);this.kindMirror=kind;
     const colorLabel=document.createElement('label');colorLabel.textContent='遮罩颜色';
     const color=document.createElement('select');color.innerHTML='<option value="black">黑</option><option value="red">红</option><option value="green">绿</option><option value="blue">蓝</option>';color.value=this.node.coverColor||'green';color.setAttribute('aria-label','遮罩颜色');color.onchange=()=>{this.node.coverColor=color.value;};colorLabel.append(color);
-    const confirm=document.createElement('button');confirm.type='button';confirm.className='ui-mask-generate';confirm.textContent='确认生成';confirm.onclick=()=>this.node.generate();
-    const again=document.createElement('button');again.type='button';again.className='ui-mask-regenerate';again.textContent='重新生成';again.onclick=()=>this.regenerateMasks();
+    const confirm=document.createElement('button');confirm.type='button';confirm.className='ui-mask-generate';confirm.textContent='输出';confirm.onclick=()=>this.node.generate();
+    const again=document.createElement('button');again.type='button';again.className='ui-mask-regenerate';again.textContent='自动生成遮罩';again.onclick=()=>this.regenerateMasks();
     const job=document.createElement('div');job.className='ui-mask-job';job.hidden=true;job.innerHTML='<progress max="100" value="0"></progress><p data-view="job-text"></p>';
-    side.append(output,coverLabel,kindLabel,colorLabel,confirm,again,job);this.jobView=job;
+    side.append(output,coverLabel,kindLabel,colorLabel,again,confirm,job);this.jobView=job;
     const workspace=dialog.querySelector('.ui-mask-workspace');workspace.prepend(side);
     const transport=dialog.querySelector('.ui-mask-transport'),keys=dialog.querySelector('.ui-mask-keyframes');
-    if(transport&&keys)workspace.after(transport,keys);
+    workspace.after(bottom);if(transport&&keys)bottom.after(transport,keys);
     dialog.querySelector('.mask-object-bar')?.classList.add('ui-mask-object-bar-hidden');
   }
   async regenerateMasks(){
@@ -265,9 +267,9 @@ export class UiMaskEditor {
     for(const [action,value] of [['select','select'],['add','draw'],['pen','pen'],['pan','pan']])this.$(`[data-action="${action}"]`).setAttribute('aria-pressed',String(tool===value));
     this.$('[data-view="tool"]').textContent={select:'选择工具',draw:`绘制${this.category==='static'?'静态':'动态'}遮罩`,pan:'平移画面',path:'编辑遮罩路径',pen:'钢笔绘制'}[tool];
     this.$('[data-action=path-finish]').hidden=tool!=='pen';
-    this.$('[data-action=path-handles]').setAttribute('aria-pressed',String(this.pathEditor?.showHandles??true));
+    this.$('[data-action=path-handles]').setAttribute('aria-pressed',String(this.pathEditor?.addMode??false));
     this.canvas.style.cursor=this.video.seeking?'progress':{select:'default',draw:'crosshair',pan:'grab',path:'crosshair',pen:'crosshair'}[tool];
-    this.hint(this.video.error?'视频读取失败，请保存并重新打开。':this.video.readyState<2?'视频正在载入，工具已就绪，画面显示后即可操作。':this.video.seeking?'正在定位这一帧，工具会保持选中，画面就绪后即可操作。':{select:'单选即可拖锚点 · Alt 拖锚点拉曲线 · 中键轻点边缘加点 / 拖动平移 · 双击遮罩打开动画属性 · S 为已勾选属性设键',draw:'在视频画面上按住左键拖出矩形 · 可连续绘制 · Esc 返回选择',pan:'拖动画面平移 · 滚轮缩放 · F 恢复完整画面',path:'拖点和手柄 · Alt 拖锚点拉曲线 / 拖手柄断开 · 双击边缘加点 · W 手柄 · S 为已勾选属性设键 · Esc 完成',pen:'单击加点 · 按住拖动拉曲线 · 点首点或 Enter 闭合 · 可画到画幅外 · Esc 取消'}[tool]);
+    this.hint(this.video.error?'视频读取失败，请保存并重新打开。':this.video.readyState<2?'视频正在载入，工具已就绪，画面显示后即可操作。':this.video.seeking?'正在定位这一帧，工具会保持选中，画面就绪后即可操作。':{select:'单选即可拖锚点 / 拖边缘移动整条边 · W 添加锚点 · Alt 拖锚点拉曲线 · 中键轻点边缘加点 / 拖动平移 · 双击遮罩打开动画属性 · S 为已勾选属性设键',draw:'在视频画面上按住左键拖出矩形 · 可连续绘制 · Esc 返回选择',pan:'拖动画面平移 · 滚轮缩放 · F 恢复完整画面',path:'拖点和手柄 · Alt 拖锚点拉曲线 / 拖手柄断开 · 双击边缘加点 · W 添加锚点 · S 为已勾选属性设键 · Esc 完成',pen:'单击加点 · 按住拖动拉曲线 · 点首点或 Enter 闭合 · 可画到画幅外 · Esc 取消'}[tool]);
   }
   toggleFocus(){this.curvePanel?.setExpanded(false);this.focusMode=!this.focusMode;this.dialog.classList.toggle('ui-mask-focus',this.focusMode);const b=this.$('[data-action="focus"]');b.setAttribute('aria-pressed',String(this.focusMode));b.textContent=this.focusMode?'恢复工作区 Tab':'专注画面 Tab';this.canvas.focus({preventScroll:true});}
   setupSplitters(){

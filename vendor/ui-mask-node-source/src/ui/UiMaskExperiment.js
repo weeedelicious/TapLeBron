@@ -171,7 +171,7 @@ export class UiMaskExperiment {
         const info=this.result;
         this.$('[data-view="identity"]').textContent=`${info.source.filename} · ${info.modelVersion} · ${info.source.frames} 帧 · 4px 安全边 · 编码额外扩边 0px`;
         const links=this.$('[data-view="downloads"]');links.replaceChildren();
-        links.textContent='载入草稿后可手动修正；视频在确认生成后下载。';
+        links.textContent='载入草稿后可手动修正；视频在点「输出」后下载。';
         const position=this.restorePosition;this.restorePosition=null;
         await this.seek(position?.sha256===info.source.sha256?position.frame:0);return;
       }

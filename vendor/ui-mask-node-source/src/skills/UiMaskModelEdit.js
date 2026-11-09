@@ -18,7 +18,7 @@ export class UiMaskModelEdit {
   open(){if(!this.valid()||this.busy)return;this.editor??=new UiMaskEditor(this);}
   documentChanged(){
     ++this.editVersion;this.dirty=true;this.results=[];this.maskTask.exportId=null;this.maskTask.confirmedRevision=null;
-    this.show('草稿已修改，保存后请确认生成 Mask 视频');clearTimeout(this.saveTimer);
+    this.show('草稿已修改，保存后请点「输出」生成 Mask 视频');clearTimeout(this.saveTimer);
     this.saveTimer=setTimeout(()=>this.flushDocument().catch(e=>this.show(`草稿保存失败：${e.message}`)),350);
   }
   async flushDocument(){
@@ -48,7 +48,7 @@ export class UiMaskModelEdit {
       this.progress=job.progress||0;
       if(job.state==='ready'){
         this.busy=false;
-        if(job.revision!==this.document.revision||this.dirty||job.category!=='dynamic'||job.mode!=='follow')throw new Error('草稿已改变，请重新确认生成');
+        if(job.revision!==this.document.revision||this.dirty||job.category!=='dynamic'||job.mode!=='follow')throw new Error('草稿已改变，请重新点「输出」');
         this.results=job.results;this.maskTask.confirmedRevision=job.revision;this.show('Mask 视频已生成，可连接下游；纯遮罩可下载');return;
       }
       if(['failed','cancelled'].includes(job.state)){this.busy=false;this.show(job.message);return;}

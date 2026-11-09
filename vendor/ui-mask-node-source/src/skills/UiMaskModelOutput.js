@@ -8,7 +8,7 @@ const sha256=async file=>Array.from(new Uint8Array(await crypto.subtle.digest('S
 
 // Owns source binding and completed model assets, separate from editable tracks.
 export class UiMaskModelOutput {
-  constructor(node){this.node=node;this.state='idle';this.message='检测载入草稿 → 手动修正 → 确认生成 Mask 视频';this.generation=0;}
+  constructor(node){this.node=node;this.state='idle';this.message='检测载入草稿 → 手动修正 → 输出 Mask 视频';this.generation=0;}
   changed(){this.node.persist();this.node.propagate();this.node.refresh();}
   matches(){const source=this.node.source();return !!available(source)&&sourceIdentity(source)===this.node.modelMaskTask?.sourceKey&&inputToken(source)===this.verifiedInput;}
   draftReady(){return this.state==='ready'&&!!this.result&&this.matches();}

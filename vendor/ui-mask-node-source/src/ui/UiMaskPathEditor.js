@@ -5,7 +5,7 @@ import { pathCoordinates } from './UiMaskPathGeometry.js';
 import { insertPathPoint } from './MaskBezierGeometry.js';
 
 export class UiMaskPathEditor {
-  constructor(editor) { this.e=editor; this.index=-1; this.showHandles=true; }
+  constructor(editor) { this.e=editor; this.index=-1; this.showHandles=true; this.addMode=false; }
   active() {
     const e=this.e,t=e.track();
     if(this.trackId!==t?.id){this.trackId=t?.id;this.index=-1;}
@@ -18,9 +18,22 @@ export class UiMaskPathEditor {
     this.showHandles=!this.showHandles;
     this.e.renderTool();this.e.draw();
   }
+  // Shotflow：「添加锚点 W」开着时左键点轮廓边缘加点；关着时左键拖边缘整条边一起移动
+  toggleAddMode() {
+    this.addMode=!this.addMode;
+    this.e.status(this.addMode?'添加锚点：在选中遮罩的轮廓边缘单击加点 · W 退出':'已退出添加锚点：拖动边缘可整条边移动');
+    this.e.renderTool();this.e.draw();
+  }
+  // 轮廓边缘命中：返回边的起点下标（这条边连着 i 和 i+1 两个锚点），没命中返回 -1
+  edgeHit(screen, path) {
+    const {to}=this.coordinates(this.e.track()),r=this.e.canvas.getBoundingClientRect();
+    const result=insertPathPoint(path,[screen[0]*r.width,screen[1]*r.height],
+      p=>{const q=to(p);return [q[0]*r.width,q[1]*r.height];},8);
+    return result?result.index-1:-1;
+  }
   keydown(event) {
     if(!this.active()||this.e.keyFocus||event.ctrlKey||event.metaKey||event.altKey)return false;
-    if(event.key.toLowerCase()==='w'){if(!event.repeat)this.toggleHandles();return true;}
+    if(event.key.toLowerCase()==='w'){if(!event.repeat)this.toggleAddMode();return true;}
     if(['Delete','Backspace'].includes(event.key)&&!event.shiftKey&&this.index>=0){
       if(!event.repeat)this.remove();return true;
     }
@@ -79,13 +92,17 @@ export class UiMaskPathEditor {
     const result=insertPathPoint(pathAt(e.track(),e.frame),[screen[0]*r.width,screen[1]*r.height],
       p=>{const q=to(p);return [q[0]*r.width,q[1]*r.height];});
     if(!result){e.status('在轮廓边缘轻点中键加点；拖动中键平移画面');return false;}
+    // 直线边上加的点做成没有手柄的角点：边保持直线，也不会在边上冒出两个手柄挡住「拖边」
+    const original=pathAt(e.track(),e.frame),from=original[result.index-1],next=original[result.index%original.length];
+    const flat=v=>!v||v.every(n=>Math.abs(n)<1e-9);
+    if(from&&next&&flat(from.out)&&flat(next.in)){const v=result.path[result.index];v.in=[0,0];v.out=[0,0];}
     this.index=result.index;e.keyFocus=false;return this.save(result.path);
   }
   pointer(event) {
     const e=this.e;
     if(!this.active()||event.shiftKey||event.ctrlKey||event.metaKey)return false;
     const t=e.track(),original=pathAt(t,e.frame),screen=e.point(event,false),hit=this.hit(screen,original);
-    if(!hit)return false;
+    if(!hit)return this.edgePointer(event,t,original,screen);
     if(!e.canTransform(t))return true;
     e.video.pause();e.keyFocus=false;e.canvas.focus({preventScroll:true});this.index=hit.i;e.draw();
     const before=e.snapshot(),{from}=this.coordinates(t),local=from(screen);
@@ -102,6 +119,39 @@ export class UiMaskPathEditor {
         this.showHandles=true;v[side]=q.map((n,j)=>bounded(n-v.point[j]));
         if(pullHandle||!ev.altKey)v[side==='in'?'out':'in']=v[side].map(n=>-n);
       }
+      setAppearanceValue(e.track(),'shape',e.frame,path);e.draw();
+    };
+    startEditorGesture(event,{element:e.canvas,scope:e.dialog,move:update,
+      end:ev=>{update(ev);if(moved)e.commit(before);e.renderTool();},
+      cancel:()=>{e.node.document.tracks=before;e.render();}});
+    return true;
+  }
+  // 鼠标停在选中遮罩的边上时换光标：可拖动整条边显示移动，添加锚点模式显示加号
+  hover(event) {
+    const e=this.e;
+    if(event.buttons||!this.active()||e.video.seeking){if(this.edgeCursor){this.edgeCursor=false;e.renderTool();}return;}
+    const t=e.track(),path=pathAt(t,e.frame),screen=e.point(event,false);
+    const onEdge=!this.hit(screen,path)&&this.edgeHit(screen,path)>=0;
+    if(onEdge){this.edgeCursor=true;e.canvas.style.cursor=this.addMode?'copy':'move';}
+    else if(this.edgeCursor){this.edgeCursor=false;e.renderTool();}
+  }
+  // 按在边上（不是锚点）：添加锚点模式下加点；否则拖动这条边，两端锚点一起平移、曲线手柄跟着走
+  edgePointer(event,t,original,screen) {
+    const e=this.e;
+    if(event.button!==0||event.altKey)return false;
+    const i=this.edgeHit(screen,original);
+    if(i<0)return false;
+    if(!e.canTransform(t))return true;
+    if(this.addMode){e.video.pause();this.insert(screen);e.draw();return true;}
+    e.video.pause();e.keyFocus=false;e.canvas.focus({preventScroll:true});this.index=-1;e.draw();
+    const before=e.snapshot(),{from}=this.coordinates(t),local=from(screen),ends=[i,(i+1)%original.length];
+    const bounded=n=>Math.max(-PATH_COORDINATE_LIMIT,Math.min(PATH_COORDINATE_LIMIT,n));
+    let moved=false;
+    e.canvas.style.cursor='move';
+    const update=ev=>{
+      if(!moved&&Math.hypot(ev.clientX-event.clientX,ev.clientY-event.clientY)<3)return;
+      moved=true;const q=from(e.point(ev,false)),path=structuredClone(original);
+      for(const k of ends)path[k].point=path[k].point.map((n,j)=>bounded(n+q[j]-local[j]));
       setAppearanceValue(e.track(),'shape',e.frame,path);e.draw();
     };
     startEditorGesture(event,{element:e.canvas,scope:e.dialog,move:update,

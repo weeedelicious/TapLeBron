@@ -9,7 +9,7 @@ export class UiMaskModelLayer {
     this.scratch=document.createElement('canvas');this.scratch.width=s.width;this.scratch.height=s.height;this.ctx=this.scratch.getContext('2d',{willReadFrequently:true});
     this.layer=document.createElement('canvas');this.layer.width=s.width;this.layer.height=s.height;
     const tools=document.createElement('label');tools.title='新绘制区域的作用';this.brush=document.createElement('select');this.brush.setAttribute('aria-label','新绘制区域的作用');
-    this.brush.add(new Option('补遮漏检 UI','add'));this.brush.add(new Option('擦除模型误遮','erase'));tools.append(this.brush);e.$('.ui-mask-toolbar').prepend(tools);this.brush.onchange=()=>{this.operation=this.brush.value;e.status(this.operation==='erase'?'绘制要擦除的模型区域，可设置出现时段和关键帧；不会擦掉手动补遮':'绘制漏掉的 UI，确认生成时统一留出 4px 安全边');};
+    this.brush.add(new Option('补遮漏检 UI','add'));this.brush.add(new Option('擦除模型误遮','erase'));tools.append(this.brush);e.$('.ui-mask-toolbar').prepend(tools);this.brush.onchange=()=>{this.operation=this.brush.value;e.status(this.operation==='erase'?'绘制要擦除的模型区域，可设置出现时段和关键帧；不会擦掉手动补遮':'绘制漏掉的 UI，输出时统一留出 4px 安全边');};
     const label=document.createElement('label');label.textContent='修正作用';this.choice=document.createElement('select');this.choice.setAttribute('aria-label','所选区域的修正作用');this.choice.add(new Option('补遮漏检 UI','add'));this.choice.add(new Option('擦除模型误遮','erase'));label.append(this.choice);e.$('[data-panel="transform"]').prepend(label);
     this.choice.onchange=()=>e.edit(()=>{const t=e.track();if(t)t.maskOperation=this.choice.value;});
     e.field('opacity').value=45;
