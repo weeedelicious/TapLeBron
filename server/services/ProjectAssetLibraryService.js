@@ -170,6 +170,8 @@ function listAtmosphereFiles(dirPath, projectLabel) {
       if (!entry.name || entry.name.startsWith('.') || entry.name.toLowerCase() === 'thumbs.db') continue;
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
+        // History 里是换下来的旧版氛围图，跟其他环节「不取 history」一样不进资产库
+        if (entry.name.toLowerCase() === 'history') continue;
         if (depth < 2) walk(full, depth + 1);
         continue;
       }
@@ -185,7 +187,7 @@ function listAtmosphereFiles(dirPath, projectLabel) {
     }
   };
   walk(root.filePath, 0);
-  // 氛围图指认逻辑：项目「影创美术/氛围图」文件夹里有什么拾取什么（图片和视频都要，含子文件夹），不再只挑一张封面
+  // 氛围图指认逻辑：项目「影创美术/氛围图」文件夹里有什么拾取什么（图片和视频都要，含子文件夹，History 除外），不再只挑一张封面
   return found.map((item) => ({
     name: item.baseName === '氛围图' ? label + '_氛围图' : label + '_氛围图_' + item.baseName,
     projectLabel: label,
