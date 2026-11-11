@@ -23,9 +23,16 @@ DATA_DIR = os.path.join(ROOT, 'server', 'data')
 OWNER = 'tapflow'
 
 # 游戏名要和 project-asset-sheet.json 里 sources[].game 一致
+# 一个游戏可以从几个 CGTW 项目里收标签：火炬的英雄一部分在「火炬之光_Film」，一部分在「电影部」项目里
+# （关联项目代号 TLI，比如罗莎 c001_Rosa），两边合起来才完整。project：只收关联项目代号以它开头的资产。
 TAG_SOURCES = [
-    {'game': '火炬', 'db': 'proj_tli_film', 'field': 'm_asset.gamename', 'label': '英雄'},
-    {'game': 'RO', 'db': 'proj_ro_film', 'field': 'm_asset.gamename', 'label': '职业'},
+    {'game': '火炬', 'label': '英雄', 'field': 'm_asset.gamename', 'from': [
+        {'db': 'proj_tli_film'},
+        {'db': 'proj_film', 'project': 'TLI'},
+    ]},
+    {'game': 'RO', 'label': '职业', 'field': 'm_asset.gamename', 'from': [
+        {'db': 'proj_ro_film'},
+    ]},
 ]
 RO_ROWS = {
     'db': 'proj_ro_film', 'file': 'project-asset-rows-ro.json',
@@ -86,16 +93,23 @@ def write_json(name, document):
 def sync_tags(t, now):
     games = {}
     for source in TAG_SOURCES:
-        rows = read_assets(t, source['db'], ['m_asset.entity', source['field']])
-        if not rows:
-            raise RuntimeError(source['db'] + ' 一个资产都没读到')
         tags = {}
-        for row in rows:
-            code = str(row.get('m_asset.entity') or '').strip()
-            value = str(row.get(source['field']) or '').strip()
-            if code and value:
-                tags[code] = value
-        games[source['game']] = {'db': source['db'], 'field': source['field'], 'label': source['label'], 'tags': tags}
+        for origin in source['from']:
+            rows = read_assets(t, origin['db'], ['m_asset.entity', 'm_asset.link_m_project', source['field']])
+            if not rows:
+                raise RuntimeError(origin['db'] + ' 一个资产都没读到')
+            count = 0
+            for row in rows:
+                if origin.get('project') and not str(row.get('m_asset.link_m_project') or '').upper().startswith(origin['project'].upper()):
+                    continue
+                code = str(row.get('m_asset.entity') or '').strip()
+                value = str(row.get(source['field']) or '').strip()
+                # 同一个代号两边都有标签时，先列的项目优先
+                if code and value and code not in tags:
+                    tags[code] = value
+                    count += 1
+            print('  {} {}：{} 里 {} 个'.format(source['game'], source['label'], origin['db'], count))
+        games[source['game']] = {'dbs': [o['db'] for o in source['from']], 'field': source['field'], 'label': source['label'], 'tags': tags}
         print('{} {}：{} 个资产有标签'.format(source['game'], source['label'], len(tags)))
     changed = write_json('project-asset-cgtw-tags.json', {'source': 'CGTeamWork m_asset 标签（cgtw_server_sync.py）', 'updatedAt': now, 'games': games})
     print('标签文件', '已更新' if changed else '没有变化')
