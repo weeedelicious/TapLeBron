@@ -46,6 +46,34 @@ function currentHeroAssets() {
     return HERO_ASSETS;
   }
 }
+// CGTW 资产标签（m_asset.gamename：火炬里叫「英雄」，RO 里叫「职业」），由服务器上的 tools/cgtw_server_sync.py
+// 每 15 分钟同步到这个文件。有这个文件时，「英雄」/「职业」筛选只看 CGTW 标签：有值的才算；
+// 文件读不到时退回旧逻辑（英雄名单文件 + 表里的局内代号）。文件改了不用重启。
+const CGTW_TAGS_FILE = path.join(__dirname, '..', 'data', 'project-asset-cgtw-tags.json');
+let cgtwTagsCache = null;
+
+function currentCgtwTags() {
+  try {
+    const stat = fs.statSync(CGTW_TAGS_FILE);
+    if (cgtwTagsCache && cgtwTagsCache.mtimeMs === stat.mtimeMs) return cgtwTagsCache.games;
+    const parsed = JSON.parse(fs.readFileSync(CGTW_TAGS_FILE, 'utf8'));
+    const games = {};
+    for (const [game, info] of Object.entries(parsed?.games || {})) {
+      const tags = new Map();
+      for (const [code, value] of Object.entries(info?.tags || {})) {
+        const text = String(value || '').trim();
+        if (code && text) tags.set(String(code).trim().toLowerCase(), { code: String(code).trim(), value: text });
+      }
+      games[game] = { label: String(info?.label || '').trim(), tags };
+    }
+    cgtwTagsCache = { mtimeMs: stat.mtimeMs, games };
+    return games;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn('project asset CGTW tags unavailable:', error.message);
+    return cgtwTagsCache?.games || {};
+  }
+}
+
 // 资产清单以各游戏的飞书「shotflow资产库」表为准（project-asset-sheet.json 的 sources，一个游戏一份），每行一个角色 / 场景：
 //  - 2D美术：CGTW 资产任务 Prodesign 环节 approved 框（不取 history）
 //  - 游戏美术：CGTW 资产任务 Predesign 环节 approved 框（不取 history）
@@ -315,8 +343,13 @@ function addMissingHeroAssets(pending, heroes) {
 }
 
 function buildCatalog() {
-  const heroes = currentHeroAssets();
-  const heroByCode = new Map(heroes.map((item) => [item.code, item.name]));
+  const cgtwTags = currentCgtwTags();
+  // 火炬「英雄」：有 CGTW 标签时用标签里的英雄（也用它补表里没有的英雄），没有时退回旧名单
+  const torchTags = cgtwTags[DEFAULT_GAME];
+  const heroes = torchTags
+    ? [...torchTags.tags.values()].map((item) => ({ code: item.code, name: heroDisplayName(item.value) })).filter((item) => item.name)
+    : currentHeroAssets();
+  const heroByCode = new Map(heroes.map((item) => [item.code.toLowerCase(), item.name]));
   let game = DEFAULT_GAME;
   let projectLabel = '';
   const pending = [];
@@ -340,14 +373,19 @@ function buildCatalog() {
       const code = String(row.code || '').trim();
       const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
       const live = Boolean(projectCode) && row.liveProjects.some((prefix) => projectCode.startsWith(prefix));
-      const heroName = heroByCode.get(code) || heroDisplayName(row.gameName);
+      const gameTags = cgtwTags[game];
+      const tagValue = gameTags?.tags.get(code.toLowerCase())?.value || '';
+      // 名字：火炬英雄按 CGTW 英雄标签起名；表里有局内代号的照旧用它（只影响名字，不影响筛选）
+      const heroName = (game === DEFAULT_GAME ? heroByCode.get(code.toLowerCase()) : '') || heroDisplayName(row.gameName);
+      // 筛选：这个游戏有 CGTW 标签数据时只看标签；没有时沿用旧规则（名单 / 局内代号 / heroCodes）
+      const tagged = gameTags ? Boolean(tagValue) : (Boolean(heroName) || row.heroCodes.has(code.toLowerCase()));
       for (const [stage, file, suffix] of [['game', pickGameArtFile(row), '游戏美术'], ['2d', pick2dFile(row), '2D'], ['3d', pick3dFile(row, live), '3D']]) {
         if (!file) continue;
         pending.push({
           game,
           projectLabel,
           code,
-          hero: Boolean(heroName) || row.heroCodes.has(code.toLowerCase()),
+          hero: tagged || (!gameTags && row.heroCodes.has(code.toLowerCase())),
           name: ((heroName || baseName) + '_' + suffix),
           stage,
           assetType,
@@ -381,7 +419,7 @@ function buildCatalog() {
       mtimeMs: item.mtimeMs,
       filePath: item.filePath,
     }));
-    return { id: gameIdFor(name), name, heroLabel: sheet.games[name]?.heroLabel || '', assets };
+    return { id: gameIdFor(name), name, heroLabel: sheet.games[name]?.heroLabel || cgtwTags[name]?.label || '', assets };
   }).filter((item) => item.assets.length > 0).sort((a, b) => a.id - b.id || a.name.localeCompare(b.name, 'zh-CN'));
   const byToken = new Map();
   for (const item of games) {
