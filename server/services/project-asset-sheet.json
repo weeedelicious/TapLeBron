@@ -1176,66 +1176,6 @@
      "d2": "",
      "d3": "",
      "atmosphere": ""
-    },
-    {
-     "label": "",
-     "projectCode": "",
-     "kind": "Prop",
-     "name": "藏宝图",
-     "code": "p005_CangBaoTu",
-     "gameName": "",
-     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p005_CangBaoTu",
-     "d2": "",
-     "d3": "",
-     "atmosphere": ""
-    },
-    {
-     "label": "",
-     "projectCode": "",
-     "kind": "Prop",
-     "name": "宝箱",
-     "code": "p006_BaoXiang",
-     "gameName": "",
-     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p006_BaoXiang",
-     "d2": "",
-     "d3": "",
-     "atmosphere": ""
-    },
-    {
-     "label": "",
-     "projectCode": "",
-     "kind": "Prop",
-     "name": "灵魂天平",
-     "code": "p007_TianPing",
-     "gameName": "",
-     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p007_TianPing",
-     "d2": "",
-     "d3": "",
-     "atmosphere": ""
-    },
-    {
-     "label": "",
-     "projectCode": "",
-     "kind": "Prop",
-     "name": "宝物",
-     "code": "p008_BaoWu",
-     "gameName": "",
-     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p008_BaoWu",
-     "d2": "",
-     "d3": "",
-     "atmosphere": ""
-    },
-    {
-     "label": "",
-     "projectCode": "",
-     "kind": "Prop",
-     "name": "推车",
-     "code": "p009_TuiChe",
-     "gameName": "",
-     "assetDir": "X:\\projects2024\\RO\\Asset\\Prop\\p009_TuiChe",
-     "d2": "",
-     "d3": "",
-     "atmosphere": ""
     }
    ],
    "rowsFile": "project-asset-rows-ro.json"

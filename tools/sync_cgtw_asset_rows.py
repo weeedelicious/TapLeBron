@@ -24,7 +24,8 @@ DATABASE = 'proj_ro_film'
 ASSET_ROOT = 'X:\\projects2024\\RO\\Asset'
 PROJECT_LABEL, PROJECT_CODE = 'RO2_PV', 'ro2_pv'
 ATMOSPHERE = 'X:\\projects2024\\RO\\RO2_PV\\00_Production_Guide\\03-影创美术\\气氛图'
-KIND_ORDER = {'Cha': 0, 'Env': 1, 'Prop': 2}
+# 只同步角色和场景，道具不进资产库
+KIND_ORDER = {'Cha': 0, 'Env': 1}
 
 QUERY = r'''
 import sys, json

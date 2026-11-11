@@ -368,7 +368,8 @@ function buildCatalog() {
       projectCode = String(row.projectCode || '').trim().toLowerCase();
     }
     const assetKind = rowKind(row);
-    if (assetKind) {
+    // 道具不进资产库（2026-11-11 RO 去掉道具按钮）：只收角色和场景
+    if (assetKind && assetKind !== 'Prop') {
       const assetType = assetKind === 'Cha' ? 'character' : assetKind === 'Prop' ? 'prop' : 'scene';
       const code = String(row.code || '').trim();
       const baseName = String(row.name || code || '\u672a\u547d\u540d').trim();
