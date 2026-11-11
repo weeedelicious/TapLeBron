@@ -386,7 +386,8 @@ function buildCatalog() {
           projectLabel,
           code,
           hero: tagged || (!gameTags && row.heroCodes.has(code.toLowerCase())),
-          name: ((heroName || baseName) + '_' + suffix),
+          // RO 等「职业」标签的资产：名字前面加职业名（刺客_男刺客_2D）；火炬英雄的名字上面已按英雄标签起好
+          name: (((game !== DEFAULT_GAME && tagValue ? tagValue + '_' : '') + (heroName || baseName)) + '_' + suffix),
           stage,
           assetType,
           mediaType: mediaTypeOf(file.filePath),
