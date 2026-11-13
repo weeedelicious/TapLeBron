@@ -381,6 +381,12 @@ function registerRateLimited(ip) {
 app.post(
   '/api/auth/register',
   asyncRoute(async (req, res) => {
+    // 2026-11-14 起关闭自助注册：登录页按钮已隐藏，这里也拒绝直接调接口。
+    // 要重新开放，在 .env 里设 SHOTFLOW_REGISTRATION_OPEN=1 并重启，同时把 src/App.jsx 的 REGISTRATION_OPEN 改回 true。
+    if (process.env.SHOTFLOW_REGISTRATION_OPEN !== '1') {
+      res.status(403).json({ error: '暂不开放注册，请联系管理员开通账号' });
+      return;
+    }
     const username = String(req.body.username || '').trim();
     const password = String(req.body.password || '');
     const apiKey = String(req.body.apiKey || '').trim();

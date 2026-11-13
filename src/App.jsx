@@ -35,6 +35,9 @@ import CanvasApp from './canvas/App';
 import ErrorLibraryPage from './ErrorLibraryPage';
 import { getAdminPath, getAppHomePath, isAdminPath, isErrorLibraryPath } from './shared/routes';
 
+// 自助注册开关（2026-11-14 关闭）。服务端另有 SHOTFLOW_REGISTRATION_OPEN 开关，两边都开才能注册。
+const REGISTRATION_OPEN = false;
+
 const kindMeta = {
   input: { label: '输入', tone: 'teal' },
   prompt: { label: '提示词', tone: 'amber' },
@@ -647,7 +650,10 @@ function Login({ onLogin }) {
             <Check size={18} />
             {loading ? '处理中' : '登录'}
           </button>
-          {/* 注册入口。做成次要按钮：登录才是这个页面的主动作 */}
+          {/* 注册入口。做成次要按钮：登录才是这个页面的主动作。
+              2026-11-14 起关闭自助注册（按钮隐藏、服务端 /api/auth/register 也拒绝），
+              要重新开放：把 REGISTRATION_OPEN 改成 true，并在服务器 .env 里设 SHOTFLOW_REGISTRATION_OPEN=1。 */}
+          {REGISTRATION_OPEN ? (
           <button
             type="button"
             className="ghost-button"
@@ -663,9 +669,10 @@ function Login({ onLogin }) {
             <UserPlus size={17} />
             注册新账号
           </button>
+          ) : null}
         </form>
       </section>
-      {registerOpen ? (
+      {REGISTRATION_OPEN && registerOpen ? (
         <section className="setup-overlay" aria-label="注册新账号">
           <form className="setup-dialog" onSubmit={submitRegister}>
             <div className="admin-header">
