@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const config = require('./config');
 const { getPool } = require('./db');
 const { authenticatePluginToken } = require('./services/PluginTokenService');
-const { touchUserCatalogLastUsed } = require('./userCatalog');
+const { touchUserCatalogLastUsed, isCatalogUserDisabled } = require('./userCatalog');
 
 const COOKIE_NAME = 'tapflow_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -75,6 +75,10 @@ async function requireAuth(req, res, next) {
       res.status(401).json({ error: '账号不可用' });
       return;
     }
+    if (isCatalogUserDisabled(rows[0].external_user_id)) {
+      res.status(401).json({ error: '账号已停止使用，请联系管理员' });
+      return;
+    }
 
     req.user = rows[0];
     await touchUserLastUsed(req.user.id, req.user.external_user_id);
@@ -97,6 +101,10 @@ async function requirePluginAuth(req, res, next) {
       return;
     }
 
+    if (isCatalogUserDisabled(authenticated.user && authenticated.user.external_user_id)) {
+      res.status(401).json({ error: '账号已停止使用，请联系管理员', errorCode: 'PLUGIN_AUTH_REQUIRED' });
+      return;
+    }
     req.user = authenticated.user;
     req.pluginAuth = authenticated.token;
     await touchUserLastUsed(req.user.id, req.user.external_user_id);

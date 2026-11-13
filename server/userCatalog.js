@@ -670,7 +670,42 @@ async function setUserApiKeyInCatalog(userId, apiKey) {
   return getUserCatalogRowById(catalogId);
 }
 
+// 账号「停止使用」（2026-11-14，用户管理页 :8080/sd2/users.html 里点）：
+// 开关在 sd2_user_runtime.active，SD2 / 审核看板 / Shotflow 共用。本地影子表 users.active 只在有人打开登录页时
+// 才同步，已登录的会话会漏掉 —— 所以这里另放一份停用名单，15 秒刷新一次，requireAuth 每个请求都对一遍。
+let disabledCatalogUserIds = new Set();
+let disabledRefreshTimer = null;
+async function refreshDisabledCatalogUserIds() {
+  if (!userCatalogEnabled()) return;
+  try {
+    const { runtime } = getTables();
+    const [rows] = await getExternalPool().query(`SELECT user_id FROM ${runtime} WHERE active = 0`);
+    const next = new Set(rows.map((row) => Number(row.user_id)));
+    const changed = next.size !== disabledCatalogUserIds.size
+      || [...next].some((id) => !disabledCatalogUserIds.has(id));
+    disabledCatalogUserIds = next;
+    // 名单变了（有人被停用或重新开通）就立刻把本地影子表 users.active 也同步一遍，
+    // 否则重新开通的人在下一次有人打开登录页之前仍会被 requireAuth 判成「账号不可用」
+    if (changed) await syncSharedUserCatalog({ force: true });
+  } catch (error) {
+    if (error && error.code !== 'ER_NO_SUCH_TABLE') console.warn('refresh disabled catalog users failed:', error.message);
+  }
+}
+function startDisabledCatalogUserRefresh() {
+  if (disabledRefreshTimer || !userCatalogEnabled()) return;
+  void refreshDisabledCatalogUserIds();
+  disabledRefreshTimer = setInterval(refreshDisabledCatalogUserIds, 15_000);
+  if (disabledRefreshTimer.unref) disabledRefreshTimer.unref();
+}
+function isCatalogUserDisabled(externalUserId) {
+  startDisabledCatalogUserRefresh();
+  if (externalUserId == null || externalUserId === '') return false;
+  return disabledCatalogUserIds.has(Number(externalUserId));
+}
+
 module.exports = {
+  isCatalogUserDisabled,
+  refreshDisabledCatalogUserIds,
   bootstrapSharedUserCatalog,
   getUserApiKeyByExternalId,
   getUserApiKeyByUser,
