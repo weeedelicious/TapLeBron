@@ -43,6 +43,12 @@ function isGptImageModel(model) {
   return normalizeImageModel(model).startsWith('gpt-image-');
 }
 
+// 规则里的 providerParams 原样带给网关（比如 Seedream 5.5 的 watermark:false）
+function providerParamsForModel(model) {
+  const params = getImageModelRule(model).providerParams;
+  return params && typeof params === 'object' ? { ...params } : {};
+}
+
 function imageModerationForModel(model) {
   return isGptImageModel(model) ? 'low' : '';
 }
@@ -282,6 +288,7 @@ module.exports = {
   isVolcengineImageModel,
   seedreamImageSize,
   seedreamRequestBody,
+  providerParamsForModel,
   seedreamSupportsSequential,
   nativeNanoImageSizeFromSettings,
   normalizeImageCount,

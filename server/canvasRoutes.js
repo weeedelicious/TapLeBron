@@ -6584,6 +6584,9 @@ async function generateOpenAiImages(params, projectUuid, canvasRow) {
       }
       if (!gptImageModel && size) formData.append('size', size);
       if (user) formData.append('user', user);
+      for (const [key, value] of Object.entries(openAIImageProvider.providerParamsForModel(model))) {
+        formData.append(key, String(value));
+      }
       for (const image of providerInputImages) {
         formData.append('image[]', fs.createReadStream(image.filePath), path.basename(image.filePath));
       }
@@ -6611,7 +6614,8 @@ async function generateOpenAiImages(params, projectUuid, canvasRow) {
           output_format: outputFormat,
           n: requestCount,
           user,
-          ...(imageModeration ? { moderation: imageModeration } : {})
+          ...(imageModeration ? { moderation: imageModeration } : {}),
+          ...openAIImageProvider.providerParamsForModel(model)
         },
         {
           headers: {

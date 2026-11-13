@@ -29,6 +29,7 @@ interface ImageModelRule {
   label?: string
   provider?: string
   providerModel?: string
+  providerParams?: Record<string, string | number | boolean>
   apiStyle?: string
   frontendSelectable?: boolean
   aliases?: string[]

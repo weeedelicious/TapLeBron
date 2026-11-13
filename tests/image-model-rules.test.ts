@@ -21,7 +21,7 @@ import {
 const openAIImageProvider = require('../server/providers/OpenAIImageProvider')
 
 describe('图片节点可选模型', () => {
-  it('下拉包含 Nano Pro / 2.1、GPT、Image 2.6 和 Seedream Pro / Lite', () => {
+  it('下拉包含 Nano Pro / 2.1、GPT、Image 2.6 和 Seedream 5.5 / Pro / Lite', () => {
     const models = listSelectableImageModels()
     expect(models.map((item) => item.value)).toEqual([
       'gemini-3-pro-image',
@@ -29,6 +29,7 @@ describe('图片节点可选模型', () => {
       'gpt-image-2',
       'gpt-image-2.6-flare',
       'gpt-image-2.6-sunburst',
+      'seedream-5.5',
       'seedream-5-pro',
       'seedream-5-lite',
     ])
@@ -38,6 +39,7 @@ describe('图片节点可选模型', () => {
       'GPT image 2.0',
       'GPT image 2.6 Flare',
       'GPT image 2.6 Sunburst',
+      'Seedream 5.5',
       'Seedream 5 Pro',
       'Seedream 5 Lite',
     ])
@@ -275,5 +277,18 @@ describe('GPT Image moderation', () => {
     'seedream-5-pro',
   ])('%s does not receive an OpenAI moderation parameter', (model) => {
     expect(openAIImageProvider.imageModerationForModel(model)).toBe('')
+  })
+})
+
+describe('Seedream 5.5', () => {
+  it('走 OpenAI 兼容网关、关水印、1K/1.5K/2K、最多 10 张参考图', () => {
+    expect(openAIImageProvider.providerModelForImage('seedream-5.5')).toBe('bytedance-seed/seedream-5-5')
+    expect(openAIImageProvider.isVolcengineImageModel('seedream-5.5')).toBe(false)
+    expect(openAIImageProvider.providerParamsForModel('seedream-5.5')).toEqual({ watermark: false })
+    expect(openAIImageProvider.providerParamsForModel('gpt-image-2')).toEqual({})
+    expect(openAIImageProvider.imageSizeForModel('seedream-5.5', '16:9', '2K')).toBe('2816x1584')
+    const rule = openAIImageProvider.getImageModelRule('bytedance-seed/seedream-5-5')
+    expect(rule.resolutions).toEqual(['1K', '1.5K', '2K'])
+    expect(rule.maxReferenceImages).toBe(10)
   })
 })

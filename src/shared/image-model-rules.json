@@ -535,6 +535,118 @@
         "maxAspectRatio": 3
       }
     },
+    "seedream-5.5": {
+      "label": "Seedream 5.5",
+      "provider": "openai-compatible",
+      "providerModel": "bytedance-seed/seedream-5-5",
+      "providerParams": {
+        "watermark": false
+      },
+      "frontendSelectable": true,
+      "aliases": [
+        "seedream5.5",
+        "seedream-5-5",
+        "seedream 5.5",
+        "seedream55",
+        "bytedance-seed/seedream-5-5",
+        "doubao-seedream-5-5",
+        "doubao-seedream-5-5-261028"
+      ],
+      "modes": [
+        "text2image",
+        "image2image"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "9:16",
+        "16:9",
+        "3:4",
+        "4:3",
+        "3:2",
+        "2:3",
+        "21:9"
+      ],
+      "nativeRatios": [
+        "1:1",
+        "9:16",
+        "16:9",
+        "3:4",
+        "4:3",
+        "3:2",
+        "2:3",
+        "21:9"
+      ],
+      "resolutions": [
+        "1K",
+        "1.5K",
+        "2K"
+      ],
+      "qualities": [
+        "high"
+      ],
+      "generationCounts": [
+        1,
+        2,
+        4
+      ],
+      "maxGenerationCount": 4,
+      "maxReferenceImages": 10,
+      "progressEstimate": {
+        "text2imageSeconds": 14,
+        "image2imageSeconds": 16,
+        "resolutionMultipliers": {
+          "1K": 1,
+          "1.5K": 1.1,
+          "2K": 1.2
+        },
+        "extraOutputMultiplier": 1,
+        "extraReferenceMultiplier": 0.05
+      },
+      "sizeStrategy": "seedream-size",
+      "nativeSizes": {
+        "1:1": {
+          "1K": "1024x1024",
+          "1.5K": "1536x1536",
+          "2K": "2048x2048"
+        },
+        "4:3": {
+          "1K": "1152x864",
+          "1.5K": "1792x1344",
+          "2K": "2368x1776"
+        },
+        "3:4": {
+          "1K": "864x1152",
+          "1.5K": "1344x1792",
+          "2K": "1776x2368"
+        },
+        "16:9": {
+          "1K": "1424x800",
+          "1.5K": "2048x1152",
+          "2K": "2816x1584"
+        },
+        "9:16": {
+          "1K": "800x1424",
+          "1.5K": "1152x2048",
+          "2K": "1584x2816"
+        },
+        "3:2": {
+          "1K": "1248x832",
+          "1.5K": "1872x1248",
+          "2K": "2496x1664"
+        },
+        "2:3": {
+          "1K": "832x1248",
+          "1.5K": "1248x1872",
+          "2K": "1664x2496"
+        },
+        "21:9": {
+          "1K": "1568x672",
+          "1.5K": "2352x1008",
+          "2K": "3136x1344"
+        }
+      }
+    },
     "seedream-5-pro": {
       "label": "Seedream 5 Pro",
       "provider": "volcengine",
@@ -752,6 +864,9 @@
     },
     "gemini-3.1-flash-image-preview": {
       "extends": "gemini-3.1-flash-image"
+    },
+    "bytedance-seed/seedream-5-5": {
+      "extends": "seedream-5.5"
     }
   }
 }
