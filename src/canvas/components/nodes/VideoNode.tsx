@@ -9,6 +9,7 @@ import { VideoCropModal } from '@/components/VideoCropModal'
 import { VideoTrimModal } from '@/components/VideoTrimModal'
 import { VideoFrameInterpolationModal, frameInterpolationResultName, type VideoFrameInterpolationMethod } from '@/components/VideoFrameInterpolationModal'
 import { VideoDepthModal } from '@/components/VideoDepthModal'
+import { CostWarningModal } from '@/components/CostWarningModal'
 import { videoDepthModelLabel, videoDepthNodeName, videoDepthPhaseLabel, type VideoDepthRequest } from '@/lib/videoDepth'
 import { VideoUiRemovalModal, type VideoUiRemovalMethod } from '@/components/VideoUiRemovalModal'
 import { VideoColorGradeModal, type VideoColorGradeParams } from '@/components/VideoColorGradeModal'
@@ -427,6 +428,8 @@ export function VideoNode({ id, data, selected }: Props) {
   const [frameInterpolationOpen, setFrameInterpolationOpen] = useState(false)
   const [frameInterpolationSubmitting, setFrameInterpolationSubmitting] = useState(false)
   const [videoDepthProvider, setVideoDepthProvider] = useState<VideoDepthRequest['provider'] | null>(null)
+  // 点了成本高的清晰度（Seedance 2.5 的 4K）后等用户在红色警示弹窗里确认
+  const [resolutionWarning, setResolutionWarning] = useState<{ resolution: string; message: string } | null>(null)
   const [videoDepthSubmitting, setVideoDepthSubmitting] = useState(false)
   const [uiRemovalOpen, setUiRemovalOpen] = useState(false)
   const [uiRemovalSubmitting, setUiRemovalSubmitting] = useState(false)
@@ -1053,15 +1056,18 @@ export function VideoNode({ id, data, selected }: Props) {
     setParam('settings', { ...params.settings, [key]: val })
   }, [params, setParam])
 
-  const setVideoResolution = useCallback((value: string) => {
+  const setVideoResolution = useCallback((value: string, confirmed = false) => {
     const freshNode = useCanvasStore.getState().nodes.find(n => n.id === id || n.data.nodeKey === id)
     const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
     const nextModel = currentParams.model || 'Seedance_2_0'
     const nextResolution = normalizeVideoResolutionValue(nextModel, value)
-    // 成本高的清晰度（Seedance 2.5 的 4K）先确认，取消就保持原来的清晰度
+    // 成本高的清晰度（Seedance 2.5 的 4K）先弹红色警示，确认后才真正切；取消就保持原来的清晰度
     const warning = getVideoResolutionWarning(nextModel, nextResolution)
     const currentResolution = (currentParams.settings as { resolution?: string } | undefined)?.resolution
-    if (warning && currentResolution !== nextResolution && !window.confirm(warning)) return
+    if (!confirmed && warning && currentResolution !== nextResolution) {
+      setResolutionWarning({ resolution: nextResolution, message: warning })
+      return
+    }
     const hasImageReference = (currentParams.imageList as NodeRef[] | undefined)?.some(ref => Boolean(ref.url)) ?? false
     const nextCount = normalizeVideoGenerationCount(nextModel, currentParams.count, hasImageReference, nextResolution)
     updateNodeData(id, {
@@ -4077,6 +4083,19 @@ export function VideoNode({ id, data, selected }: Props) {
           if (!frameInterpolationSubmitting) setFrameInterpolationOpen(false)
         }}
         onConfirm={handleFrameInterpolationAccept}
+      />
+    )}
+    {resolutionWarning && (
+      <CostWarningModal
+        title="成本警示"
+        message={resolutionWarning.message}
+        confirmLabel={"确定使用 " + resolutionWarning.resolution}
+        onCancel={() => setResolutionWarning(null)}
+        onConfirm={() => {
+          const next = resolutionWarning.resolution
+          setResolutionWarning(null)
+          setVideoResolution(next, true)
+        }}
       />
     )}
     {videoDepthProvider && videoUrl && (
