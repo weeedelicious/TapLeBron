@@ -2265,6 +2265,33 @@ async function getReadableCanvasForUser(req, canvasId) {
   return row;
 }
 
+/**
+ * 只判断「这块画布这个人能不能读」，不读画布内容（2026-11-16）。
+ * 心跳每块打开的画布约 5 秒一次，以前走 getReadableCanvasForUser 会把整块画布从 canvas_content
+ * 读出来再解析 —— 画布 587 有 61MB，一次 1.6 秒，把整台服务器拖慢。权限条件与 getReadableCanvasForUser 保持一致。
+ */
+async function getReadableCanvasIdForUser(req, canvasId) {
+  const [rows] = await getPool().query(
+    `SELECT c.id
+     FROM canvases c
+     WHERE c.id = ? AND (
+       c.owner_id = ?
+       OR ? = ?
+       OR c.shared = 1
+       OR c.canvas_role = 'template'
+       OR EXISTS (
+         SELECT 1
+         FROM canvas_user_shares readable_share
+         WHERE readable_share.canvas_id = c.id
+           AND readable_share.target_user_id = ?
+       )
+     )
+     LIMIT 1`,
+    [canvasId, req.user.id, req.user.role, 'admin', req.user.id]
+  );
+  return rows[0] ? { id: rows[0].id } : null;
+}
+
 async function getWritableCanvasForUser(req, canvasId) {
   const row = await getReadableCanvasForUser(req, canvasId);
   return row && projectAccessForUser(req, row).canWrite ? row : null;
@@ -3352,7 +3379,7 @@ apiRouter.post('/projects/:uuid/access-session/enter', async (req, res, next) =>
 
 apiRouter.post('/projects/:uuid/access-session/heartbeat', async (req, res, next) => {
   try {
-    const row = await getReadableCanvasForUser(req, req.params.uuid);
+    const row = await getReadableCanvasIdForUser(req, req.params.uuid);
     if (!row) return res.status(404).json({ error: 'canvas not found' });
     const session = await requireCanvasSession(req, res, row.id, { touch: true });
     if (!session) return;
@@ -3364,7 +3391,7 @@ apiRouter.post('/projects/:uuid/access-session/heartbeat', async (req, res, next
 
 apiRouter.post('/projects/:uuid/access-session/leave', async (req, res, next) => {
   try {
-    const row = await getReadableCanvasForUser(req, req.params.uuid);
+    const row = await getReadableCanvasIdForUser(req, req.params.uuid);
     if (!row) return res.status(404).json({ error: 'canvas not found' });
     const left = await leaveCanvasSession({
       canvasId: row.id,
