@@ -7805,6 +7805,8 @@ function seedanceContent(params) {
 
 function isSeedance25Model(model) {
   const rule = getVideoModelRule(model) || {};
+  // 只用来判断能不能走「480P 草稿 → 1080P 定稿」；Flash 最高 720P，规则里标了 supportsDraft:false
+  if (rule.supportsDraft === false) return false;
   const id = String(model || '') + ' ' + String(rule.providerModel || '') + ' ' + String(rule.label || '');
   return id.toLowerCase().includes('seedance_2_5') || id.toLowerCase().includes('seedance 2.5') || id.toLowerCase().includes('seedance-2.5') || id.toLowerCase().includes('seedance-2-5');
 }

@@ -38,6 +38,10 @@ interface VideoModelRule {
   resolutions?: string[]
   /** 个别清晰度有需要提醒用户的代价（比如 10bit HEVC 不一定能直接播），按清晰度给一句话。 */
   resolutionNotes?: Record<string, string>
+  /** 点这个清晰度时先弹窗确认（比如 Seedance 2.5 的 4K 成本高） */
+  resolutionWarnings?: Record<string, string>
+  /** false = 不支持「480P 草稿再转 1080P」（Seedance 2.5 Flash 最高 720P） */
+  supportsDraft?: boolean
   duration?: { min: number; max: number; step: number; default: number }
   modeDurations?: Partial<Record<VideoModeKey, { min: number; max: number; step: number; default: number }>>
   modeInputs?: Partial<Record<VideoModeKey, VideoModeRule['inputs']>>
@@ -214,6 +218,7 @@ export function getVideoRatioOptions(model?: string, mode?: string) {
 
 export function videoModelSupportsDraft(model?: string) {
   const rule = getVideoModelRule(model)
+  if (rule.supportsDraft === false) return false
   const id = String(model || '') + ' ' + String(rule.providerModel || '') + ' ' + String(rule.label || '')
   const value = id.toLowerCase()
   return value.includes('seedance_2_5') || value.includes('seedance-2.5') || value.includes('seedance-2-5') || value.includes('seedance 2.5')
@@ -222,6 +227,12 @@ export function videoModelSupportsDraft(model?: string) {
 export function getVideoResolutionOptions(model?: string) {
   const modelRule = getVideoModelRule(model)
   return modelRule.resolutions ?? [rules.defaults.resolution]
+}
+
+/** 点这个清晰度前要不要弹窗确认；没有就返回空串。 */
+export function getVideoResolutionWarning(model: string | undefined, resolution?: string) {
+  if (!resolution) return ''
+  return getVideoModelRule(model).resolutionWarnings?.[resolution] ?? ''
 }
 
 /** 当前清晰度要不要给用户一句提醒；没有就返回空串。 */

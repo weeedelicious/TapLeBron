@@ -49,8 +49,8 @@ describe('设为主视频后套用它的参数', () => {
   })
 
   it('元数据缺模型时用当前模型，非法清晰度被归一化而不是照抄', () => {
-    // 没带 model → 留在 2.5；而 4K 在 2.5 上不合法 → 落回默认 720P
-    expect(settingsFromMeta({ resolution: '4K' }, CURRENT))
+    // 没带 model → 留在 2.5；8K 在 2.5 上不合法 → 落回默认 720P（2026-11-16 起 2.5 有 4K，改用 8K 举例）
+    expect(settingsFromMeta({ resolution: '8K' }, CURRENT))
       .toEqual({ model: 'Seedance_2_5', ratio: '16:9', resolution: '720P', duration: 5 })
   })
 

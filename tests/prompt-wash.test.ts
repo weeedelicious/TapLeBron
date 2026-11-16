@@ -51,7 +51,7 @@ describe('文字节点洗提示词', () => {
 
   it('能清理代码围栏、归一化模型参数并锁定目标时长', () => {
     const result = service.normalizeResult(
-      '```json\n{"prompt":"镜头缓慢推进","settings":{"model":"Seedance_2_5","modeType":"i2v","duration":99,"ratio":"16:9","resolution":"4K","enableSound":"off"},"warnings":["比例会自适应"]}\n```',
+      '```json\n{"prompt":"镜头缓慢推进","settings":{"model":"Seedance_2_5","modeType":"i2v","duration":99,"ratio":"16:9","resolution":"8K","enableSound":"off"},"warnings":["比例会自适应"]}\n```',
       { model: 'Seedance_2_5', modeType: 'omni', duration: 10, ratio: '16:9', resolution: '720P', enableSound: 'on' },
     )
     expect(result.prompt).toBe('镜头缓慢推进')

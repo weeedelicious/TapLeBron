@@ -51,6 +51,7 @@ import {
   getVideoRatioOptions,
   getVideoRefRule,
   getVideoResolutionNote,
+  getVideoResolutionWarning,
   getVideoResolutionOptions,
   videoModelSupportsDraft,
   videoRefCountError,
@@ -1057,6 +1058,10 @@ export function VideoNode({ id, data, selected }: Props) {
     const currentParams = freshNode ? getParams(freshNode.data as CanvasNodeData) : params
     const nextModel = currentParams.model || 'Seedance_2_0'
     const nextResolution = normalizeVideoResolutionValue(nextModel, value)
+    // 成本高的清晰度（Seedance 2.5 的 4K）先确认，取消就保持原来的清晰度
+    const warning = getVideoResolutionWarning(nextModel, nextResolution)
+    const currentResolution = (currentParams.settings as { resolution?: string } | undefined)?.resolution
+    if (warning && currentResolution !== nextResolution && !window.confirm(warning)) return
     const hasImageReference = (currentParams.imageList as NodeRef[] | undefined)?.some(ref => Boolean(ref.url)) ?? false
     const nextCount = normalizeVideoGenerationCount(nextModel, currentParams.count, hasImageReference, nextResolution)
     updateNodeData(id, {
