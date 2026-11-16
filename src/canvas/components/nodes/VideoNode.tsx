@@ -4139,6 +4139,7 @@ export function VideoNode({ id, data, selected }: Props) {
       </div>
     ) : whiteboardOpen && (
       <WhiteboardModal
+        projectUuid={data.projectUuid}
         sourceName={data.name}
         sourceFile={whiteboardSourceFile}
         isPreparing={whiteboardPreparing}

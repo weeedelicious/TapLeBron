@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2 } from 'lucide-react'
 import 'tldraw/tldraw.css'
@@ -11,9 +11,12 @@ import {
   useTranslation,
   type Box,
   type Editor,
+  type TLAssetStore,
   type TLEditorSnapshot,
   type TldrawOptions,
 } from 'tldraw'
+import { assetsApi } from '@/lib/api'
+import { dataUrlToFile, whiteboardSourceUrlOf } from '@/lib/whiteboard'
 import { DefaultColorStyle, DefaultSizeStyle } from '@tldraw/editor'
 
 export interface WhiteboardModalAcceptPayload {
@@ -24,6 +27,8 @@ export interface WhiteboardModalAcceptPayload {
 }
 
 interface WhiteboardModalProps {
+  /** 画布 id：白板里的图片存成这块画布的资产文件 */
+  projectUuid: string
   sourceName: string
   sourceFile?: File | null
   initialSnapshot?: TLEditorSnapshot | null
@@ -42,6 +47,39 @@ const TLDRAW_OPTIONS: Partial<TldrawOptions> = {
   maxPages: 1,
   actionShortcutsLocation: 'menu',
   maxFontsToLoadBeforeRender: 0,
+}
+
+/**
+ * 白板里的图片存成画布资产文件，白板状态只记地址（2026-11-16）。
+ * 以前用 tldraw 默认存法：图片原样转 base64 塞进画布数据，一张 2816×1584 的 PNG 就是 8.6MB，
+ * 画布 587 因此涨到 61MB，每 5 秒一次的心跳都要读一遍，拖慢整台服务器。
+ * 现在：粘贴 / 拖入的图片走 assetsApi.upload（超过 10MB 先压缩），已经是画布资产的底图直接引用原地址。
+ */
+export function createWhiteboardAssetStore(projectUuid: string): TLAssetStore {
+  return {
+    async upload(_asset, file) {
+      const existing = whiteboardSourceUrlOf(file)
+      if (existing) return { src: existing }
+      if (!projectUuid) throw new Error('白板图片上传失败：缺少画布信息')
+      const uploaded = await assetsApi.upload(projectUuid, file)
+      return { src: uploaded.url }
+    },
+  }
+}
+
+/** 旧白板里已经内嵌的 base64 图片，保存时转成画布资产文件，白板状态里换成地址 */
+export async function externalizeInlineAssets(editor: Editor, projectUuid: string) {
+  if (!projectUuid) return
+  const inline = editor.getAssets().filter((asset) => {
+    const src = (asset.props as { src?: unknown }).src
+    return typeof src === 'string' && src.startsWith('data:')
+  })
+  for (const asset of inline) {
+    const props = asset.props as { src: string; name?: string }
+    const file = await dataUrlToFile(props.src, props.name || 'whiteboard-image')
+    const uploaded = await assetsApi.upload(projectUuid, file)
+    editor.updateAssets([{ ...asset, props: { ...asset.props, src: uploaded.url } } as typeof asset])
+  }
 }
 
 function applyWhiteboardDefaults(editor: Editor) {
@@ -77,6 +115,7 @@ function resolveWhiteboardExportPixelRatio(editor: Editor, shapes: Array<{ type?
 }
 
 export function WhiteboardModal({
+  projectUuid,
   sourceName,
   sourceFile,
   initialSnapshot,
@@ -90,6 +129,7 @@ export function WhiteboardModal({
 }: WhiteboardModalProps) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const assetStore = useMemo(() => createWhiteboardAssetStore(projectUuid), [projectUuid])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -134,6 +174,8 @@ export function WhiteboardModal({
         background: strokesOnly ? false : undefined,
         bounds,
       })
+      // 旧白板里内嵌的 base64 图片先转成文件，再取白板状态，画布里只留地址
+      await externalizeInlineAssets(editor, projectUuid)
       const snapshot = editor.getSnapshot()
       await onAccept({
         dataUrl: image.url,
@@ -144,7 +186,7 @@ export function WhiteboardModal({
     } finally {
       setIsSaving(false)
     }
-  }, [editor, isSaving, onAccept, onCancel, strokesOnly])
+  }, [editor, isSaving, onAccept, onCancel, projectUuid, strokesOnly])
 
   return createPortal(
     <div
@@ -274,6 +316,7 @@ export function WhiteboardModal({
           ) : null}
           <Tldraw
             options={TLDRAW_OPTIONS}
+            assets={assetStore}
             snapshot={initialSnapshot ?? undefined}
             onMount={(mountedEditor) => {
               setEditor(mountedEditor)

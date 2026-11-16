@@ -14,6 +14,8 @@ import { ImageGridConfirmModal } from '@/components/ImageGridConfirmModal'
 import { ImageCropModal, type ImageCropAcceptPayload } from '@/components/ImageCropModal'
 import { WhiteboardModal } from '@/components/WhiteboardModal'
 import { NodeShell } from './NodeShell'
+import { UploadProgressPanel } from './UploadProgressPanel'
+import { activeUploadNodeIds, localUploadPreviewUrls } from '@/lib/uploadPrep'
 import { NodeTypeIcon } from './nodeTypeIcon'
 import { ImagePreview } from '@/components/ImagePreview'
 import { useCanvasStore } from '@/store/canvasStore'
@@ -129,10 +131,29 @@ export function UploadNode({ id, data, selected }: Props) {
   const hasImage = hasContent && isImage(mainUrl)
   const hasVideo = hasContent && isVideo(mainUrl)
   const headerIconType = hasImage ? 'image' : isVideo(mainUrl) ? 'video' : isAudio(mainUrl) ? 'audio' : 'upload'
-  const previewAspectW = hasImage ? (imgSize?.w ?? 4) : hasVideo ? (videoSize?.w ?? 16) : 4
-  const previewAspectH = hasImage ? (imgSize?.h ?? 3) : hasVideo ? (videoSize?.h ?? 9) : 3
+  // 拖入/粘贴图片的占位：上传完成前显示读取/压缩/上传进度
+  const uploadInfo = !hasContent ? data.uploadInfo : undefined
+  const uploadInterrupted = Boolean(uploadInfo?.loading) && !activeUploadNodeIds.has(id)
+  const uploadPreviewUrl = uploadInfo ? localUploadPreviewUrls.get(id) : undefined
+  const sizedByUploadPreview = Boolean(uploadPreviewUrl && imgSize)
+  const previewAspectW = hasImage || sizedByUploadPreview ? (imgSize?.w ?? 4) : hasVideo ? (videoSize?.w ?? 16) : 4
+  const previewAspectH = hasImage || sizedByUploadPreview ? (imgSize?.h ?? 3) : hasVideo ? (videoSize?.h ?? 9) : 3
   const previewFrame = fitFrameToAspect(previewAspectW, previewAspectH, 520, 400, 220)
-  const shellWidth = hasImage || hasVideo ? previewFrame.width : 240
+  const shellWidth = hasImage || hasVideo || sizedByUploadPreview ? previewFrame.width : 240
+  // 读取本地预览图尺寸，让占位节点一开始就是最终比例，上传完成时不跳变
+  useEffect(() => {
+    if (!uploadPreviewUrl || imgSize) return
+    let cancelled = false
+    const probe = new Image()
+    probe.onload = () => {
+      if (!cancelled && probe.naturalWidth && probe.naturalHeight) {
+        setImgSize({ w: probe.naturalWidth, h: probe.naturalHeight })
+      }
+    }
+    probe.src = uploadPreviewUrl
+    return () => { cancelled = true }
+  }, [imgSize, uploadPreviewUrl])
+
   const resourceItems = (data._resourceMeta?.items ?? []) as ResourceMeta[]
   const mainResourceMeta = resourceItems.find((item) => (
     item?.originalUrl === mainUrl || item?.displayUrl === mainUrl
@@ -987,6 +1008,13 @@ export function UploadNode({ id, data, selected }: Props) {
               </div>
             )}
           </div>
+        ) : uploadInfo ? (
+          <UploadProgressPanel
+            uploadInfo={uploadInfo}
+            interrupted={uploadInterrupted}
+            previewUrl={uploadPreviewUrl}
+            height={sizedByUploadPreview ? previewFrame.height : 160}
+          />
         ) : (
           /* Empty drop zone */
           <div
@@ -1037,6 +1065,7 @@ export function UploadNode({ id, data, selected }: Props) {
         )}
         {whiteboardOpen && (
           <WhiteboardModal
+            projectUuid={data.projectUuid}
             sourceName={data.name}
             sourceFile={whiteboardSourceFile}
             isPreparing={whiteboardPreparing}

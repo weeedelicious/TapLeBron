@@ -106,10 +106,22 @@ export async function loadAssetFileFromUrl(url: string, fallbackName: string) {
   const extension = mimeToExtension(blob.type)
   const normalizedName = `${stripFileExtension(fallbackName)}.${extension}`
 
-  return new File([blob], normalizedName, {
+  const file = new File([blob], normalizedName, {
     type: blob.type || 'application/octet-stream',
     lastModified: Date.now(),
   })
+  // 已经是画布资产（/assets/<画布>/<文件>）的图，白板直接引用这个地址，不再上传一份
+  if (/^\/assets\/[^/]+\/[^/?#]+/.test(url)) {
+    Object.defineProperty(file, WHITEBOARD_SOURCE_URL, { value: url, enumerable: false })
+  }
+  return file
+}
+
+/** loadAssetFileFromUrl 读出来的文件上挂着原资产地址（不可枚举属性） */
+export const WHITEBOARD_SOURCE_URL = '__shotflowSourceUrl'
+export function whiteboardSourceUrlOf(file: File): string {
+  const value = (file as unknown as Record<string, unknown>)[WHITEBOARD_SOURCE_URL]
+  return typeof value === 'string' ? value : ''
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string) {

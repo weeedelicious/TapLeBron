@@ -2677,6 +2677,7 @@ export function ImageNode({ id, data, selected }: Props) {
       )}
       {whiteboardOpen && (
         <WhiteboardModal
+          projectUuid={data.projectUuid}
           sourceName={data.name}
           sourceFile={whiteboardSourceFile}
           isPreparing={isWhiteboardPreparing}
