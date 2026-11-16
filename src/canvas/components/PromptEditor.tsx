@@ -810,10 +810,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
      * 原生撤销栈的办法（虽然标记 deprecated，但目标浏览器都还支持）。失败时退回手动 Range
      * 插入 —— 那样会丢一次撤销机会，但内容不会丢。
      */
-    const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-      const text = plainTextFromClipboard(event.clipboardData)
-      event.preventDefault()
-      if (!text) return
+    const insertPlainTextAtSelection = useCallback((text: string) => {
       let inserted = false
       try {
         inserted = document.execCommand('insertText', false, text)
@@ -841,6 +838,41 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
       // 「复制粘贴会这样，再点一下才会正常」）。
       convertTextMentions()
     }, [convertTextMentions, saveSelection, syncOut])
+
+    // 编辑框内部拖动（比如挪药丸）时为 true：这种拖放交给浏览器原生处理
+    const internalDragRef = useRef(false)
+
+    /**
+     * 从外部（网页、文档）拖文字进来时只插纯文字（2026-11-16）。
+     * 粘贴早就只认纯文字了，但拖放没拦：浏览器会把原网页的整段排版（几百个 style / class）塞进来，
+     * 存进 promptHtml 后每条生成历史再存一份 —— 7–9 月有画布因此涨到 17MB。
+     */
+    const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+      if (internalDragRef.current) return
+      const dt = event.dataTransfer
+      if (!dt || (dt.files && dt.files.length > 0)) return
+      const types = Array.from(dt.types || [])
+      if (!types.includes('text/html')) return
+      const text = dt.getData('text/plain')
+      event.preventDefault()
+      if (!text) return
+      const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+      const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY)
+      const selection = window.getSelection()
+      if (range && selection) {
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+      insertPlainTextAtSelection(text)
+    }, [insertPlainTextAtSelection])
+
+    const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+      const text = plainTextFromClipboard(event.clipboardData)
+      event.preventDefault()
+      if (!text) return
+      insertPlainTextAtSelection(text)
+    }, [insertPlainTextAtSelection])
+
 
     /**
      * 光标前刚好打完一个 `image1` 就地换成 chip。返回是否换掉了。
@@ -984,6 +1016,9 @@ export const PromptEditor = forwardRef<PromptEditorHandle, Props>(
           }}
           onInput={handleInput}
           onPaste={handlePaste}
+          onDrop={handleDrop}
+          onDragStart={() => { internalDragRef.current = true }}
+          onDragEnd={() => { internalDragRef.current = false }}
           onCopy={handleCopy}
           onCut={handleCut}
           onClick={handleClick}

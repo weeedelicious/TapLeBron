@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { promisify } = require('util');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -62,6 +63,7 @@ const textureClarityService = require('./services/TextureClarityService');
 const subjectMattingService = require('./services/SubjectMattingService');
 const videoFrameInterpolationService = require('./services/VideoFrameInterpolationService');
 const videoDepthService = require('./services/VideoDepthService');
+const promptHtmlCleaner = require('./services/PromptHtmlCleaner');
 const videoUiRemovalService = require('./services/VideoUiRemovalService');
 const videoColorGradeService = require('./services/VideoColorGradeService');
 const mediaEnhanceService = require('./services/MediaEnhanceService');
@@ -10399,6 +10401,219 @@ function mergeRecoveredUrls(existing, recovered) {
     return true;
   });
 }
+
+/**
+ * 管理员维护：把白板标注里内嵌的 base64 图片转成画布资产文件，白板状态只留地址（2026-11-16）。
+ * 以前白板（tldraw）默认把图片原样转 base64 塞进 params.(advancedSettings.)whiteboard.snapshot，
+ * 23 块画布共 237MB（587「设定资产图」61MB），每次打开 / 保存都要搬这些数据。
+ * 改动前整块画布数据先 gzip 备份到 backups/inline-images-<日期>/<画布>.json.gz；
+ * 走画布修改队列 + publishCanvasChange，开着这块画布的网页会按 changedNodeKeys 刷新这些节点。
+ * ?dryRun=1 只统计不改。
+ */
+function whiteboardSnapshotsInNodeData(nodeData) {
+  const params = nodeData && typeof nodeData === 'object' ? nodeData.params : null;
+  if (!params || typeof params !== 'object') return [];
+  return [params.whiteboard?.snapshot, params.advancedSettings?.whiteboard?.snapshot].filter((snap) => snap && typeof snap === 'object');
+}
+
+async function externalizeWhiteboardInlineImage(projectUuid, canvasRow, dataUrl) {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(dataUrl);
+  if (!match) return null;
+  const mimeType = match[1].toLowerCase();
+  const buffer = Buffer.from(dataUrl.slice(match[0].length), 'base64');
+  if (!buffer.length) return null;
+  const sha1 = crypto.createHash('sha1').update(buffer).digest('hex');
+  const ext = (extensionFromMimeType(mimeType) || '.png').replace(/[^a-zA-Z0-9.]/g, '') || '.png';
+  const storedName = `${sha1}${ext}`;
+  const dest = path.join(assetsDir(projectUuid), storedName);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (!fs.existsSync(dest)) {
+    const staged = dest + '.tmp-' + process.pid;
+    fs.writeFileSync(staged, buffer);
+    fs.renameSync(staged, dest);
+  }
+  await mirrorStoredAsset(projectUuid, storedName, dest, mimeType);
+  await upsertAssetRecord(canvasRow, {
+    originalName: 'whiteboard-' + storedName,
+    storedName,
+    relativePath: assetRelativePath(projectUuid, storedName),
+    mimeType,
+    byteSize: buffer.length,
+    sha1,
+    sourceType: 'whiteboard',
+  });
+  return `/assets/${projectUuid}/${storedName}`;
+}
+
+apiRouter.post('/admin/canvases/:uuid/externalize-whiteboard-images', async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' });
+    const projectUuid = String(req.params.uuid || '');
+    const dryRun = req.query.dryRun === '1';
+    await queueCanvasMutation(projectUuid, async () => {
+      const row = await getReadableCanvasForUser(req, projectUuid);
+      if (!row) return res.status(404).json({ error: 'canvas not found' });
+      const data = readCanvasData(row);
+      const nodeList = nodeListFromData(data, projectUuid);
+      const changedNodeKeys = [];
+      const urlByDataSha = new Map();
+      let images = 0;
+      let inlineBytes = 0;
+      const pending = [];
+      for (const node of nodeList) {
+        const isString = typeof node.data === 'string';
+        let nodeData;
+        try { nodeData = isString ? JSON.parse(node.data) : node.data; } catch { continue; }
+        const targets = [];
+        for (const snapshot of whiteboardSnapshotsInNodeData(nodeData)) {
+          const store = snapshot.document?.store || snapshot.store;
+          if (!store || typeof store !== 'object') continue;
+          for (const record of Object.values(store)) {
+            const src = record && record.typeName === 'asset' ? record.props?.src : null;
+            if (typeof src === 'string' && src.startsWith('data:image/')) targets.push(record);
+          }
+        }
+        if (!targets.length) continue;
+        images += targets.length;
+        inlineBytes += targets.reduce((sum, record) => sum + record.props.src.length, 0);
+        pending.push({ node, nodeData, isString, targets });
+      }
+      if (dryRun || !pending.length) {
+        return res.json({ ok: true, dryRun, images, inlineMb: Number((inlineBytes / 1048576).toFixed(2)), nodes: pending.length });
+      }
+      const backupDir = path.join(path.resolve(__dirname, '..'), 'backups', 'inline-images-' + new Date().toISOString().slice(0, 10));
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupPath = path.join(backupDir, `${projectUuid}-${Date.now()}.json.gz`);
+      fs.writeFileSync(backupPath, zlib.gzipSync(Buffer.from(JSON.stringify(data))));
+      for (const item of pending) {
+        for (const record of item.targets) {
+          const src = record.props.src;
+          const key = crypto.createHash('sha1').update(src).digest('hex');
+          let url = urlByDataSha.get(key);
+          if (!url) {
+            url = await externalizeWhiteboardInlineImage(projectUuid, row, src);
+            if (url) urlByDataSha.set(key, url);
+          }
+          if (url) record.props.src = url;
+        }
+        item.node.data = item.isString ? JSON.stringify(item.nodeData) : item.nodeData;
+        changedNodeKeys.push(String(item.node.nodeKey));
+      }
+      data.nodeList = nodeList;
+      await saveCanvasData(projectUuid, data, {
+        reason: 'externalize_whiteboard_images',
+        ownerId: row.owner_id,
+        createdBy: req.user.id,
+        cooldownMs: 0,
+      });
+      const contentVersion = crypto.createHash('sha1').update(JSON.stringify(nodeList)).digest('hex');
+      publishCanvasChange({
+        canvasId: projectUuid,
+        source: 'maintenance',
+        reason: 'externalize_whiteboard_images',
+        revision: contentVersion,
+        contentVersion,
+        changedAtMs: Date.now(),
+        updatedBy: req.user.id,
+        changedNodeKeys,
+      });
+      const afterBytes = Buffer.byteLength(JSON.stringify(data));
+      res.json({
+        ok: true,
+        images,
+        files: urlByDataSha.size,
+        nodes: changedNodeKeys.length,
+        inlineMb: Number((inlineBytes / 1048576).toFixed(2)),
+        afterMb: Number((afterBytes / 1048576).toFixed(2)),
+        backup: path.relative(path.resolve(__dirname, '..'), backupPath),
+      });
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * 管理员维护：清理提示词排版（params.promptHtml 和 params.history[].promptHtml）里从网页带进来的
+ * style / class / data-*（2026-11-16）。只动 2 万字以上的排版，药丸与文字逐字不变（见 PromptHtmlCleaner）。
+ * 先 gzip 备份整块画布，再走画布修改队列 + publishCanvasChange。?dryRun=1 只统计。
+ */
+apiRouter.post('/admin/canvases/:uuid/clean-prompt-html', async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' });
+    const projectUuid = String(req.params.uuid || '');
+    const dryRun = req.query.dryRun === '1';
+    await queueCanvasMutation(projectUuid, async () => {
+      const row = await getReadableCanvasForUser(req, projectUuid);
+      if (!row) return res.status(404).json({ error: 'canvas not found' });
+      const data = readCanvasData(row);
+      const nodeList = nodeListFromData(data, projectUuid);
+      const changedNodeKeys = [];
+      let entries = 0;
+      let savedBytes = 0;
+      const pending = [];
+      for (const node of nodeList) {
+        const isString = typeof node.data === 'string';
+        let nodeData;
+        try { nodeData = isString ? JSON.parse(node.data) : node.data; } catch { continue; }
+        const params = nodeData && typeof nodeData === 'object' ? nodeData.params : null;
+        if (!params || typeof params !== 'object') continue;
+        const holders = [params, ...(Array.isArray(params.history) ? params.history : [])];
+        const replacements = [];
+        for (const holder of holders) {
+          if (!holder || typeof holder.promptHtml !== 'string' || holder.promptHtml.length < 20000) continue;
+          const result = promptHtmlCleaner.cleanPromptHtml(holder.promptHtml);
+          if (!result.changed) continue;
+          entries += 1;
+          savedBytes += result.savedBytes;
+          replacements.push({ holder, html: result.html });
+        }
+        if (replacements.length) pending.push({ node, nodeData, isString, replacements });
+      }
+      if (dryRun || !pending.length) {
+        return res.json({ ok: true, dryRun, entries, savedMb: Number((savedBytes / 1048576).toFixed(2)), nodes: pending.length });
+      }
+      const backupDir = path.join(path.resolve(__dirname, '..'), 'backups', 'inline-images-' + new Date().toISOString().slice(0, 10));
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupPath = path.join(backupDir, `${projectUuid}-prompt-html-${Date.now()}.json.gz`);
+      // 先备份（还没改任何东西），再替换
+      fs.writeFileSync(backupPath, zlib.gzipSync(Buffer.from(JSON.stringify(data))));
+      for (const item of pending) {
+        for (const { holder, html } of item.replacements) holder.promptHtml = html;
+        item.node.data = item.isString ? JSON.stringify(item.nodeData) : item.nodeData;
+        changedNodeKeys.push(String(item.node.nodeKey));
+      }
+      data.nodeList = nodeList;
+      await saveCanvasData(projectUuid, data, {
+        reason: 'clean_prompt_html',
+        ownerId: row.owner_id,
+        createdBy: req.user.id,
+        cooldownMs: 0,
+      });
+      const contentVersion = crypto.createHash('sha1').update(JSON.stringify(nodeList)).digest('hex');
+      publishCanvasChange({
+        canvasId: projectUuid,
+        source: 'maintenance',
+        reason: 'clean_prompt_html',
+        revision: contentVersion,
+        contentVersion,
+        changedAtMs: Date.now(),
+        updatedBy: req.user.id,
+        changedNodeKeys,
+      });
+      res.json({
+        ok: true,
+        entries,
+        nodes: changedNodeKeys.length,
+        savedMb: Number((savedBytes / 1048576).toFixed(2)),
+        afterMb: Number((Buffer.byteLength(JSON.stringify(data)) / 1048576).toFixed(2)),
+        backup: path.relative(path.resolve(__dirname, '..'), backupPath),
+      });
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 apiRouter.post('/projects/:projectUuid/tasks/:jobId/recover', async (req, res, next) => {
   try {
