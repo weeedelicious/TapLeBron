@@ -354,7 +354,21 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onIns
     : '选中节点或分组，在上方工具条点击收藏。'
   const sortPrefix = isSharedMode ? '共享时间' : '收藏时间'
 
+  // 滚动位置只在停下来后才写一次（2026-11-17）：以前每个滚动事件都 setState + 写 localStorage，
+  // 整个面板跟着重渲染，下面的「恢复滚动位置」又在下一帧把 scrollTop 设回刚存的旧值，
+  // 滚轮平滑滚动时就一直被往回拽 —— 用户说的「我的资产库往下滑会抖」。
+  const memoryRef = useRef(currentMemory)
+  memoryRef.current = currentMemory
+  const scrollSaveTimerRef = useRef<number | null>(null)
+  const pendingScrollTopRef = useRef<number | null>(null)
+
   const updateMemory = useCallback((patch: Partial<FavoritePanelMemory>) => {
+    if (patch.scrollTop !== undefined && scrollSaveTimerRef.current !== null) {
+      // 筛选 / 排序把位置重置时，丢掉还没写的旧滚动位置
+      window.clearTimeout(scrollSaveTimerRef.current)
+      scrollSaveTimerRef.current = null
+      pendingScrollTopRef.current = null
+    }
     setPanelMemory(current => {
       const next = {
         ...(current[mode] ?? DEFAULT_PANEL_MEMORY),
@@ -413,15 +427,39 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onIns
     })
   }, [filteredItems, sortOrder])
 
+  const handleListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    pendingScrollTopRef.current = event.currentTarget.scrollTop
+    if (scrollSaveTimerRef.current !== null) window.clearTimeout(scrollSaveTimerRef.current)
+    scrollSaveTimerRef.current = window.setTimeout(() => {
+      scrollSaveTimerRef.current = null
+      const top = pendingScrollTopRef.current
+      pendingScrollTopRef.current = null
+      if (top !== null) updateMemory({ scrollTop: top })
+    }, 250)
+  }, [updateMemory])
+
+  // 关面板 / 切模式时把还没写的滚动位置立刻存掉
+  useEffect(() => () => {
+    if (scrollSaveTimerRef.current !== null) {
+      window.clearTimeout(scrollSaveTimerRef.current)
+      scrollSaveTimerRef.current = null
+      const top = pendingScrollTopRef.current
+      pendingScrollTopRef.current = null
+      if (top !== null) writeFavoritePanelMemory(mode, { ...memoryRef.current, scrollTop: top })
+    }
+  }, [mode])
+
+  // 只在打开、切模式 / 切页签、换筛选排序、列表数量变化时恢复滚动位置；用户自己滚的时候不碰
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const element = listRef.current
-      if (!element) return
+      if (!element || pendingScrollTopRef.current !== null) return
       const maxTop = Math.max(0, element.scrollHeight - element.clientHeight)
-      element.scrollTop = Math.min(currentMemory.scrollTop, maxTop)
+      const target = Math.min(memoryRef.current.scrollTop, maxTop)
+      if (Math.abs(element.scrollTop - target) > 1) element.scrollTop = target
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [currentMemory.scrollTop, mode, sortedItems.length])
+  }, [mode, projectLibraryOpen, sortedItems.length, type, sortOrder, query])
 
   // 列表项的 payload 可能是精简过的，插入前必须取一次详情，
   // 否则会插入一个空副本。失败要明确提示，不能静默吞掉。
@@ -557,7 +595,7 @@ export function FavoriteLibraryPanel({ mode = 'assets', onClose, onInsert, onIns
       <div
         ref={listRef}
         className="favorite-library-list favorite-library-tile-grid"
-        onScroll={(event) => updateMemory({ scrollTop: event.currentTarget.scrollTop })}
+        onScroll={handleListScroll}
       >
         {loading && items.length === 0 ? (
           <div className="favorite-library-empty">正在加载{title}...</div>
