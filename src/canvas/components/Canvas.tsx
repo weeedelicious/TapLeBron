@@ -1938,7 +1938,7 @@ function LiveDetailZoomControl({
 }
 
 export function Canvas() {
-  const { nodes, edges, viewport, canvasTextScale, setNodes, setEdges, setViewport, setCanvasTextScale, setSelected, setActivePanelNode, setConnectionHoverTarget, updateNodeData, addNodeAt, selectedNodeKeys, deleteNodes, deleteGroupWithChildren, ungroupNodes, copySelected, pasteClipboard, undo, pushHistory, clipboard, historyIndex, duplicateNodes, duplicateEmptyVideoNode, insertFavoritePayload } = useCanvasStore()
+  const { nodes, edges, viewport, canvasTextScale, setNodes, setEdges, setViewport, setCanvasTextScale, setSelected, setActivePanelNode, setConnectionHoverTarget, updateNodeData, addNodeAt, selectedNodeKeys, deleteNodes, deleteGroupWithChildren, ungroupNodes, copySelected, pasteClipboard, undo, redo, pushHistory, clipboard, historyIndex, duplicateNodes, duplicateEmptyVideoNode, insertFavoritePayload } = useCanvasStore()
   const projectUuid = useCanvasStore(state => state.projectUuid)
   const projectName = useCanvasStore(state => state.projectName)
   const restoreProjectTasks = useTasksStore(state => state.restoreProjectTasks)
@@ -2912,6 +2912,8 @@ export function Canvas() {
       // Skip when typing in inputs / textareas / contenteditable
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if ((e.target as HTMLElement)?.isContentEditable) return
+      // 白板标注（tldraw）有自己的撤销 / 重做，不能同时把画布也撤一步
+      if ((e.target as HTMLElement)?.closest?.('.tl-container')) return
       const key = e.key.toLowerCase()
 
       if (!e.ctrlKey && !e.metaKey && !e.altKey && key === 'f') {
@@ -2932,11 +2934,13 @@ export function Canvas() {
         return
       }
 
-      if (key === 'z' && e.ctrlKey && !e.shiftKey) { undo(); e.preventDefault() }
+      // 撤销 Ctrl+Z（Mac ⌘Z）；重做 Ctrl+Shift+Z（Mac ⌘⇧Z）或 Ctrl+Y
+      if (key === 'z' && !e.shiftKey && !e.altKey) { undo(); e.preventDefault(); return }
+      if ((key === 'z' && e.shiftKey && !e.altKey) || (key === 'y' && !e.shiftKey && !e.altKey)) { redo(); e.preventDefault() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [focusSelectionFlow, undo])
+  }, [focusSelectionFlow, undo, redo])
 
   // ── React Flow handlers ────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {

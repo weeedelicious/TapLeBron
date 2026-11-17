@@ -161,6 +161,13 @@ export function markNodesDeletedByUser(
     if (nodeKey) pending.set(String(nodeKey), declaration);
   }
 }
+/** 节点被撤销 / 重做放回画布：撤掉它还没落地的删除登记。 */
+function clearPendingDeletions(projectUuid: string, nodes: FlowNode[]) {
+  const pending = pendingNodeDeletionsByProject.get(projectUuid);
+  if (!pending || pending.size === 0) return;
+  for (const node of nodes) pending.delete(String(node.data.nodeKey || node.id));
+}
+
 export const CANVAS_CLIENT_ID =
   typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -196,6 +203,17 @@ interface HistorySnapshot {
   nodes: FlowNode[];
   edges: Edge[];
 }
+/**
+ * 重做（Ctrl+Shift+Z / Ctrl+Y，2026-11-17）：撤销时把「撤销前的样子」存进来。
+ * afterUndoKeys 是撤销刚完成时画布上有哪些节点，重做时靠它分清三种节点：
+ *   · 撤销之后才出现的（生成写回 / Cindy 插件推来的）→ 保留，绝不删；
+ *   · 撤销之后在服务端被删掉的 → 不复活；
+ *   · 被这一步操作新建 / 删掉的 → 按这一步重做。
+ */
+interface RedoEntry extends HistorySnapshot {
+  afterUndoKeys: string[];
+}
+const MAX_UNDO_STEPS = 30;
 interface SetNodesOptions {
   persist?: boolean;
   markDirty?: boolean;
@@ -241,6 +259,7 @@ interface CanvasState {
   clipboard: { nodes: FlowNode[]; edges: Edge[] } | null;
   history: HistorySnapshot[];
   historyIndex: number;
+  redoStack: RedoEntry[];
 
   loadProject: (project: Project) => void;
   clearProject: () => void;
@@ -278,6 +297,7 @@ interface CanvasState {
   pasteClipboard: (position?: { x: number; y: number }) => void;
   pushHistory: () => void;
   undo: () => void;
+  redo: () => void;
   ungroupNodes: (groupId: string) => void;
   duplicateNodes: (nodeIds: string[], options?: { emptyVideo?: boolean }) => void;
   duplicateEmptyVideoNode: (nodeId: string) => void;
@@ -1417,6 +1437,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   clipboard: null,
   history: [],
   historyIndex: -1,
+  redoStack: [],
 
   loadProject: (project: Project) => {
     nodeSaveVersion += 1;
@@ -1543,6 +1564,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       isDirty: false,
       history: [initialSnapshot],
       historyIndex: 0,
+      redoStack: [],
     });
   },
 
@@ -1580,6 +1602,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       isSaving: false,
       history: [],
       historyIndex: -1,
+      redoStack: [],
     });
   },
 
@@ -1684,6 +1707,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           : null,
       history: nextHistory,
       historyIndex: nextHistory.length - 1,
+      redoStack: [],
       isDirty: hadLocalNodeChanges,
     });
     if (hadLocalNodeChanges) {
@@ -2084,22 +2108,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
     // Trim any future history (after undo) and cap at 30 snapshots
     const newHistory = [...history.slice(0, historyIndex + 1), snapshot].slice(
-      -30,
+      -MAX_UNDO_STEPS,
     );
-    set({ history: newHistory, historyIndex: newHistory.length - 1 });
+    // 做了新操作，之前撤销掉的那些就不能再重做了
+    set({ history: newHistory, historyIndex: newHistory.length - 1, redoStack: [] });
   },
 
   undo: () => {
-    const { history, historyIndex, projectUuid, nodes } = get();
+    const { history, historyIndex, projectUuid, nodes, edges, redoStack } = get();
     if (historyIndex <= 0) return;
     const snapshot = history[historyIndex];
+    // 撤销前的样子留给重做
+    const redoEntry: RedoEntry = {
+      nodes: snapshotNodesForHistory(nodes),
+      edges: JSON.parse(JSON.stringify(edges)),
+      afterUndoKeys: snapshot.nodes.map((node) => String(node.data.nodeKey || node.id)),
+    };
     set({
       nodes: snapshot.nodes,
       // 连线按节点数据重算（和刷新时一样），快照里少了的线也能补回来
       edges: edgesFromNodeReferences(snapshot.nodes, snapshot.edges),
       historyIndex: historyIndex - 1,
+      redoStack: [...redoStack, redoEntry].slice(-MAX_UNDO_STEPS),
       isDirty: true,
     });
+    if (projectUuid) clearPendingDeletions(projectUuid, snapshot.nodes);
     if (projectUuid) {
       // 撤销掉"本页新建的节点"也是用户意图，要让这些节点真的从服务端消失。
       //
@@ -2135,6 +2168,57 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         snapshot.nodes,
         set as (s: Partial<CanvasState>) => void,
       );
+  },
+
+  redo: () => {
+    const { redoStack, history, historyIndex, projectUuid, nodes } = get();
+    if (redoStack.length === 0) return;
+    const entry = redoStack[redoStack.length - 1];
+    const afterUndo = new Set(entry.afterUndoKeys);
+    const keyOf = (node: FlowNode) => String(node.data.nodeKey || node.id);
+    const currentByKey = new Map(nodes.map((node) => [keyOf(node), node]));
+    const redoKeys = new Set(entry.nodes.map(keyOf));
+    const restored: FlowNode[] = [];
+    const skippedRemoteDeleted: string[] = [];
+    for (const node of entry.nodes) {
+      const nodeKey = keyOf(node);
+      // 撤销后还在、现在没了 = 撤销之后在服务端被删了（别处删的），不复活
+      if (afterUndo.has(nodeKey) && !currentByKey.has(nodeKey)) {
+        skippedRemoteDeleted.push(nodeKey);
+        continue;
+      }
+      restored.push(node);
+    }
+    // 撤销之后才出现的节点（生成写回 / 插件推来的）不在重做快照里，原样保留，绝不删
+    const keptArrivals = nodes.filter(
+      (node) => !redoKeys.has(keyOf(node)) && !afterUndo.has(keyOf(node)),
+    );
+    // 撤销后还在、重做快照里没有 = 这一步操作删掉的，按用户删除登记
+    const deletedByStep = nodes
+      .map(keyOf)
+      .filter((nodeKey) => afterUndo.has(nodeKey) && !redoKeys.has(nodeKey));
+    const nextNodes = [...restored, ...keptArrivals];
+    set({
+      nodes: nextNodes,
+      edges: edgesFromNodeReferences(nextNodes, entry.edges),
+      historyIndex: Math.min(historyIndex + 1, history.length - 1),
+      redoStack: redoStack.slice(0, -1),
+      isDirty: true,
+    });
+    if (skippedRemoteDeleted.length > 0) {
+      console.warn(
+        `[canvas ${projectUuid}] 重做跳过了 ${skippedRemoteDeleted.length} 个已在别处删除的节点：${skippedRemoteDeleted.join(", ")}`,
+      );
+    }
+    if (projectUuid) {
+      clearPendingDeletions(projectUuid, restored);
+      markNodesDeletedByUser(projectUuid, deletedByStep, nextNodes.length);
+      schedulePersistNodes(
+        projectUuid,
+        nextNodes,
+        set as (s: Partial<CanvasState>) => void,
+      );
+    }
   },
 
   copySelected: () => {
