@@ -57,7 +57,7 @@ $settings.ExecutionTimeLimit = 'PT0S'
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
   -Principal $principal -Settings $settings `
-  -Description 'Shotflow RealSR, NVIDIA VSR and SeedVR2 media enhancement worker on port 8093' `
+  -Description 'Shotflow RealSR image/video enhancement worker on port 8093' `
   -Force -ErrorAction Stop | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 

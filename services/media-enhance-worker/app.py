@@ -27,7 +27,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+
+UI_REMOVAL_ROOT = Path(os.environ.get("UI_REMOVAL_ROOT", r"D:\AI\ui-remove")).resolve()
+PROPAINTER_PYTHON = UI_REMOVAL_ROOT / "venvs" / "propainter" / "Scripts" / "python.exe"
+PROPAINTER_WEIGHT = UI_REMOVAL_ROOT / "ProPainter" / "weights" / "ProPainter.pth"
+DIFFU_PYTHON = UI_REMOVAL_ROOT / "venvs" / "diffueraser" / "Scripts" / "python.exe"
+DIFFU_WEIGHT = UI_REMOVAL_ROOT / "DiffuEraser" / "weights" / "diffuEraser"
+SAM2_WEIGHT = UI_REMOVAL_ROOT / "weights" / "sam2.1_hiera_large.pt"
 
 
 ROOT = Path(__file__).resolve().parent
@@ -119,6 +126,25 @@ VIDEO2X_BIN = Path(os.environ.get("VIDEO2X_BIN", VIDEO2X_ROOT / "video2x.exe")).
 VIDEO2X_MODEL = os.environ.get("VIDEO2X_MODEL", "rife-v4.26").strip()
 VIDEO2X_MODEL_LABEL = "Video2X 6.4 · RIFE 4.26"
 VIDEO2X_VERSION = "6.4.0"
+GMFSS_ROOT = Path(os.environ.get("GMFSS_ROOT", RUNTIME_DIR / "gmfss-fortuna")).resolve()
+GMFSS_REPO = Path(os.environ.get("GMFSS_REPO", GMFSS_ROOT / "repo")).resolve()
+GMFSS_PYTHON = Path(os.environ.get("GMFSS_PYTHON", GMFSS_ROOT / ".venv" / "Scripts" / "python.exe")).resolve()
+GMFSS_CLI = Path(os.environ.get("GMFSS_CLI", ROOT / "gmfss_cli.py")).resolve()
+GMFSS_MODEL_DIR = Path(os.environ.get("GMFSS_MODEL_DIR", GMFSS_REPO / "train_log")).resolve()
+GMFSS_MODEL_LABEL = "GMFSS Fortuna"
+GIMM_ROOT = Path(os.environ.get("GIMM_ROOT", RUNTIME_DIR / "gimmvfi")).resolve()
+GIMM_REPO = Path(os.environ.get("GIMM_REPO", GIMM_ROOT / "repo")).resolve()
+GIMM_PYTHON = Path(os.environ.get("GIMM_PYTHON", GIMM_ROOT / ".venv" / "Scripts" / "python.exe")).resolve()
+GIMM_CLI = Path(os.environ.get("GIMM_CLI", ROOT / "gimmvfi_cli.py")).resolve()
+GIMM_CHECKPOINT = Path(os.environ.get("GIMM_CHECKPOINT", GIMM_REPO / "pretrained_ckpt" / "gimmvfi_r_arb_lpips.pt")).resolve()
+GIMM_RAFT = Path(os.environ.get("GIMM_RAFT", GIMM_REPO / "pretrained_ckpt" / "raft-things.pth")).resolve()
+GIMM_MODEL_LABEL = "GIMM-VFI R-P"
+RIFE46_ROOT = Path(os.environ.get("RIFE46_ROOT", RUNTIME_DIR / "rife-ncnn-20221029" / "rife-ncnn-vulkan-20221029-windows")).resolve()
+RIFE46_BIN = Path(os.environ.get("RIFE46_BIN", RIFE46_ROOT / "rife-ncnn-vulkan.exe")).resolve()
+RIFE46_MODEL = os.environ.get("RIFE46_MODEL", "rife-v4.6").strip()
+RIFE46_MODEL_LABEL = "RIFE ncnn Vulkan · rife-v4.6"
+RIFE46_RELEASE = "20221029"
+
 MAX_BATCH_BIN = Path(
     os.environ.get(
         "MAX_BATCH_BIN",
@@ -252,6 +278,19 @@ def _openflowframes_ready() -> bool:
     return all(_openflowframes_readiness().values())
 
 
+def _rife46_readiness() -> dict[str, bool]:
+    model_dir = RIFE46_ROOT / RIFE46_MODEL
+    return {
+        "binaryReady": RIFE46_BIN.is_file(),
+        "modelParamReady": (model_dir / "flownet.param").is_file(),
+        "modelBinReady": (model_dir / "flownet.bin").is_file(),
+    }
+
+
+def _rife46_ready() -> bool:
+    return all(_rife46_readiness().values())
+
+
 def _video2x_readiness() -> dict[str, bool]:
     model_dir = VIDEO2X_ROOT / "models" / "rife" / VIDEO2X_MODEL
     return {
@@ -263,6 +302,36 @@ def _video2x_readiness() -> dict[str, bool]:
 
 def _video2x_ready() -> bool:
     return all(_video2x_readiness().values())
+
+
+def _gmfss_readiness() -> dict[str, bool]:
+    return {
+        "pythonReady": GMFSS_PYTHON.is_file(),
+        "cliReady": GMFSS_CLI.is_file(),
+        "repoReady": (GMFSS_REPO / "model" / "GMFSS_infer_b.py").is_file(),
+        "modelReady": all(
+            (GMFSS_MODEL_DIR / name).is_file()
+            for name in ("flownet.pkl", "metric.pkl", "feat.pkl", "fusionnet.pkl")
+        ),
+    }
+
+
+def _gmfss_ready() -> bool:
+    return all(_gmfss_readiness().values())
+
+
+def _gimmvfi_readiness() -> dict[str, bool]:
+    return {
+        "pythonReady": GIMM_PYTHON.is_file(),
+        "cliReady": GIMM_CLI.is_file(),
+        "repoReady": (GIMM_REPO / "src" / "video_Nx.py").is_file(),
+        "checkpointReady": GIMM_CHECKPOINT.is_file(),
+        "raftReady": GIMM_RAFT.is_file(),
+    }
+
+
+def _gimmvfi_ready() -> bool:
+    return all(_gimmvfi_readiness().values())
 
 
 def _max_converter_readiness() -> dict[str, Any]:
@@ -427,6 +496,9 @@ def _probe(path: Path, count_frames: bool = False) -> dict[str, Any]:
 
 def _safe_error(text: str) -> str:
     compact = " ".join(str(text or "").replace("\x00", "").split())
+    lowered = compact.lower()
+    if "out of memory" in lowered or "outofmemoryerror" in lowered:
+        return "显存不足，当前增强倍数太大。请改用 2 倍，或改用 NVIDIA VSR。"
     return compact[-1200:] or "media enhancement command failed"
 
 
@@ -516,6 +588,18 @@ def _validate_enhanced_frame(source_path: Path, output_path: Path) -> None:
 
 def _terminate(process: subprocess.Popen[str] | None) -> None:
     if not process or process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+        )
+        try:
+            process.wait(timeout=3)
+        except Exception:
+            pass
         return
     try:
         process.terminate()
@@ -738,7 +822,18 @@ def _flashvsr_environment() -> dict[str, str]:
     environment["PYTHONUNBUFFERED"] = "1"
     environment["HF_HUB_OFFLINE"] = "1"
     environment["TRANSFORMERS_OFFLINE"] = "1"
+    environment["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     return environment
+
+
+def _flashvsr_chunk_plan(width: int, height: int) -> tuple[int, int]:
+    pixels = max(1, int(width) * int(height))
+    budget = 1280 * 720 * 85
+    frames = max(21, min(FLASHVSR_CHUNK_FRAMES, budget // pixels))
+    overlap = min(FLASHVSR_CHUNK_OVERLAP, max(8, frames // 4))
+    if overlap >= frames:
+        overlap = max(0, frames - 8)
+    return frames, overlap
 
 
 def _flashvsr_args(
@@ -747,6 +842,7 @@ def _flashvsr_args(
     target_width: int,
     target_height: int,
 ) -> list[str]:
+    chunk_frames, chunk_overlap = _flashvsr_chunk_plan(target_width, target_height)
     return [
         str(FLASHVSR_PYTHON),
         str(FLASHVSR_CLI),
@@ -767,9 +863,9 @@ def _flashvsr_args(
         "--sparse-ratio",
         str(FLASHVSR_SPARSE_RATIO),
         "--chunk-frames",
-        str(FLASHVSR_CHUNK_FRAMES),
+        str(chunk_frames),
         "--chunk-overlap",
-        str(FLASHVSR_CHUNK_OVERLAP),
+        str(chunk_overlap),
         "--seed",
         "42",
     ]
@@ -1568,7 +1664,27 @@ def _interpolation_engine_info(engine: str) -> tuple[str, str]:
         return "openflowframes", OPENFLOWFRAMES_MODEL_LABEL
     if engine == "video2x":
         return "video2x", VIDEO2X_MODEL_LABEL
+    if engine == "gmfss":
+        return "gmfss", GMFSS_MODEL_LABEL
+    if engine == "gimmvfi":
+        return "gimmvfi", GIMM_MODEL_LABEL
+    if engine == "rife46":
+        return "rife46", RIFE46_MODEL_LABEL
     raise RuntimeError("unsupported interpolation engine")
+
+
+def _source_x264_crf(path: Path) -> float | None:
+    """x264 会把编码参数（含 crf=）写进码流开头的 SEI；读不到（非 x264 / 码率模式）返回 None。"""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8 * 1024 * 1024)
+    except OSError:
+        return None
+    marker = head.find(b"x264 - core")
+    if marker < 0:
+        return None
+    match = re.search(rb"crf=([0-9]+(?:\.[0-9]+)?)", head[marker:marker + 4096])
+    return float(match.group(1)) if match else None
 
 
 def _encode_interpolated_frames(
@@ -1579,6 +1695,46 @@ def _encode_interpolated_frames(
     source_meta: dict[str, Any],
     target_fps: int,
     target_frames: int,
+) -> dict[str, Any]:
+    """补帧后的画质跟随源视频，文件不比源视频小（2026-11-19）。
+
+    以前固定 CRF 12：源视频压得比 12 更松（比如外部上传的 CRF 6、32Mbps）时，补帧多了帧数文件反而变小，
+    用户说「补帧生成视频反而变小了」。现在：
+      1. 源视频是 x264 且读得到 crf，用 min(12, 源 crf)；
+      2. 编完还是比源视频小（读不到 crf 的 HEVC 等），把 crf 再降 4 重编，最多两次，最低到 0。
+    """
+    crf = VIDEO_CRF
+    source_crf = _source_x264_crf(input_path)
+    if source_crf is not None:
+        crf = max(0, min(crf, int(source_crf)))
+    try:
+        source_bytes = input_path.stat().st_size
+    except OSError:
+        source_bytes = 0
+    attempt = 0
+    while True:
+        output_meta = _encode_interpolated_frames_once(
+            job_id, frames_dir, input_path, result_path, source_meta, target_fps, target_frames, crf
+        )
+        output_bytes = result_path.stat().st_size if result_path.exists() else 0
+        if not source_bytes or output_bytes >= source_bytes or crf <= 0 or attempt >= 2:
+            break
+        attempt += 1
+        crf = max(0, crf - 4)
+    output_meta["crf"] = crf
+    output_meta["sourceCrf"] = source_crf
+    return output_meta
+
+
+def _encode_interpolated_frames_once(
+    job_id: str,
+    frames_dir: Path,
+    input_path: Path,
+    result_path: Path,
+    source_meta: dict[str, Any],
+    target_fps: int,
+    target_frames: int,
+    crf: int,
 ) -> dict[str, Any]:
     args = [
         FFMPEG_BIN,
@@ -1609,7 +1765,7 @@ def _encode_interpolated_frames(
         "-preset",
         VIDEO_PRESET,
         "-crf",
-        str(VIDEO_CRF),
+        str(crf),
         "-profile:v",
         "high",
         "-pix_fmt",
@@ -1752,11 +1908,23 @@ def _interpolate_video_gpu(
         raise RuntimeError("source video has too few frames to interpolate")
     target_frames = max(2, round(source_frames * target_fps / source_fps))
 
-    if engine == "openflowframes":
+    if engine in {"openflowframes", "rife46"}:
+        if engine == "rife46":
+            if not _rife46_ready():
+                raise RuntimeError("RIFE v4.6 runtime is not installed")
+            interp_bin = RIFE46_BIN
+            interp_model = RIFE46_ROOT / RIFE46_MODEL
+            interp_cwd = RIFE46_ROOT
+            interp_phase = "rife46-interpolation"
+        else:
+            interp_bin = OPENFLOWFRAMES_BIN
+            interp_model = OPENFLOWFRAMES_RIFE_DIR / OPENFLOWFRAMES_MODEL
+            interp_cwd = OPENFLOWFRAMES_RIFE_DIR
+            interp_phase = "rife-interpolation"
         _run_command(
             job_id,
             [
-                str(OPENFLOWFRAMES_BIN),
+                str(interp_bin),
                 "-i",
                 str(frames_source),
                 "-o",
@@ -1764,17 +1932,17 @@ def _interpolate_video_gpu(
                 "-n",
                 str(target_frames),
                 "-m",
-                str(OPENFLOWFRAMES_RIFE_DIR / OPENFLOWFRAMES_MODEL),
+                str(interp_model),
                 "-g",
                 str(GPU_ID),
                 "-f",
                 "%08d.png",
             ],
-            "rife-interpolation",
+            interp_phase,
             14,
             82,
             _percent_parser,
-            OPENFLOWFRAMES_RIFE_DIR,
+            interp_cwd,
         )
     elif engine == "video2x":
         # Video2X 6.4 flushes too few tail frames on some short/B-frame inputs.
@@ -1881,6 +2049,122 @@ def _interpolate_video_gpu(
             82,
             _ffmpeg_frame_parser(target_frames),
         )
+    elif engine in {"gmfss", "gimmvfi"}:
+        multiplier = max(2, math.ceil(target_fps / source_fps))
+        frames_hi = job_dir / f"{engine}-hi"
+        frames_hi.mkdir()
+        width = int(source_meta.get("width") or 0)
+        height = int(source_meta.get("height") or 0)
+        if engine == "gmfss":
+            if not _gmfss_ready():
+                raise RuntimeError("GMFSS Fortuna runtime is not installed")
+            python_bin, cli_path, repo_path = GMFSS_PYTHON, GMFSS_CLI, GMFSS_REPO
+            cmd = [
+                str(python_bin),
+                str(cli_path),
+                "--repo",
+                str(repo_path),
+                "--model-dir",
+                str(GMFSS_MODEL_DIR),
+                "--input-dir",
+                str(frames_source),
+                "--output-dir",
+                str(frames_hi),
+                "--multi",
+                str(multiplier),
+                "--scale",
+                "0.5" if max(width, height) >= 2160 else "1.0",
+                "--gpu",
+                "0",
+            ]
+            cwd = repo_path
+        else:
+            if not _gimmvfi_ready():
+                raise RuntimeError("GIMM-VFI R-P runtime is not installed")
+            python_bin, cli_path, repo_path = GIMM_PYTHON, GIMM_CLI, GIMM_REPO
+            longest = max(width, height)
+            ds_factor = 1.0 if longest <= 1080 else 0.5 if longest <= 1440 else 0.25
+            cmd = [
+                str(python_bin),
+                str(cli_path),
+                "--repo",
+                str(repo_path),
+                "--input-dir",
+                str(frames_source),
+                "--output-dir",
+                str(frames_hi),
+                "--multi",
+                str(multiplier),
+                "--ds-factor",
+                str(ds_factor),
+                "--gpu",
+                "0",
+            ]
+            cwd = repo_path
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
+        env["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+        visible = max(0, GPU_ID)
+        try:
+            listing = subprocess.check_output(
+                ["nvidia-smi", "-L"],
+                text=True,
+                timeout=8,
+                creationflags=_creation_flags,
+            )
+            gpu_count = sum(1 for line in listing.splitlines() if line.strip().startswith("GPU "))
+            if gpu_count and visible >= gpu_count:
+                visible = 0
+        except Exception:
+            visible = 0
+        env["CUDA_VISIBLE_DEVICES"] = str(visible)
+        _run_command(
+            job_id,
+            cmd,
+            f"{engine}-interpolation",
+            14,
+            72,
+            _percent_parser,
+            cwd,
+            env,
+        )
+        hi_count = len(list(frames_hi.glob("*.png")))
+        expected_hi = (source_frames - 1) * multiplier + 1
+        if hi_count != expected_hi:
+            raise RuntimeError(
+                f"{engine} returned {hi_count} frames; expected {expected_hi}"
+            )
+        hi_fps = ((hi_count - 1) * source_fps / max(1, source_frames - 1))
+        _run_command(
+            job_id,
+            [
+                FFMPEG_BIN,
+                "-y",
+                "-loglevel",
+                "error",
+                "-progress",
+                "pipe:1",
+                "-nostats",
+                "-framerate",
+                f"{hi_fps:.6f}",
+                "-start_number",
+                "1",
+                "-i",
+                str(frames_hi / "%08d.png"),
+                "-vf",
+                f"setpts=PTS-STARTPTS,fps=fps={target_fps}:start_time=0:round=near",
+                "-frames:v",
+                str(target_frames),
+                "-fps_mode",
+                "passthrough",
+                str(frames_output / "%08d.png"),
+            ],
+            "retiming-to-target-fps",
+            72,
+            82,
+            _ffmpeg_frame_parser(target_frames),
+        )
     else:
         raise RuntimeError("unsupported interpolation engine")
 
@@ -1961,7 +2245,8 @@ def _execute_interpolation_job(job_id: str) -> None:
                 "audioCodecName": output_meta.get("audioCodecName"),
                 "formatName": output_meta.get("formatName"),
                 "qualityMode": "quality",
-                "crf": VIDEO_CRF,
+                "crf": output_meta.get("crf", VIDEO_CRF),
+                "sourceCrf": output_meta.get("sourceCrf"),
                 "preset": VIDEO_PRESET,
                 "rvCompatible": True,
                 "boundaryFramesVerified": True,
@@ -2258,7 +2543,18 @@ def health() -> dict[str, Any]:
     openflowframes_ready = all(openflowframes_readiness.values())
     video2x_readiness = _video2x_readiness()
     video2x_ready = all(video2x_readiness.values())
+    gmfss_readiness = _gmfss_readiness()
+    gmfss_ready = all(gmfss_readiness.values())
+    gimmvfi_readiness = _gimmvfi_readiness()
+    gimmvfi_ready = all(gimmvfi_readiness.values())
+    rife46_readiness = _rife46_readiness()
+    rife46_ready = all(rife46_readiness.values())
     max_converter = _max_converter_readiness()
+    try:
+        from color_grade_job import ocio_ready
+        color_grade_ready = ocio_ready()
+    except Exception:
+        color_grade_ready = False
     with _jobs_lock:
         running = sum(job.get("status") == "running" for job in _jobs.values())
         queued = sum(job.get("status") == "queued" for job in _jobs.values())
@@ -2295,6 +2591,9 @@ def health() -> dict[str, Any]:
         "availableInterpolationEngines": [
             *(['openflowframes'] if openflowframes_ready else []),
             *(['video2x'] if video2x_ready else []),
+            *(['gmfss'] if gmfss_ready else []),
+            *(['gimmvfi'] if gimmvfi_ready else []),
+            *(['rife46'] if rife46_ready else []),
         ],
         "openFlowFramesReady": openflowframes_ready,
         "openFlowFramesModel": OPENFLOWFRAMES_MODEL_LABEL,
@@ -2304,6 +2603,18 @@ def health() -> dict[str, Any]:
         "video2xModel": VIDEO2X_MODEL_LABEL,
         "video2xVersion": VIDEO2X_VERSION,
         "video2x": video2x_readiness,
+        "gmfssReady": gmfss_ready,
+        "gmfssModel": GMFSS_MODEL_LABEL,
+        "gmfss": gmfss_readiness,
+        "gimmvfiReady": gimmvfi_ready,
+        "gimmvfiModel": GIMM_MODEL_LABEL,
+        "gimmvfi": gimmvfi_readiness,
+        "rife46Ready": rife46_ready,
+        "rife46Model": RIFE46_MODEL_LABEL,
+        "rife46Release": RIFE46_RELEASE,
+        "rife46": rife46_readiness,
+        "colorGradeReady": color_grade_ready,
+        "colorGradeEngine": "OpenColorIO 2 + FFmpeg",
         "maxImportReady": bool(max_converter["binaryReady"]),
         "maxConverter": max_converter,
         "gpuId": GPU_ID,
@@ -2375,6 +2686,233 @@ async def create_3d_import_job(
         _jobs[job_id] = record
     _executor.submit(_execute_max_import_job, job_id)
     return _public_job(record)
+
+
+def _execute_color_grade_job(job_id: str) -> None:
+    try:
+        from color_grade_job import execute_color_grade_job
+        execute_color_grade_job(job_id)
+    except Exception as error:
+        _set_job(
+            job_id,
+            status="failed",
+            phase="failed",
+            progressPercent=0,
+            error=_safe_error(str(error)),
+            finishedAt=time.time(),
+        )
+
+
+@app.post("/v1/color-grade-jobs", status_code=202)
+async def create_color_grade_job(
+    file: UploadFile = File(...),
+    input_profile: str = Form(default="rec709"),
+    look: str = Form(default="motion-picture"),
+    exposure: float = Form(default=0.0),
+    temperature: float = Form(default=0.0),
+    tint: float = Form(default=0.0),
+    contrast: float = Form(default=1.0),
+    saturation: float = Form(default=1.0),
+    lift: float = Form(default=0.0),
+    gamma: float = Form(default=1.0),
+    gain: float = Form(default=1.0),
+    grain: float = Form(default=0.12),
+    authorization: str = Header(default=""),
+) -> dict[str, Any]:
+    _require_auth(authorization)
+    _cleanup_expired()
+    from color_grade_job import INPUT_PROFILE_SPACES, LOOK_PRESETS, ocio_ready
+    profile = input_profile.strip().lower()
+    normalized_look = look.strip().lower()
+    if not ocio_ready():
+        raise HTTPException(status_code=503, detail="OpenColorIO 2 is not installed")
+    if profile not in INPUT_PROFILE_SPACES:
+        raise HTTPException(status_code=400, detail="input_profile is not supported")
+    if normalized_look not in LOOK_PRESETS:
+        raise HTTPException(status_code=400, detail="look is not supported")
+    ranges = {
+        "exposure": (exposure, -4.0, 4.0),
+        "temperature": (temperature, -100.0, 100.0),
+        "tint": (tint, -100.0, 100.0),
+        "contrast": (contrast, 0.5, 1.5),
+        "saturation": (saturation, 0.0, 2.0),
+        "lift": (lift, -0.2, 0.2),
+        "gamma": (gamma, 0.5, 2.0),
+        "gain": (gain, 0.5, 2.0),
+        "grain": (grain, 0.0, 1.0),
+    }
+    for field, (value, minimum, maximum) in ranges.items():
+        if not math.isfinite(value) or value < minimum or value > maximum:
+            raise HTTPException(status_code=400, detail=field + " is outside the supported range")
+    if not _configured_binary(FFMPEG_BIN) or not _configured_binary(FFPROBE_BIN):
+        raise HTTPException(status_code=503, detail="FFmpeg or FFprobe is not installed")
+
+    job_id = uuid.uuid4().hex
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    suffix = Path(file.filename or "").suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix):
+        suffix = ".mp4"
+    input_path = job_dir / ("source" + suffix)
+    total = 0
+    try:
+        with input_path.open("wb") as target:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="media file exceeds worker upload limit")
+                target.write(chunk)
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    finally:
+        await file.close()
+    if total < 1:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="uploaded media file is empty")
+
+    params = {
+        "inputProfile": profile,
+        "look": normalized_look,
+        "exposure": exposure,
+        "temperature": temperature,
+        "tint": tint,
+        "contrast": contrast,
+        "saturation": saturation,
+        "lift": lift,
+        "gamma": gamma,
+        "gain": gain,
+        "grain": grain,
+    }
+    now_ms = int(time.time() * 1000)
+    record = {
+        "jobId": job_id,
+        "status": "queued",
+        "phase": "queued",
+        "progressPercent": 0,
+        "mediaType": "video",
+        "provider": "opencolorio",
+        "model": "OpenColorIO 2.4.2 + FFmpeg",
+        "inputByteSize": total,
+        "createdAtMs": now_ms,
+        "updatedAtMs": now_ms,
+        "inputPath": str(input_path),
+        "jobDir": str(job_dir),
+        "resultPath": "",
+        "process": None,
+        "cancelRequested": False,
+        "deleteWhenFinished": False,
+        "colorGrade": params,
+    }
+    with _jobs_lock:
+        _jobs[job_id] = record
+    _executor.submit(_execute_color_grade_job, job_id)
+    return _public_job(record)
+
+
+@app.post("/v1/ui-removal-jobs", status_code=202)
+async def create_ui_removal_job(
+    file: UploadFile = File(...),
+    method: str = Form(...),
+    authorization: str = Header(default=""),
+) -> dict[str, Any]:
+    _require_auth(authorization)
+    _cleanup_expired()
+    normalized = method.strip().lower()
+    if normalized not in {"propainter", "diffueraser"}:
+        raise HTTPException(status_code=400, detail="method must be propainter or diffueraser")
+    python = PROPAINTER_PYTHON if normalized == "propainter" else DIFFU_PYTHON
+    weight = PROPAINTER_WEIGHT if normalized == "propainter" else DIFFU_WEIGHT
+    if not python.is_file() or not weight.exists() or not SAM2_WEIGHT.is_file():
+        raise HTTPException(status_code=503, detail="UI removal runtime or model weights are not installed")
+    job_id = uuid.uuid4().hex
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    input_path = job_dir / "source.mp4"
+    total = 0
+    try:
+        with input_path.open("wb") as target:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="media file exceeds worker upload limit")
+                target.write(chunk)
+    finally:
+        await file.close()
+    now_ms = int(time.time() * 1000)
+    record = {
+        "jobId": job_id, "status": "queued", "phase": "queued", "progressPercent": 0,
+        "mediaType": "video", "provider": normalized, "model": "SAM 2 + " + ("DiffuEraser" if normalized == "diffueraser" else "ProPainter"),
+        "inputByteSize": total, "createdAtMs": now_ms, "updatedAtMs": now_ms,
+        "inputPath": str(input_path), "jobDir": str(job_dir), "resultPath": "", "process": None,
+        "cancelRequested": False, "deleteWhenFinished": False, "uiRemovalMethod": normalized,
+    }
+    with _jobs_lock:
+        _jobs[job_id] = record
+    _executor.submit(_execute_ui_removal_job, job_id)
+    return _public_job(record)
+
+
+@app.post("/v1/ui-removal-preview")
+def create_ui_removal_preview(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+) -> Response:
+    _require_auth(authorization)
+    job_dir = WORK_DIR / ("preview-" + uuid.uuid4().hex)
+    job_dir.mkdir(parents=True, exist_ok=False)
+    input_path = job_dir / "source.mp4"
+    preview_path = job_dir / "preview.mp4"
+    total = 0
+    try:
+        with input_path.open("wb") as target:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="media file exceeds worker upload limit")
+                target.write(chunk)
+        if total < 1:
+            raise HTTPException(status_code=400, detail="uploaded media file is empty")
+        from ui_removal_job import render_mask_preview
+        meta = render_mask_preview(input_path, preview_path)
+        payload = preview_path.read_bytes()
+        coverage = meta.get("coverage")
+        headers = {}
+        if isinstance(coverage, (int, float)):
+            headers["X-Mask-Coverage"] = format(float(coverage), ".6f")
+        return Response(content=payload, media_type="video/mp4", headers=headers)
+    except HTTPException:
+        raise
+    except Exception as error:
+        message = _safe_error(str(error))
+        status = 422 if any(token in message for token in ("\u6ca1\u6709\u8bc6\u522b", "\u8fc7\u5927", "30")) else 500
+        raise HTTPException(status_code=status, detail=message) from error
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+def _execute_ui_removal_job(job_id: str) -> None:
+    try:
+        from ui_removal_job import execute_ui_removal_job
+        execute_ui_removal_job(job_id)
+    except Exception as error:
+        _set_job(
+            job_id,
+            status="failed",
+            phase="failed",
+            progressPercent=0,
+            error=_safe_error(str(error)),
+            finishedAt=time.time(),
+        )
 
 
 @app.post("/v1/jobs", status_code=202)
@@ -2497,10 +3035,10 @@ async def create_interpolation_job(
     _require_auth(authorization)
     _cleanup_expired()
     engine = interpolation_engine.strip().lower()
-    if engine not in {"openflowframes", "video2x"}:
+    if engine not in {"openflowframes", "video2x", "gmfss", "gimmvfi", "rife46"}:
         raise HTTPException(
             status_code=400,
-            detail="interpolation_engine must be openflowframes or video2x",
+            detail="interpolation_engine must be openflowframes, video2x, gmfss, gimmvfi or rife46",
         )
     if target_fps not in {30, 60, 120}:
         raise HTTPException(status_code=400, detail="target_fps must be 30, 60, or 120")
@@ -2515,6 +3053,21 @@ async def create_interpolation_job(
         raise HTTPException(
             status_code=503,
             detail="Video2X 6.4 RIFE 4.26 runtime is not installed",
+        )
+    if engine == "gmfss" and not _gmfss_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="GMFSS Fortuna runtime is not installed",
+        )
+    if engine == "gimmvfi" and not _gimmvfi_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="GIMM-VFI R-P runtime is not installed",
+        )
+    if engine == "rife46" and not _rife46_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="RIFE ncnn Vulkan rife-v4.6 runtime is not installed",
         )
 
     job_id = uuid.uuid4().hex
@@ -2574,6 +3127,98 @@ async def create_interpolation_job(
         _jobs[job_id] = record
     _executor.submit(_execute_interpolation_job, job_id)
     return _public_job(record)
+
+
+@app.post('/v1/depth-jobs', status_code=202)
+async def create_depth_job(
+    file: UploadFile = File(...),
+    provider: str = Form(...),
+    encoder: str = Form(...),
+    max_res: int = Form(...),
+    near: str = Form('bright'),
+    authorization: str = Header(default=''),
+) -> dict[str, Any]:
+    _require_auth(authorization)
+    _cleanup_expired()
+    provider_name = provider.strip().lower()
+    encoder_name = encoder.strip().lower()
+    near_name = near.strip().lower() or 'bright'
+    if provider_name not in {'video-depth-anything', 'depthcrafter'}:
+        raise HTTPException(status_code=400, detail='provider must be video-depth-anything or depthcrafter')
+    if provider_name == 'video-depth-anything' and encoder_name not in {'vits', 'vitb', 'vitl'}:
+        raise HTTPException(status_code=400, detail='encoder must be vits, vitb, or vitl')
+    if provider_name == 'depthcrafter' and encoder_name != 'svd':
+        raise HTTPException(status_code=400, detail='DepthCrafter encoder must be svd')
+    if near_name not in {'bright', 'dark'}:
+        raise HTTPException(status_code=400, detail='near must be bright or dark')
+    if max_res not in {854, 1280, 1920}:
+        raise HTTPException(status_code=400, detail='max_res must be 854, 1280, or 1920')
+    if not _configured_binary(FFMPEG_BIN) or not _configured_binary(FFPROBE_BIN):
+        raise HTTPException(status_code=503, detail='FFmpeg or FFprobe is not installed')
+
+    job_id = uuid.uuid4().hex
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    suffix = Path(file.filename or '').suffix.lower()
+    if not re.fullmatch(r'\.[a-z0-9]{1,8}', suffix):
+        suffix = '.mp4'
+    input_path = job_dir / f'source{suffix}'
+    total = 0
+    try:
+        with input_path.open('wb') as target:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail='video file exceeds worker upload limit')
+                target.write(chunk)
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    finally:
+        await file.close()
+    if total < 1:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail='uploaded video file is empty')
+
+    model = {
+        'vits': 'Video Depth Anything Small',
+        'vitb': 'Video Depth Anything Base',
+        'vitl': 'Video Depth Anything Large',
+        'svd': 'DepthCrafter',
+    }[encoder_name]
+    now_ms = int(time.time() * 1000)
+    record = {
+        'jobId': job_id,
+        'jobKind': 'video-depth',
+        'status': 'queued',
+        'phase': 'queued',
+        'progressPercent': 0,
+        'mediaType': 'video',
+        'depthProvider': provider_name,
+        'depthEncoder': encoder_name,
+        'depthNear': near_name,
+        'maxRes': max_res,
+        'provider': provider_name,
+        'model': model,
+        'inputByteSize': total,
+        'createdAtMs': now_ms,
+        'updatedAtMs': now_ms,
+        'inputPath': str(input_path),
+        'jobDir': str(job_dir),
+        'resultPath': '',
+        'process': None,
+        'cancelRequested': False,
+        'deleteWhenFinished': False,
+    }
+    with _jobs_lock:
+        _jobs[job_id] = record
+    from depth_job import execute_depth_job
+    _executor.submit(execute_depth_job, job_id)
+    return _public_job(record)
+
 
 
 @app.get("/v1/jobs/{job_id}")

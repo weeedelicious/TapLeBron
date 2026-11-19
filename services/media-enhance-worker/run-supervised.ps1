@@ -1,5 +1,5 @@
 # ASCII only: Windows PowerShell 5.1 reads BOM-less UTF-8 as ANSI.
-# Supervise the RealSR / NVIDIA VSR / SeedVR2 worker across crashes and logoff.
+# Supervise the RealSR worker so it survives process crashes and user logoff.
 
 $ErrorActionPreference = 'Continue'
 $Root = 'C:\Shotflow\media-enhance-worker'
